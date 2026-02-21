@@ -150,3 +150,31 @@ file = "cube.stl"
 """, create_files=["cube.stl"])
     with pytest.raises(ValueError, match="engine"):
         load_config(path)
+
+
+def test_overrides(tmp_path):
+    path = _write_toml(tmp_path, """
+[slicer]
+engine = "orca"
+
+[slicer.overrides]
+sparse_infill_density = "25%"
+wall_loops = 3
+
+[[parts]]
+file = "cube.stl"
+""", create_files=["cube.stl"])
+    cfg = load_config(path)
+    assert cfg.slicer.overrides == {
+        "sparse_infill_density": "25%",
+        "wall_loops": 3,
+    }
+
+
+def test_overrides_default_empty(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "cube.stl"
+""", create_files=["cube.stl"])
+    cfg = load_config(path)
+    assert cfg.slicer.overrides == {}

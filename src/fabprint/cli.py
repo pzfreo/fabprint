@@ -140,6 +140,7 @@ def _cmd_slice(args: argparse.Namespace) -> None:
         process=cfg.slicer.process,
         filaments=cfg.slicer.filaments,
         filament_ids=filament_ids,
+        overrides=cfg.slicer.overrides or None,
         project_dir=cfg.base_dir,
     )
     print(f"Sliced gcode in {output_dir}")

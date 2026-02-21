@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
+import tempfile
 from pathlib import Path
 
 from fabprint.profiles import resolve_profile
@@ -29,6 +31,30 @@ def find_slicer(engine: str) -> Path:
     return path
 
 
+def _apply_overrides(profile_path: Path, overrides: dict[str, object]) -> Path:
+    """Create a temp copy of a profile JSON with overrides applied."""
+    with open(profile_path) as f:
+        data = json.load(f)
+
+    applied = []
+    for key, value in overrides.items():
+        old = data.get(key, "<unset>")
+        data[key] = value
+        applied.append(f"  {key}: {old} → {value}")
+
+    log.info(
+        "Applied %d override(s) to %s:\n%s",
+        len(applied), profile_path.name, "\n".join(applied),
+    )
+
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".json", prefix="fabprint_", delete=False, mode="w"
+    )
+    json.dump(data, tmp, indent=4)
+    tmp.close()
+    return Path(tmp.name)
+
+
 def slice_plate(
     input_3mf: Path,
     engine: str = "bambu",
@@ -37,11 +63,13 @@ def slice_plate(
     process: str | None = None,
     filaments: list[str] | None = None,
     filament_ids: list[int] | None = None,
+    overrides: dict[str, object] | None = None,
     project_dir: Path | None = None,
 ) -> Path:
     """Slice a 3MF file using BambuStudio or OrcaSlicer CLI.
 
     Profile names are resolved via profiles.resolve_profile().
+    If overrides are provided, they are patched into the process profile.
     Returns the output directory containing the sliced gcode.
     """
     slicer = find_slicer(engine)
@@ -55,50 +83,59 @@ def slice_plate(
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    tmp_files = []
     cmd = [str(slicer)]
 
-    # Resolve and load settings (machine + process)
-    settings = []
-    if printer:
-        path = resolve_profile(printer, engine, "machine", project_dir)
-        settings.append(str(path))
-    if process:
-        path = resolve_profile(process, engine, "process", project_dir)
-        settings.append(str(path))
-    if settings:
-        cmd.extend(["--load-settings", ";".join(settings)])
+    try:
+        # Resolve and load settings (machine + process)
+        settings = []
+        if printer:
+            path = resolve_profile(printer, engine, "machine", project_dir)
+            settings.append(str(path))
+        if process:
+            path = resolve_profile(process, engine, "process", project_dir)
+            if overrides:
+                path = _apply_overrides(path, overrides)
+                tmp_files.append(path)
+            settings.append(str(path))
+        if settings:
+            cmd.extend(["--load-settings", ";".join(settings)])
 
-    if filaments:
-        resolved = []
-        for f in filaments:
-            path = resolve_profile(f, engine, "filament", project_dir)
-            resolved.append(str(path))
-        cmd.extend(["--load-filaments", ";".join(resolved)])
+        if filaments:
+            resolved = []
+            for f in filaments:
+                path = resolve_profile(f, engine, "filament", project_dir)
+                resolved.append(str(path))
+            cmd.extend(["--load-filaments", ";".join(resolved)])
 
-    if filament_ids:
-        cmd.extend(["--load-filament-ids", ",".join(str(i) for i in filament_ids)])
+        if filament_ids:
+            cmd.extend(["--load-filament-ids", ",".join(str(i) for i in filament_ids)])
 
-    cmd.extend([
-        "--slice", "0",
-        "--outputdir", str(output_dir),
-        str(input_3mf),
-    ])
+        cmd.extend([
+            "--slice", "0",
+            "--outputdir", str(output_dir),
+            str(input_3mf),
+        ])
 
-    log.info("Slicing with %s: %s", engine, " ".join(cmd))
+        log.info("Slicing with %s: %s", engine, " ".join(cmd))
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-
-    if result.returncode != 0:
-        log.error("Slicer stderr:\n%s", result.stderr)
-        raise RuntimeError(
-            f"Slicer failed (exit code {result.returncode}):\n{result.stderr[:500]}"
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
 
-    log.info("Slicer stdout:\n%s", result.stdout)
-    log.info("Slicing complete. Output in %s", output_dir)
-    return output_dir
+        if result.returncode != 0:
+            log.error("Slicer stderr:\n%s", result.stderr)
+            raise RuntimeError(
+                f"Slicer failed (exit code {result.returncode}):\n{result.stderr[:500]}"
+            )
+
+        log.info("Slicer stdout:\n%s", result.stdout)
+        log.info("Slicing complete. Output in %s", output_dir)
+        return output_dir
+
+    finally:
+        for tmp in tmp_files:
+            tmp.unlink(missing_ok=True)

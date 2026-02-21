@@ -21,6 +21,7 @@ class SlicerConfig:
     printer: str | None = None
     process: str | None = None
     filaments: list[str] = field(default_factory=list)
+    overrides: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -65,6 +66,7 @@ def load_config(path: Path) -> FabprintConfig:
         printer=slicer_raw.get("printer"),
         process=slicer_raw.get("process"),
         filaments=slicer_raw.get("filaments", []),
+        overrides=slicer_raw.get("overrides", {}),
     )
     if slicer.engine not in ("bambu", "orca"):
         raise ValueError(f"slicer.engine must be 'bambu' or 'orca', got '{slicer.engine}'")
