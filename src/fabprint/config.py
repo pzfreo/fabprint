@@ -84,9 +84,12 @@ def load_config(path: Path) -> FabprintConfig:
         file_path = base_dir / p["file"]
         if not file_path.exists():
             raise FileNotFoundError(f"parts[{i}]: file not found: {file_path}")
+        copies = int(p.get("copies", 1))
+        if copies < 1:
+            raise ValueError(f"parts[{i}]: copies must be >= 1, got {copies}")
         parts.append(PartConfig(
             file=file_path,
-            copies=int(p.get("copies", 1)),
+            copies=copies,
             orient=orient,
         ))
 

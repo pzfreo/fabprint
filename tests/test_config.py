@@ -107,6 +107,16 @@ file = "nonexistent.stl"
         load_config(path)
 
 
+def test_bad_copies(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "cube.stl"
+copies = 0
+""", create_files=["cube.stl"])
+    with pytest.raises(ValueError, match="copies"):
+        load_config(path)
+
+
 def test_bad_engine(tmp_path):
     path = _write_toml(tmp_path, """
 [slicer]

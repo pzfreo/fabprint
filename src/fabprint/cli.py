@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from fabprint.arrange import arrange
-from fabprint.config import load_config
+from fabprint.config import FabprintConfig, load_config
 from fabprint.loader import load_mesh
 from fabprint.orient import orient_mesh
 from fabprint.plate import build_plate, export_plate
@@ -19,7 +19,6 @@ def main(argv: list[str] | None = None) -> None:
         prog="fabprint",
         description="Headless 3D print pipeline: arrange, slice, and print",
     )
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     sub = parser.add_subparsers(dest="command")
 
     # Shared args for subcommands
@@ -69,14 +68,14 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(levelname)s: %(message)s",
-    )
-
     if args.command is None:
         parser.print_help()
         sys.exit(1)
+
+    logging.basicConfig(
+        level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
+        format="%(levelname)s: %(message)s",
+    )
 
     if args.command == "plate":
         _cmd_plate(args)
@@ -86,7 +85,7 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_profiles(args)
 
 
-def _generate_plate(args: argparse.Namespace, output: Path) -> None:
+def _generate_plate(args: argparse.Namespace, output: Path) -> FabprintConfig:
     """Shared logic: load config, orient, arrange, optionally view, export 3MF."""
     cfg = load_config(args.config)
 
@@ -123,10 +122,8 @@ def _cmd_plate(args: argparse.Namespace) -> None:
 def _cmd_slice(args: argparse.Namespace) -> None:
     from fabprint.slicer import slice_plate
 
-    cfg = load_config(args.config)
-
     plate_3mf = Path("plate.3mf")
-    _generate_plate(args, plate_3mf)
+    cfg = _generate_plate(args, plate_3mf)
     print(f"Plate exported to {plate_3mf}")
 
     output_dir = slice_plate(
