@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -139,3 +140,32 @@ def slice_plate(
     finally:
         for tmp in tmp_files:
             tmp.unlink(missing_ok=True)
+
+
+def parse_gcode_stats(output_dir: Path) -> dict[str, str | float]:
+    """Parse filament usage and print time from gcode header comments.
+
+    Looks for OrcaSlicer/BambuStudio comment lines like:
+      ; filament used [g] = 42.94
+      ; total filament used [g] = 42.94
+      ; estimated printing time (normal mode) = 1h 33m 15s
+    Returns dict with 'filament_g' (float) and/or 'print_time' (str).
+    """
+    gcode_files = list(output_dir.glob("*.gcode"))
+    if not gcode_files:
+        return {}
+
+    stats: dict[str, str | float] = {}
+    with open(gcode_files[0]) as f:
+        for i, line in enumerate(f):
+            if i > 300:
+                break
+            if m := re.match(
+                r";\s*(?:total )?filament used \[g\]\s*=\s*([\d.]+)", line
+            ):
+                stats["filament_g"] = float(m.group(1))
+            elif m := re.match(
+                r";\s*estimated printing time.*?=\s*(.+)", line
+            ):
+                stats["print_time"] = m.group(1).strip()
+    return stats
