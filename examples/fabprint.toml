@@ -1,0 +1,19 @@
+[plate]
+size = [256, 256]
+padding = 5.0
+
+[slicer]
+engine = "orca"
+printer = "Bambu Lab P1S 0.4 nozzle"
+process = "0.20mm Standard @BBL X1C"
+filaments = ["Generic PLA @base"]
+
+[[parts]]
+file = "../tests/fixtures/cube_10mm.stl"
+copies = 4
+orient = "flat"
+
+[[parts]]
+file = "../tests/fixtures/cylinder_5x20mm.stl"
+copies = 2
+orient = "side"
