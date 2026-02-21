@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -13,23 +15,57 @@ from fabprint.profiles import resolve_profile_data
 
 log = logging.getLogger(__name__)
 
-SLICER_PATHS = {
-    "bambu": Path("/Applications/BambuStudio.app/Contents/MacOS/BambuStudio"),
-    "orca": Path("/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer"),
-}
+
+def _slicer_paths() -> dict[str, Path]:
+    """Return default slicer executable paths for the current platform."""
+    if sys.platform == "darwin":
+        return {
+            "bambu": Path("/Applications/BambuStudio.app/Contents/MacOS/BambuStudio"),
+            "orca": Path("/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer"),
+        }
+    elif sys.platform == "win32":
+        pf = Path("C:/Program Files")
+        return {
+            "bambu": pf / "BambuStudio/bambu-studio.exe",
+            "orca": pf / "OrcaSlicer/orca-slicer.exe",
+        }
+    else:  # Linux and other Unix
+        return {
+            "bambu": Path("/usr/bin/bambu-studio"),
+            "orca": Path("/usr/bin/orca-slicer"),
+        }
+
+
+SLICER_PATHS = _slicer_paths()
 
 
 def find_slicer(engine: str) -> Path:
-    """Find the slicer executable for the given engine."""
-    path = SLICER_PATHS.get(engine)
-    if path is None:
+    """Find the slicer executable for the given engine.
+
+    Checks the platform-specific default path first, then falls back
+    to searching PATH (useful on Linux or custom installs).
+    """
+    if engine not in SLICER_PATHS:
         raise ValueError(f"Unknown slicer engine: '{engine}'. Supported: {list(SLICER_PATHS)}")
-    if not path.exists():
-        raise FileNotFoundError(
-            f"{engine} slicer not found at {path}. "
-            f"Is {'BambuStudio' if engine == 'bambu' else 'OrcaSlicer'} installed?"
-        )
-    return path
+
+    path = SLICER_PATHS[engine]
+    if path.exists():
+        return path
+
+    # Fall back to PATH lookup (handles AppImage, Flatpak, AUR, custom installs)
+    exe_names = {
+        "bambu": ["bambu-studio", "BambuStudio", "BambuStudio.AppImage"],
+        "orca": ["orca-slicer", "OrcaSlicer", "OrcaSlicer.AppImage"],
+    }
+    for name in exe_names.get(engine, []):
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+
+    app_name = "BambuStudio" if engine == "bambu" else "OrcaSlicer"
+    raise FileNotFoundError(
+        f"{engine} slicer not found at {path} or on PATH. Is {app_name} installed?"
+    )
 
 
 def _write_tmp_profile(data: dict) -> Path:

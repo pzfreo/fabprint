@@ -1,26 +1,22 @@
 """Tests for slicer module."""
 
 import json
-from pathlib import Path
 
 import pytest
 
-from fabprint.slicer import _apply_overrides, find_slicer, parse_gcode_stats
-
-BAMBU_PATH = Path("/Applications/BambuStudio.app/Contents/MacOS/BambuStudio")
-ORCA_PATH = Path("/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer")
+from fabprint.slicer import SLICER_PATHS, _apply_overrides, find_slicer, parse_gcode_stats
 
 
 def test_find_bambu():
-    if not BAMBU_PATH.exists():
+    if not SLICER_PATHS["bambu"].exists():
         pytest.skip("BambuStudio not installed")
-    assert find_slicer("bambu") == BAMBU_PATH
+    assert find_slicer("bambu") == SLICER_PATHS["bambu"]
 
 
 def test_find_orca():
-    if not ORCA_PATH.exists():
+    if not SLICER_PATHS["orca"].exists():
         pytest.skip("OrcaSlicer not installed")
-    assert find_slicer("orca") == ORCA_PATH
+    assert find_slicer("orca") == SLICER_PATHS["orca"]
 
 
 def test_find_unknown():
