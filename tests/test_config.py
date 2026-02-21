@@ -152,6 +152,35 @@ file = "cube.stl"
         load_config(path)
 
 
+def test_scale(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "cube.stl"
+scale = 2.0
+""", create_files=["cube.stl"])
+    cfg = load_config(path)
+    assert cfg.parts[0].scale == 2.0
+
+
+def test_scale_default(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "cube.stl"
+""", create_files=["cube.stl"])
+    cfg = load_config(path)
+    assert cfg.parts[0].scale == 1.0
+
+
+def test_bad_scale(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "cube.stl"
+scale = 0
+""", create_files=["cube.stl"])
+    with pytest.raises(ValueError, match="scale"):
+        load_config(path)
+
+
 def test_overrides(tmp_path):
     path = _write_toml(tmp_path, """
 [slicer]
