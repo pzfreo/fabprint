@@ -6,14 +6,16 @@ padding = 5.0
 engine = "orca"
 printer = "Bambu Lab P1S 0.4 nozzle"
 process = "0.20mm Standard @BBL X1C"
-filaments = ["Generic PLA @base"]
+filaments = ["Generic PLA @base", "Generic PLA @base"]  # AMS slot 1, 2
 
 [[parts]]
 file = "../tests/fixtures/cube_10mm.stl"
 copies = 4
 orient = "flat"
+filament = 1
 
 [[parts]]
 file = "../tests/fixtures/cylinder_5x20mm.stl"
 copies = 2
 orient = "side"
+filament = 2

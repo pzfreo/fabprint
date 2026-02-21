@@ -28,6 +28,7 @@ class PartConfig:
     file: Path
     copies: int = 1
     orient: str = "flat"
+    filament: int = 1  # AMS slot (1-indexed)
 
 
 @dataclass
@@ -87,10 +88,14 @@ def load_config(path: Path) -> FabprintConfig:
         copies = int(p.get("copies", 1))
         if copies < 1:
             raise ValueError(f"parts[{i}]: copies must be >= 1, got {copies}")
+        filament = int(p.get("filament", 1))
+        if filament < 1:
+            raise ValueError(f"parts[{i}]: filament must be >= 1, got {filament}")
         parts.append(PartConfig(
             file=file_path,
             copies=copies,
             orient=orient,
+            filament=filament,
         ))
 
     return FabprintConfig(plate=plate, slicer=slicer, parts=parts, base_dir=base_dir)

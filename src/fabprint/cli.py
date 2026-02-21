@@ -85,12 +85,15 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_profiles(args)
 
 
-def _generate_plate(args: argparse.Namespace, output: Path) -> FabprintConfig:
+def _generate_plate(
+    args: argparse.Namespace, output: Path
+) -> tuple[FabprintConfig, list[int]]:
     """Shared logic: load config, orient, arrange, optionally view, export 3MF."""
     cfg = load_config(args.config)
 
     meshes = []
     names = []
+    filament_ids = []
     for part in cfg.parts:
         base_mesh = load_mesh(part.file)
         oriented = orient_mesh(base_mesh, part.orient)
@@ -98,6 +101,7 @@ def _generate_plate(args: argparse.Namespace, output: Path) -> FabprintConfig:
             meshes.append(oriented.copy())
             suffix = f"_{i + 1}" if part.copies > 1 else ""
             names.append(f"{part.file.stem}{suffix}")
+            filament_ids.append(part.filament)
 
     logging.info("Loaded %d parts (%d unique)", len(meshes), len(cfg.parts))
 
@@ -110,12 +114,12 @@ def _generate_plate(args: argparse.Namespace, output: Path) -> FabprintConfig:
 
     scene = build_plate(placements)
     export_plate(scene, output)
-    return cfg
+    return cfg, filament_ids
 
 
 def _cmd_plate(args: argparse.Namespace) -> None:
     output = args.output or Path("plate.3mf")
-    _generate_plate(args, output)
+    cfg, _filament_ids = _generate_plate(args, output)
     print(f"Plate exported to {output}")
 
 
@@ -123,7 +127,7 @@ def _cmd_slice(args: argparse.Namespace) -> None:
     from fabprint.slicer import slice_plate
 
     plate_3mf = Path("plate.3mf")
-    cfg = _generate_plate(args, plate_3mf)
+    cfg, filament_ids = _generate_plate(args, plate_3mf)
     print(f"Plate exported to {plate_3mf}")
 
     output_dir = slice_plate(
@@ -133,6 +137,7 @@ def _cmd_slice(args: argparse.Namespace) -> None:
         printer=cfg.slicer.printer,
         process=cfg.slicer.process,
         filaments=cfg.slicer.filaments,
+        filament_ids=filament_ids,
         project_dir=cfg.base_dir,
     )
     print(f"Sliced gcode in {output_dir}")

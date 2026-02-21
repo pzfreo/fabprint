@@ -36,6 +36,7 @@ def slice_plate(
     printer: str | None = None,
     process: str | None = None,
     filaments: list[str] | None = None,
+    filament_ids: list[int] | None = None,
     project_dir: Path | None = None,
 ) -> Path:
     """Slice a 3MF file using BambuStudio or OrcaSlicer CLI.
@@ -73,6 +74,9 @@ def slice_plate(
             path = resolve_profile(f, engine, "filament", project_dir)
             resolved.append(str(path))
         cmd.extend(["--load-filaments", ";".join(resolved)])
+
+    if filament_ids:
+        cmd.extend(["--load-filament-ids", ",".join(str(i) for i in filament_ids)])
 
     cmd.extend([
         "--slice", "0",

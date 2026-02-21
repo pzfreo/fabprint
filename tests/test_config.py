@@ -34,10 +34,12 @@ filaments = ["Generic PLA @base"]
 file = "cube.stl"
 copies = 2
 orient = "flat"
+filament = 1
 
 [[parts]]
 file = "cyl.stl"
 orient = "upright"
+filament = 2
 """, create_files=["cube.stl", "cyl.stl"])
 
     cfg = load_config(path)
@@ -50,7 +52,9 @@ orient = "upright"
     assert len(cfg.parts) == 2
     assert cfg.parts[0].copies == 2
     assert cfg.parts[0].orient == "flat"
+    assert cfg.parts[0].filament == 1
     assert cfg.parts[1].orient == "upright"
+    assert cfg.parts[1].filament == 2
 
 
 def test_defaults(tmp_path):
@@ -104,6 +108,25 @@ def test_missing_file(tmp_path):
 file = "nonexistent.stl"
 """)
     with pytest.raises(FileNotFoundError, match="nonexistent.stl"):
+        load_config(path)
+
+
+def test_filament_defaults_to_1(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "cube.stl"
+""", create_files=["cube.stl"])
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 1
+
+
+def test_bad_filament(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "cube.stl"
+filament = 0
+""", create_files=["cube.stl"])
+    with pytest.raises(ValueError, match="filament"):
         load_config(path)
 
 
