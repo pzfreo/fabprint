@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -139,8 +138,10 @@ def pin_profiles(
     filaments: list[str],
     project_dir: Path,
 ) -> list[Path]:
-    """Copy referenced profiles into <project_dir>/profiles/ for reproducibility.
+    """Flatten and save profiles into <project_dir>/profiles/ for reproducibility.
 
+    Profiles are fully resolved (inheritance chain merged, 'inherits' removed)
+    so builds are independent of the installed slicer version.
     Returns list of pinned file paths.
     """
     pinned = []
@@ -158,16 +159,15 @@ def pin_profiles(
             log.info("Skipping '%s' (already a path)", name)
             continue
 
-        source = resolve_profile(name, engine, category, project_dir)
         dest_dir = project_dir / "profiles" / category
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{name}.json"
 
-        if dest.exists():
-            log.info("Already pinned: %s", dest)
-        else:
-            shutil.copy2(source, dest)
-            log.info("Pinned %s → %s", source.name, dest)
+        # Always re-flatten to pick up any slicer updates
+        data = resolve_profile_data(name, engine, category)
+        with open(dest, "w") as f:
+            json.dump(data, f, indent=4)
+        log.info("Pinned %s → %s (flattened)", name, dest)
         pinned.append(dest)
 
     return pinned
