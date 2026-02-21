@@ -1,0 +1,32 @@
+# Gib Tuners MK2 — C13-10, 5-gang LH
+# FDM print plate for Bambu Lab P1S
+
+[plate]
+size = [256, 256]
+padding = 5.0
+
+[slicer]
+engine = "orca"
+printer = "Bambu Lab P1S 0.4 nozzle"
+process = "0.20mm Standard @BBL X1C"
+filaments = ["Generic PLA @base"]
+
+[[parts]]
+file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/frame_lh_5gang.stl"
+copies = 1
+rotate = [180, 0, 0]  # flip so mounting plate faces down
+
+[[parts]]
+file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/peg_head_lh.stl"
+copies = 5
+rotate = [90, 0, 0]   # shaft horizontal for layer strength
+
+[[parts]]
+file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/wheel_lh.stl"
+copies = 5
+orient = "upright"     # gear face flat on bed
+
+[[parts]]
+file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/string_post.stl"
+copies = 5
+rotate = [0, 90, 0]   # shaft horizontal for strength

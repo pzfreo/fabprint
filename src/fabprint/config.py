@@ -28,6 +28,7 @@ class PartConfig:
     file: Path
     copies: int = 1
     orient: str = "flat"
+    rotate: list[float] | None = None  # [rx, ry, rz] in degrees, overrides orient
     filament: int = 1  # AMS slot (1-indexed)
 
 
@@ -91,10 +92,16 @@ def load_config(path: Path) -> FabprintConfig:
         filament = int(p.get("filament", 1))
         if filament < 1:
             raise ValueError(f"parts[{i}]: filament must be >= 1, got {filament}")
+        rotate = p.get("rotate")
+        if rotate is not None:
+            if not isinstance(rotate, list) or len(rotate) != 3:
+                raise ValueError(f"parts[{i}]: rotate must be [rx, ry, rz], got {rotate}")
+            rotate = [float(r) for r in rotate]
         parts.append(PartConfig(
             file=file_path,
             copies=copies,
             orient=orient,
+            rotate=rotate,
             filament=filament,
         ))
 

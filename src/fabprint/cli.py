@@ -96,7 +96,7 @@ def _generate_plate(
     filament_ids = []
     for part in cfg.parts:
         base_mesh = load_mesh(part.file)
-        oriented = orient_mesh(base_mesh, part.orient)
+        oriented = orient_mesh(base_mesh, part.orient, part.rotate)
         for i in range(part.copies):
             meshes.append(oriented.copy())
             suffix = f"_{i + 1}" if part.copies > 1 else ""
@@ -110,7 +110,9 @@ def _generate_plate(
     if getattr(args, "view", False):
         from fabprint.viewer import show_plate
 
-        show_plate([p.mesh for p in placements], [p.name for p in placements])
+        show_plate(
+            [p.mesh for p in placements], [p.name for p in placements], cfg.plate.size
+        )
 
     scene = build_plate(placements)
     export_plate(scene, output)

@@ -68,5 +68,33 @@ def arrange(
         mesh.apply_translation([offset_x, offset_y, 0])
         placements.append(Placement(mesh=mesh, name=names[rid], x=x, y=y))
 
+    # Center the packed group on the plate
+    _center_on_plate(placements, plate_size)
+
     log.info("Packed %d parts onto plate", len(placements))
     return placements
+
+
+def _center_on_plate(placements: list[Placement], plate_size: tuple[float, float]) -> None:
+    """Translate all placements so the group is centered on the plate."""
+    if not placements:
+        return
+
+    # Find bounding box of all placed meshes
+    all_min_x = min(p.mesh.bounds[0][0] for p in placements)
+    all_max_x = max(p.mesh.bounds[1][0] for p in placements)
+    all_min_y = min(p.mesh.bounds[0][1] for p in placements)
+    all_max_y = max(p.mesh.bounds[1][1] for p in placements)
+
+    group_cx = (all_min_x + all_max_x) / 2
+    group_cy = (all_min_y + all_max_y) / 2
+    plate_cx = plate_size[0] / 2
+    plate_cy = plate_size[1] / 2
+
+    dx = plate_cx - group_cx
+    dy = plate_cy - group_cy
+
+    for p in placements:
+        p.mesh.apply_translation([dx, dy, 0])
+        p.x += dx
+        p.y += dy
