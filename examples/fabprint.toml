@@ -1,0 +1,16 @@
+[plate]
+size = [256, 256]
+padding = 5.0
+
+[slicer]
+engine = "bambu"
+
+[[parts]]
+file = "../tests/fixtures/cube_10mm.stl"
+copies = 4
+orient = "flat"
+
+[[parts]]
+file = "../tests/fixtures/cylinder_5x20mm.stl"
+copies = 2
+orient = "side"

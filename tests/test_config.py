@@ -1,0 +1,113 @@
+"""Tests for config loading and validation."""
+
+from pathlib import Path
+
+import pytest
+
+from fabprint.config import load_config
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _write_toml(tmp_path: Path, content: str, create_files: list[str] | None = None) -> Path:
+    """Write a toml file and optionally create referenced part files."""
+    toml_path = tmp_path / "fabprint.toml"
+    toml_path.write_text(content)
+    for f in create_files or []:
+        (tmp_path / f).touch()
+    return toml_path
+
+
+def test_valid_config(tmp_path):
+    path = _write_toml(tmp_path, """
+[plate]
+size = [200, 200]
+padding = 3.0
+
+[slicer]
+engine = "orca"
+
+[[parts]]
+file = "cube.stl"
+copies = 2
+orient = "flat"
+
+[[parts]]
+file = "cyl.stl"
+orient = "upright"
+""", create_files=["cube.stl", "cyl.stl"])
+
+    cfg = load_config(path)
+    assert cfg.plate.size == (200, 200)
+    assert cfg.plate.padding == 3.0
+    assert cfg.slicer.engine == "orca"
+    assert len(cfg.parts) == 2
+    assert cfg.parts[0].copies == 2
+    assert cfg.parts[0].orient == "flat"
+    assert cfg.parts[1].orient == "upright"
+
+
+def test_defaults(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "cube.stl"
+""", create_files=["cube.stl"])
+
+    cfg = load_config(path)
+    assert cfg.plate.size == (256.0, 256.0)
+    assert cfg.plate.padding == 5.0
+    assert cfg.slicer.engine == "bambu"
+    assert cfg.parts[0].copies == 1
+    assert cfg.parts[0].orient == "flat"
+
+
+def test_missing_parts(tmp_path):
+    path = _write_toml(tmp_path, """
+[plate]
+size = [200, 200]
+""")
+    with pytest.raises(ValueError, match="At least one"):
+        load_config(path)
+
+
+def test_bad_orient(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "cube.stl"
+orient = "diagonal"
+""", create_files=["cube.stl"])
+    with pytest.raises(ValueError, match="orient"):
+        load_config(path)
+
+
+def test_bad_plate_size(tmp_path):
+    path = _write_toml(tmp_path, """
+[plate]
+size = [-1, 200]
+
+[[parts]]
+file = "cube.stl"
+""", create_files=["cube.stl"])
+    with pytest.raises(ValueError, match="plate.size"):
+        load_config(path)
+
+
+def test_missing_file(tmp_path):
+    path = _write_toml(tmp_path, """
+[[parts]]
+file = "nonexistent.stl"
+""")
+    with pytest.raises(FileNotFoundError, match="nonexistent.stl"):
+        load_config(path)
+
+
+def test_bad_engine(tmp_path):
+    path = _write_toml(tmp_path, """
+[slicer]
+engine = "cura"
+
+[[parts]]
+file = "cube.stl"
+""", create_files=["cube.stl"])
+    with pytest.raises(ValueError, match="engine"):
+        load_config(path)
