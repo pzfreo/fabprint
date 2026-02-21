@@ -39,10 +39,33 @@ def main(argv: list[str] | None = None) -> None:
         "slice", parents=[common], help="Arrange, export, and slice to gcode"
     )
     slice_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
-    slice_cmd.add_argument("-o", "--output-dir", type=Path, default=None, help="Output directory")
+    slice_cmd.add_argument(
+        "-o", "--output-dir", type=Path, default=None, help="Output directory"
+    )
     slice_cmd.add_argument(
         "--view", action="store_true", help="Show plate in viewer before slicing"
     )
+
+    # profiles subcommand
+    profiles_cmd = sub.add_parser(
+        "profiles", parents=[common], help="List or pin slicer profiles"
+    )
+    profiles_sub = profiles_cmd.add_subparsers(dest="profiles_command")
+
+    list_cmd = profiles_sub.add_parser("list", help="List available profiles")
+    list_cmd.add_argument(
+        "--engine", default="orca", choices=["orca", "bambu"],
+        help="Slicer engine (default: orca)",
+    )
+    list_cmd.add_argument(
+        "--category", default=None, choices=["machine", "process", "filament"],
+        help="Filter by category",
+    )
+
+    pin_cmd = profiles_sub.add_parser(
+        "pin", help="Pin profiles from config into local profiles/ dir"
+    )
+    pin_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
 
     args = parser.parse_args(argv)
 
@@ -59,6 +82,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_plate(args)
     elif args.command == "slice":
         _cmd_slice(args)
+    elif args.command == "profiles":
+        _cmd_profiles(args)
 
 
 def _generate_plate(args: argparse.Namespace, output: Path) -> None:
@@ -100,7 +125,6 @@ def _cmd_slice(args: argparse.Namespace) -> None:
 
     cfg = load_config(args.config)
 
-    # Generate plate 3MF to a temp file if no explicit output
     plate_3mf = Path("plate.3mf")
     _generate_plate(args, plate_3mf)
     print(f"Plate exported to {plate_3mf}")
@@ -109,8 +133,39 @@ def _cmd_slice(args: argparse.Namespace) -> None:
         input_3mf=plate_3mf,
         engine=cfg.slicer.engine,
         output_dir=args.output_dir,
-        print_profile=cfg.slicer.print_profile,
+        printer=cfg.slicer.printer,
+        process=cfg.slicer.process,
         filaments=cfg.slicer.filaments,
-        printer_profile=cfg.slicer.printer_profile,
+        project_dir=cfg.base_dir,
     )
     print(f"Sliced gcode in {output_dir}")
+
+
+def _cmd_profiles(args: argparse.Namespace) -> None:
+    from fabprint.profiles import CATEGORIES, discover_profiles, pin_profiles
+
+    if args.profiles_command == "list":
+        profiles = discover_profiles(args.engine)
+        categories = [args.category] if args.category else list(CATEGORIES)
+        for cat in categories:
+            names = profiles.get(cat, {})
+            print(f"\n{cat} ({len(names)} profiles):")
+            for name in names:
+                print(f"  {name}")
+
+    elif args.profiles_command == "pin":
+        cfg = load_config(args.config)
+        pinned = pin_profiles(
+            engine=cfg.slicer.engine,
+            printer=cfg.slicer.printer,
+            process=cfg.slicer.process,
+            filaments=cfg.slicer.filaments,
+            project_dir=cfg.base_dir,
+        )
+        print(f"Pinned {len(pinned)} profile(s)")
+        for p in pinned:
+            print(f"  {p}")
+
+    else:
+        print("Usage: fabprint profiles {list|pin}")
+        sys.exit(1)

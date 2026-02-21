@@ -4,10 +4,9 @@ padding = 5.0
 
 [slicer]
 engine = "orca"
-# Paths to slicer profile JSONs (from OrcaSlicer/BambuStudio system profiles)
-# printer_profile = "/path/to/machine.json"
-# print_profile = "/path/to/process.json"
-# filaments = ["/path/to/filament.json"]
+printer = "Bambu Lab P1S 0.4 nozzle"
+process = "0.20mm Standard @BBL X1C"
+filaments = ["Generic PLA @base"]
 
 [[parts]]
 file = "../tests/fixtures/cube_10mm.stl"

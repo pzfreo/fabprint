@@ -18,9 +18,9 @@ class PlateConfig:
 @dataclass
 class SlicerConfig:
     engine: str = "bambu"
-    print_profile: str | None = None
+    printer: str | None = None
+    process: str | None = None
     filaments: list[str] = field(default_factory=list)
-    printer_profile: str | None = None
 
 
 @dataclass
@@ -60,9 +60,9 @@ def load_config(path: Path) -> FabprintConfig:
     slicer_raw = raw.get("slicer", {})
     slicer = SlicerConfig(
         engine=slicer_raw.get("engine", "bambu"),
-        print_profile=slicer_raw.get("print_profile"),
+        printer=slicer_raw.get("printer"),
+        process=slicer_raw.get("process"),
         filaments=slicer_raw.get("filaments", []),
-        printer_profile=slicer_raw.get("printer_profile"),
     )
     if slicer.engine not in ("bambu", "orca"):
         raise ValueError(f"slicer.engine must be 'bambu' or 'orca', got '{slicer.engine}'")

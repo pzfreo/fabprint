@@ -26,6 +26,9 @@ padding = 3.0
 
 [slicer]
 engine = "orca"
+printer = "Bambu Lab P1S 0.4 nozzle"
+process = "0.20mm Standard @BBL X1C"
+filaments = ["Generic PLA @base"]
 
 [[parts]]
 file = "cube.stl"
@@ -41,6 +44,9 @@ orient = "upright"
     assert cfg.plate.size == (200, 200)
     assert cfg.plate.padding == 3.0
     assert cfg.slicer.engine == "orca"
+    assert cfg.slicer.printer == "Bambu Lab P1S 0.4 nozzle"
+    assert cfg.slicer.process == "0.20mm Standard @BBL X1C"
+    assert cfg.slicer.filaments == ["Generic PLA @base"]
     assert len(cfg.parts) == 2
     assert cfg.parts[0].copies == 2
     assert cfg.parts[0].orient == "flat"

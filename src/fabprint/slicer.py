@@ -6,6 +6,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from fabprint.profiles import resolve_profile
+
 log = logging.getLogger(__name__)
 
 SLICER_PATHS = {
@@ -31,12 +33,14 @@ def slice_plate(
     input_3mf: Path,
     engine: str = "bambu",
     output_dir: Path | None = None,
-    print_profile: str | None = None,
+    printer: str | None = None,
+    process: str | None = None,
     filaments: list[str] | None = None,
-    printer_profile: str | None = None,
+    project_dir: Path | None = None,
 ) -> Path:
     """Slice a 3MF file using BambuStudio or OrcaSlicer CLI.
 
+    Profile names are resolved via profiles.resolve_profile().
     Returns the output directory containing the sliced gcode.
     """
     slicer = find_slicer(engine)
@@ -52,17 +56,23 @@ def slice_plate(
 
     cmd = [str(slicer)]
 
-    # Load settings if provided
+    # Resolve and load settings (machine + process)
     settings = []
-    if printer_profile:
-        settings.append(printer_profile)
-    if print_profile:
-        settings.append(print_profile)
+    if printer:
+        path = resolve_profile(printer, engine, "machine", project_dir)
+        settings.append(str(path))
+    if process:
+        path = resolve_profile(process, engine, "process", project_dir)
+        settings.append(str(path))
     if settings:
         cmd.extend(["--load-settings", ";".join(settings)])
 
     if filaments:
-        cmd.extend(["--load-filaments", ";".join(filaments)])
+        resolved = []
+        for f in filaments:
+            path = resolve_profile(f, engine, "filament", project_dir)
+            resolved.append(str(path))
+        cmd.extend(["--load-filaments", ";".join(resolved)])
 
     cmd.extend([
         "--slice", "0",
