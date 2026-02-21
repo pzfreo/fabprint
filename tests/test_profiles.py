@@ -1,22 +1,22 @@
 """Tests for profile discovery, resolution, and pinning."""
 
 import json
-from pathlib import Path
 
 import pytest
 
 from fabprint.profiles import (
+    SYSTEM_DIRS,
     discover_profiles,
     pin_profiles,
     resolve_profile,
     resolve_profile_data,
 )
 
-ORCA_SYSTEM = Path.home() / "Library/Application Support/OrcaSlicer/system/BBL"
+ORCA_SYSTEM = SYSTEM_DIRS.get("orca")
 
 
 def _has_orca():
-    return ORCA_SYSTEM.is_dir()
+    return ORCA_SYSTEM is not None and ORCA_SYSTEM.is_dir()
 
 
 @pytest.mark.skipif(not _has_orca(), reason="OrcaSlicer not installed")

@@ -4,16 +4,36 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 CATEGORIES = ("machine", "process", "filament")
 
-SYSTEM_DIRS: dict[str, Path] = {
-    "bambu": Path.home() / "Library/Application Support/BambuStudio/system/BBL",
-    "orca": Path.home() / "Library/Application Support/OrcaSlicer/system/BBL",
-}
+
+def _system_dirs() -> dict[str, Path]:
+    """Return slicer system profile directories for the current platform."""
+    if sys.platform == "darwin":
+        return {
+            "bambu": Path.home() / "Library/Application Support/BambuStudio/system/BBL",
+            "orca": Path.home() / "Library/Application Support/OrcaSlicer/system/BBL",
+        }
+    elif sys.platform == "win32":
+        appdata = Path.home() / "AppData/Roaming"
+        return {
+            "bambu": appdata / "BambuStudio/system/BBL",
+            "orca": appdata / "OrcaSlicer/system/BBL",
+        }
+    else:  # Linux and other Unix
+        config = Path.home() / ".config"
+        return {
+            "bambu": config / "BambuStudio/system/BBL",
+            "orca": config / "OrcaSlicer/system/BBL",
+        }
+
+
+SYSTEM_DIRS = _system_dirs()
 
 
 def _is_path(value: str) -> bool:

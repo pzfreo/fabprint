@@ -5,8 +5,12 @@ from pathlib import Path
 import pytest
 
 from fabprint.cli import main
+from fabprint.profiles import SYSTEM_DIRS
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+_orca_system = SYSTEM_DIRS.get("orca")
+_has_orca = _orca_system is not None and _orca_system.is_dir()
 
 
 def _write_config(tmp_path: Path, engine: str = "orca") -> Path:
@@ -65,6 +69,7 @@ def test_profiles_list():
     main(["profiles", "list", "--engine", "orca", "--category", "machine"])
 
 
+@pytest.mark.skipif(not _has_orca, reason="OrcaSlicer not installed")
 def test_profiles_pin(tmp_path):
     config = tmp_path / "fabprint.toml"
     config.write_text(f"""
