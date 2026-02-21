@@ -21,6 +21,7 @@ class SlicerConfig:
     printer: str | None = None
     process: str | None = None
     filaments: list[str] = field(default_factory=list)
+    overrides: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -28,6 +29,8 @@ class PartConfig:
     file: Path
     copies: int = 1
     orient: str = "flat"
+    rotate: list[float] | None = None  # [rx, ry, rz] in degrees, overrides orient
+    filament: int = 1  # AMS slot (1-indexed)
 
 
 @dataclass
@@ -63,6 +66,7 @@ def load_config(path: Path) -> FabprintConfig:
         printer=slicer_raw.get("printer"),
         process=slicer_raw.get("process"),
         filaments=slicer_raw.get("filaments", []),
+        overrides=slicer_raw.get("overrides", {}),
     )
     if slicer.engine not in ("bambu", "orca"):
         raise ValueError(f"slicer.engine must be 'bambu' or 'orca', got '{slicer.engine}'")
@@ -87,10 +91,20 @@ def load_config(path: Path) -> FabprintConfig:
         copies = int(p.get("copies", 1))
         if copies < 1:
             raise ValueError(f"parts[{i}]: copies must be >= 1, got {copies}")
+        filament = int(p.get("filament", 1))
+        if filament < 1:
+            raise ValueError(f"parts[{i}]: filament must be >= 1, got {filament}")
+        rotate = p.get("rotate")
+        if rotate is not None:
+            if not isinstance(rotate, list) or len(rotate) != 3:
+                raise ValueError(f"parts[{i}]: rotate must be [rx, ry, rz], got {rotate}")
+            rotate = [float(r) for r in rotate]
         parts.append(PartConfig(
             file=file_path,
             copies=copies,
             orient=orient,
+            rotate=rotate,
+            filament=filament,
         ))
 
     return FabprintConfig(plate=plate, slicer=slicer, parts=parts, base_dir=base_dir)

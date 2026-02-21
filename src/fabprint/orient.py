@@ -8,11 +8,26 @@ import trimesh
 from trimesh.transformations import rotation_matrix
 
 
-def orient_mesh(mesh: trimesh.Trimesh, strategy: str) -> trimesh.Trimesh:
-    """Orient a mesh according to a named strategy. Returns a copy."""
+def orient_mesh(
+    mesh: trimesh.Trimesh,
+    strategy: str,
+    rotate: list[float] | None = None,
+) -> trimesh.Trimesh:
+    """Orient a mesh according to a named strategy or custom rotation. Returns a copy.
+
+    If rotate is provided, it should be [rx, ry, rz] in degrees.
+    """
     mesh = mesh.copy()
 
-    if strategy == "flat":
+    if rotate:
+        rx, ry, rz = rotate
+        if rx:
+            mesh.apply_transform(rotation_matrix(math.radians(rx), [1, 0, 0]))
+        if ry:
+            mesh.apply_transform(rotation_matrix(math.radians(ry), [0, 1, 0]))
+        if rz:
+            mesh.apply_transform(rotation_matrix(math.radians(rz), [0, 0, 1]))
+    elif strategy == "flat":
         _orient_flat(mesh)
     elif strategy == "upright":
         pass  # keep as-is
