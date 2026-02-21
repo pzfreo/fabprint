@@ -12,12 +12,22 @@ from fabprint.arrange import Placement
 log = logging.getLogger(__name__)
 
 
-def build_plate(placements: list[Placement]) -> trimesh.Scene:
-    """Build a trimesh Scene from placed meshes."""
+def build_plate(
+    placements: list[Placement],
+    plate_size: tuple[float, float] = (256.0, 256.0),
+) -> trimesh.Scene:
+    """Build a trimesh Scene from placed meshes.
+
+    Meshes are shifted so the plate center is at origin (0,0),
+    matching slicer bed coordinate conventions.
+    """
+    cx, cy = plate_size[0] / 2, plate_size[1] / 2
     scene = trimesh.Scene()
     for p in placements:
-        p.mesh.metadata["name"] = p.name
-        scene.add_geometry(p.mesh, node_name=p.name)
+        mesh = p.mesh.copy()
+        mesh.apply_translation([-cx, -cy, 0])
+        mesh.metadata["name"] = p.name
+        scene.add_geometry(mesh, node_name=p.name)
     return scene
 
 

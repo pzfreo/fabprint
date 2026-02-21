@@ -9,6 +9,7 @@ from fabprint.profiles import (
     discover_profiles,
     pin_profiles,
     resolve_profile,
+    resolve_profile_data,
 )
 
 ORCA_SYSTEM = Path.home() / "Library/Application Support/OrcaSlicer/system/BBL"
@@ -79,3 +80,40 @@ def test_pin_profiles(tmp_path):
     # Verify pinned files are valid JSON
     for p in pinned:
         json.loads(p.read_text())
+
+
+def test_resolve_profile_data_flattens_inheritance(tmp_path):
+    """Verify resolve_profile_data merges the full inheritance chain."""
+    # Create a 2-level inheritance chain in a fake system dir
+    cat_dir = tmp_path / "profiles" / "process"
+    cat_dir.mkdir(parents=True)
+
+    root = {"from": "system", "wall_loops": 2, "enable_support": 0, "infill": "grid"}
+    cat_dir.joinpath("root.json").write_text(json.dumps(root))
+
+    child = {"from": "system", "inherits": "root", "wall_loops": 3}
+    cat_dir.joinpath("child.json").write_text(json.dumps(child))
+
+    data = resolve_profile_data(
+        str(cat_dir / "child.json"), "orca", "process", tmp_path
+    )
+    # Child overrides wall_loops, inherits enable_support and infill from root
+    assert data["wall_loops"] == 3
+    assert data["enable_support"] == 0
+    assert data["infill"] == "grid"
+    # inherits key must be stripped
+    assert "inherits" not in data
+
+
+@pytest.mark.skipif(not _has_orca(), reason="OrcaSlicer not installed")
+def test_resolve_profile_data_real_process():
+    """Verify real OrcaSlicer process profile resolves enable_support."""
+    data = resolve_profile_data(
+        "0.20mm Standard @BBL X1C", "orca", "process"
+    )
+    # Must have enable_support from the root of the chain
+    assert "enable_support" in data
+    # Must not have inherits (fully flattened)
+    assert "inherits" not in data
+    # Should have many keys from the full chain
+    assert len(data) > 50

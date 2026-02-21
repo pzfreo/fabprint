@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 import tempfile
 from pathlib import Path
 
-from fabprint.profiles import resolve_profile
+from fabprint.profiles import resolve_profile_data
 
 log = logging.getLogger(__name__)
 
@@ -31,20 +32,29 @@ def find_slicer(engine: str) -> Path:
     return path
 
 
-def _apply_overrides(profile_path: Path, overrides: dict[str, object]) -> Path:
-    """Create a temp copy of a profile JSON with overrides applied."""
-    with open(profile_path) as f:
-        data = json.load(f)
+def _write_tmp_profile(data: dict) -> Path:
+    """Write a profile dict to a temp JSON file."""
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".json", prefix="fabprint_", delete=False, mode="w"
+    )
+    json.dump(data, tmp, indent=4)
+    tmp.close()
+    return Path(tmp.name)
+
+
+def _apply_overrides(data: dict, overrides: dict[str, object], name: str) -> Path:
+    """Create a temp profile JSON with overrides applied to resolved data."""
 
     applied = []
     for key, value in overrides.items():
         old = data.get(key, "<unset>")
-        data[key] = value
+        # Slicer profiles store all values as strings
+        data[key] = str(value)
         applied.append(f"  {key}: {old} → {value}")
 
     log.info(
         "Applied %d override(s) to %s:\n%s",
-        len(applied), profile_path.name, "\n".join(applied),
+        len(applied), name, "\n".join(applied),
     )
 
     tmp = tempfile.NamedTemporaryFile(
@@ -88,15 +98,21 @@ def slice_plate(
 
     try:
         # Resolve and load settings (machine + process)
+        # Profiles are flattened (inheritance resolved) to avoid issues
+        # with the slicer not finding parent profiles from temp files.
         settings = []
         if printer:
-            path = resolve_profile(printer, engine, "machine", project_dir)
+            data = resolve_profile_data(printer, engine, "machine", project_dir)
+            path = _write_tmp_profile(data)
+            tmp_files.append(path)
             settings.append(str(path))
         if process:
-            path = resolve_profile(process, engine, "process", project_dir)
+            data = resolve_profile_data(process, engine, "process", project_dir)
             if overrides:
-                path = _apply_overrides(path, overrides)
-                tmp_files.append(path)
+                path = _apply_overrides(data, overrides, process)
+            else:
+                path = _write_tmp_profile(data)
+            tmp_files.append(path)
             settings.append(str(path))
         if settings:
             cmd.extend(["--load-settings", ";".join(settings)])
@@ -104,11 +120,15 @@ def slice_plate(
         if filaments:
             resolved = []
             for f in filaments:
-                path = resolve_profile(f, engine, "filament", project_dir)
+                data = resolve_profile_data(f, engine, "filament", project_dir)
+                path = _write_tmp_profile(data)
+                tmp_files.append(path)
                 resolved.append(str(path))
             cmd.extend(["--load-filaments", ";".join(resolved)])
 
-        if filament_ids:
+        # Note: --load-filament-ids is only supported with STL inputs, not 3MF.
+        # For 3MF, filament assignment must be embedded in the file itself.
+        if filament_ids and not str(input_3mf).endswith(".3mf"):
             cmd.extend(["--load-filament-ids", ",".join(str(i) for i in filament_ids)])
 
         cmd.extend([
@@ -139,3 +159,40 @@ def slice_plate(
     finally:
         for tmp in tmp_files:
             tmp.unlink(missing_ok=True)
+
+
+def parse_gcode_stats(output_dir: Path) -> dict[str, str | float]:
+    """Parse filament usage and print time from gcode comments.
+
+    Scans header (first 300 lines) for print time, and tail (last 50 lines)
+    for filament usage. Handles multiple OrcaSlicer/BambuStudio formats.
+    Returns dict with 'filament_g' and/or 'filament_cm3' and/or 'print_time'.
+    """
+    gcode_files = list(output_dir.glob("*.gcode"))
+    if not gcode_files:
+        return {}
+
+    stats: dict[str, str | float] = {}
+    lines = gcode_files[0].read_text().splitlines()
+
+    # Scan header for print time
+    for line in lines[:300]:
+        if m := re.search(r"total estimated time:\s*(.+?)(?:;|$)", line):
+            stats["print_time"] = m.group(1).strip()
+        elif m := re.match(
+            r";\s*estimated printing time.*?=\s*(.+)", line
+        ):
+            stats["print_time"] = m.group(1).strip()
+
+    # Scan tail for filament stats
+    for line in lines[-50:]:
+        if m := re.match(
+            r";\s*(?:total )?filament used \[g\]\s*=\s*([\d.]+)", line
+        ):
+            stats["filament_g"] = float(m.group(1))
+        elif m := re.match(
+            r";\s*(?:total )?filament used \[cm3\]\s*=\s*([\d.]+)", line
+        ):
+            stats["filament_cm3"] = float(m.group(1))
+
+    return stats

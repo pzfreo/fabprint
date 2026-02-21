@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import json
 import logging
-import shutil
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -86,6 +86,51 @@ def resolve_profile(
     )
 
 
+def resolve_profile_data(
+    name_or_path: str,
+    engine: str,
+    category: str,
+    project_dir: Path | None = None,
+) -> dict:
+    """Resolve a profile and flatten its full inheritance chain.
+
+    Returns a merged dict with all inherited values resolved,
+    with the 'inherits' key removed so the slicer uses it as-is.
+    """
+    path = resolve_profile(name_or_path, engine, category, project_dir)
+    base = SYSTEM_DIRS.get(engine)
+
+    chain = []
+    current = path
+    seen = set()
+    while current:
+        if str(current) in seen:
+            break
+        seen.add(str(current))
+        with open(current) as f:
+            data = json.load(f)
+        chain.append(data)
+        parent_name = data.get("inherits")
+        if not parent_name:
+            break
+        # Check sibling directory first, then system dir
+        sibling = current.parent / f"{parent_name}.json"
+        system = (base / category / f"{parent_name}.json") if base else None
+        if sibling.exists():
+            current = sibling
+        elif system and system.exists():
+            current = system
+        else:
+            break
+
+    # Merge root-first so leaf values override parents
+    merged = {}
+    for data in reversed(chain):
+        merged.update(data)
+    merged.pop("inherits", None)
+    return merged
+
+
 def pin_profiles(
     engine: str,
     printer: str | None,
@@ -93,8 +138,10 @@ def pin_profiles(
     filaments: list[str],
     project_dir: Path,
 ) -> list[Path]:
-    """Copy referenced profiles into <project_dir>/profiles/ for reproducibility.
+    """Flatten and save profiles into <project_dir>/profiles/ for reproducibility.
 
+    Profiles are fully resolved (inheritance chain merged, 'inherits' removed)
+    so builds are independent of the installed slicer version.
     Returns list of pinned file paths.
     """
     pinned = []
@@ -112,16 +159,15 @@ def pin_profiles(
             log.info("Skipping '%s' (already a path)", name)
             continue
 
-        source = resolve_profile(name, engine, category, project_dir)
         dest_dir = project_dir / "profiles" / category
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / f"{name}.json"
 
-        if dest.exists():
-            log.info("Already pinned: %s", dest)
-        else:
-            shutil.copy2(source, dest)
-            log.info("Pinned %s → %s", source.name, dest)
+        # Always re-flatten to pick up any slicer updates
+        data = resolve_profile_data(name, engine, category)
+        with open(dest, "w") as f:
+            json.dump(data, f, indent=4)
+        log.info("Pinned %s → %s (flattened)", name, dest)
         pinned.append(dest)
 
     return pinned

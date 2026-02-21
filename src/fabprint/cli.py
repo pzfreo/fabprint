@@ -94,18 +94,21 @@ def _generate_plate(
     meshes = []
     names = []
     filament_ids = []
+    part_info = []  # (name, copies, filament, scale, w, d, h) per unique part
     for part in cfg.parts:
         base_mesh = load_mesh(part.file)
         oriented = orient_mesh(base_mesh, part.orient, part.rotate)
         if part.scale != 1.0:
             oriented.apply_scale(part.scale)
+        w, d, h = oriented.extents
+        part_info.append((part.file.stem, part.copies, part.filament, part.scale, w, d, h))
         for i in range(part.copies):
             meshes.append(oriented.copy())
             suffix = f"_{i + 1}" if part.copies > 1 else ""
             names.append(f"{part.file.stem}{suffix}")
             filament_ids.append(part.filament)
 
-    logging.info("Loaded %d parts (%d unique)", len(meshes), len(cfg.parts))
+    _print_summary(part_info, len(meshes), cfg.plate.size)
 
     placements = arrange(meshes, names, cfg.plate.size, cfg.plate.padding)
 
@@ -116,9 +119,24 @@ def _generate_plate(
             [p.mesh for p in placements], [p.name for p in placements], cfg.plate.size
         )
 
-    scene = build_plate(placements)
+    scene = build_plate(placements, cfg.plate.size)
     export_plate(scene, output)
     return cfg, filament_ids
+
+
+def _print_summary(
+    part_info: list[tuple], total: int, plate_size: tuple[float, float],
+) -> None:
+    """Print a build summary table."""
+    name_width = max(len(name) for name, *_ in part_info)
+    print("\nParts:")
+    for name, copies, filament, scale, w, d, h in part_info:
+        scale_str = f"  {scale}x" if scale != 1.0 else ""
+        print(
+            f"  {name:<{name_width}}  x{copies}  slot {filament}"
+            f"{scale_str}  {w:.0f}x{d:.0f}x{h:.0f}mm"
+        )
+    print(f"\nPlate: {total} parts on {plate_size[0]:.0f}x{plate_size[1]:.0f}mm")
 
 
 def _cmd_plate(args: argparse.Namespace) -> None:
@@ -128,7 +146,7 @@ def _cmd_plate(args: argparse.Namespace) -> None:
 
 
 def _cmd_slice(args: argparse.Namespace) -> None:
-    from fabprint.slicer import slice_plate
+    from fabprint.slicer import parse_gcode_stats, slice_plate
 
     plate_3mf = Path("plate.3mf")
     cfg, filament_ids = _generate_plate(args, plate_3mf)
@@ -146,6 +164,17 @@ def _cmd_slice(args: argparse.Namespace) -> None:
         project_dir=cfg.base_dir,
     )
     print(f"Sliced gcode in {output_dir}")
+
+    stats = parse_gcode_stats(output_dir)
+    parts = []
+    if "filament_g" in stats:
+        parts.append(f"{stats['filament_g']:.1f}g filament")
+    elif "filament_cm3" in stats:
+        parts.append(f"{stats['filament_cm3']:.1f}cm3 filament")
+    if "print_time" in stats:
+        parts.append(f"estimated {stats['print_time']}")
+    if parts:
+        print(f"  {', '.join(parts)}")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:
