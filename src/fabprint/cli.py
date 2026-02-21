@@ -34,6 +34,16 @@ def main(argv: list[str] | None = None) -> None:
     plate_cmd.add_argument("-o", "--output", type=Path, default=None, help="Output 3MF path")
     plate_cmd.add_argument("--view", action="store_true", help="Show plate in viewer")
 
+    # slice subcommand
+    slice_cmd = sub.add_parser(
+        "slice", parents=[common], help="Arrange, export, and slice to gcode"
+    )
+    slice_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
+    slice_cmd.add_argument("-o", "--output-dir", type=Path, default=None, help="Output directory")
+    slice_cmd.add_argument(
+        "--view", action="store_true", help="Show plate in viewer before slicing"
+    )
+
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -47,13 +57,14 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "plate":
         _cmd_plate(args)
+    elif args.command == "slice":
+        _cmd_slice(args)
 
 
-def _cmd_plate(args: argparse.Namespace) -> None:
+def _generate_plate(args: argparse.Namespace, output: Path) -> None:
+    """Shared logic: load config, orient, arrange, optionally view, export 3MF."""
     cfg = load_config(args.config)
-    output = args.output or Path("plate.3mf")
 
-    # Load and orient all parts (expanding copies)
     meshes = []
     names = []
     for part in cfg.parts:
@@ -66,16 +77,40 @@ def _cmd_plate(args: argparse.Namespace) -> None:
 
     logging.info("Loaded %d parts (%d unique)", len(meshes), len(cfg.parts))
 
-    # Arrange
     placements = arrange(meshes, names, cfg.plate.size, cfg.plate.padding)
 
-    # View if requested
-    if args.view:
+    if getattr(args, "view", False):
         from fabprint.viewer import show_plate
 
         show_plate([p.mesh for p in placements], [p.name for p in placements])
 
-    # Export
     scene = build_plate(placements)
     export_plate(scene, output)
+    return cfg
+
+
+def _cmd_plate(args: argparse.Namespace) -> None:
+    output = args.output or Path("plate.3mf")
+    _generate_plate(args, output)
     print(f"Plate exported to {output}")
+
+
+def _cmd_slice(args: argparse.Namespace) -> None:
+    from fabprint.slicer import slice_plate
+
+    cfg = load_config(args.config)
+
+    # Generate plate 3MF to a temp file if no explicit output
+    plate_3mf = Path("plate.3mf")
+    _generate_plate(args, plate_3mf)
+    print(f"Plate exported to {plate_3mf}")
+
+    output_dir = slice_plate(
+        input_3mf=plate_3mf,
+        engine=cfg.slicer.engine,
+        output_dir=args.output_dir,
+        print_profile=cfg.slicer.print_profile,
+        filaments=cfg.slicer.filaments,
+        printer_profile=cfg.slicer.printer_profile,
+    )
+    print(f"Sliced gcode in {output_dir}")

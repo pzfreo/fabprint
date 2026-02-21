@@ -3,7 +3,11 @@ size = [256, 256]
 padding = 5.0
 
 [slicer]
-engine = "bambu"
+engine = "orca"
+# Paths to slicer profile JSONs (from OrcaSlicer/BambuStudio system profiles)
+# printer_profile = "/path/to/machine.json"
+# print_profile = "/path/to/process.json"
+# filaments = ["/path/to/filament.json"]
 
 [[parts]]
 file = "../tests/fixtures/cube_10mm.stl"
