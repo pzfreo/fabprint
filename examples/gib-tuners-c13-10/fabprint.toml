@@ -11,6 +11,9 @@ printer = "Bambu Lab P1S 0.4 nozzle"
 process = "0.20mm Standard @BBL X1C"
 filaments = ["Generic PLA @base", "Generic PLA @base", "Generic PETG-CF @base"]
 
+[slicer.overrides]
+enable_support = 1
+
 [[parts]]
 file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/frame_lh_5gang.stl"
 copies = 1

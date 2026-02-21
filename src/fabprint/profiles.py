@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -84,6 +85,51 @@ def resolve_profile(
         f"Profile '{name_or_path}' not found in category '{category}' "
         f"for engine '{engine}'. Run 'fabprint profiles list' to see available profiles."
     )
+
+
+def resolve_profile_data(
+    name_or_path: str,
+    engine: str,
+    category: str,
+    project_dir: Path | None = None,
+) -> dict:
+    """Resolve a profile and flatten its full inheritance chain.
+
+    Returns a merged dict with all inherited values resolved,
+    with the 'inherits' key removed so the slicer uses it as-is.
+    """
+    path = resolve_profile(name_or_path, engine, category, project_dir)
+    base = SYSTEM_DIRS.get(engine)
+
+    chain = []
+    current = path
+    seen = set()
+    while current:
+        if str(current) in seen:
+            break
+        seen.add(str(current))
+        with open(current) as f:
+            data = json.load(f)
+        chain.append(data)
+        parent_name = data.get("inherits")
+        if not parent_name:
+            break
+        # Check sibling directory first, then system dir
+        sibling = current.parent / f"{parent_name}.json"
+        system = (base / category / f"{parent_name}.json") if base else None
+        if sibling.exists():
+            current = sibling
+        elif system and system.exists():
+            current = system
+        else:
+            break
+
+    # Merge root-first so leaf values override parents
+    merged = {}
+    for data in reversed(chain):
+        merged.update(data)
+    merged.pop("inherits", None)
+    return merged
 
 
 def pin_profiles(

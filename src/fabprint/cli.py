@@ -119,7 +119,7 @@ def _generate_plate(
             [p.mesh for p in placements], [p.name for p in placements], cfg.plate.size
         )
 
-    scene = build_plate(placements)
+    scene = build_plate(placements, cfg.plate.size)
     export_plate(scene, output)
     return cfg, filament_ids
 
@@ -169,6 +169,8 @@ def _cmd_slice(args: argparse.Namespace) -> None:
     parts = []
     if "filament_g" in stats:
         parts.append(f"{stats['filament_g']:.1f}g filament")
+    elif "filament_cm3" in stats:
+        parts.append(f"{stats['filament_cm3']:.1f}cm3 filament")
     if "print_time" in stats:
         parts.append(f"estimated {stats['print_time']}")
     if parts:
