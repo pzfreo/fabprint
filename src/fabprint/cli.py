@@ -97,6 +97,8 @@ def _generate_plate(
     for part in cfg.parts:
         base_mesh = load_mesh(part.file)
         oriented = orient_mesh(base_mesh, part.orient, part.rotate)
+        if part.scale != 1.0:
+            oriented.apply_scale(part.scale)
         for i in range(part.copies):
             meshes.append(oriented.copy())
             suffix = f"_{i + 1}" if part.copies > 1 else ""

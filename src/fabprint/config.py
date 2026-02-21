@@ -31,6 +31,7 @@ class PartConfig:
     orient: str = "flat"
     rotate: list[float] | None = None  # [rx, ry, rz] in degrees, overrides orient
     filament: int = 1  # AMS slot (1-indexed)
+    scale: float = 1.0  # uniform scale factor
 
 
 @dataclass
@@ -99,12 +100,16 @@ def load_config(path: Path) -> FabprintConfig:
             if not isinstance(rotate, list) or len(rotate) != 3:
                 raise ValueError(f"parts[{i}]: rotate must be [rx, ry, rz], got {rotate}")
             rotate = [float(r) for r in rotate]
+        scale = float(p.get("scale", 1.0))
+        if scale <= 0:
+            raise ValueError(f"parts[{i}]: scale must be > 0, got {scale}")
         parts.append(PartConfig(
             file=file_path,
             copies=copies,
             orient=orient,
             rotate=rotate,
             filament=filament,
+            scale=scale,
         ))
 
     return FabprintConfig(plate=plate, slicer=slicer, parts=parts, base_dir=base_dir)
