@@ -1,0 +1,12 @@
+services:
+  fabprint:
+    build:
+      context: .
+      args:
+        ORCA_VERSION: "2.3.1"
+    image: fabprint:orca-2.3.1
+    platform: linux/amd64
+    volumes:
+      - .:/project
+    working_dir: /project
+    user: "${UID:-1000}:${GID:-1000}"

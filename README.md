@@ -147,6 +147,59 @@ Slicers on PATH are also detected (Flatpak, Snap, custom installs).
 
 Profile directories follow platform conventions (`~/Library/Application Support/` on macOS, `~/.config/` on Linux, `%APPDATA%` on Windows).
 
+## Docker
+
+Pre-built Docker images with OrcaSlicer are available on [Docker Hub](https://hub.docker.com/r/fabprint/fabprint):
+
+```bash
+docker pull fabprint/fabprint:orca-2.3.1
+```
+
+### Run from your project directory
+
+```bash
+docker run --rm -v "$PWD:/project" fabprint/fabprint:orca-2.3.1 slice fabprint.toml
+docker run --rm -v "$PWD:/project" fabprint/fabprint:orca-2.3.1 plate fabprint.toml -o plate.3mf
+docker run --rm fabprint/fabprint:orca-2.3.1 profiles list
+```
+
+### Slicing via Docker from the CLI
+
+Use `--docker` to force Docker slicing, or `--docker-version` to pick a specific OrcaSlicer version:
+
+```bash
+# Use default fabprint/fabprint:latest image
+fabprint slice fabprint.toml --docker
+
+# Use a specific OrcaSlicer version
+fabprint slice fabprint.toml --docker-version 2.3.1
+```
+
+If OrcaSlicer isn't installed locally, `fabprint slice` automatically falls back to Docker.
+
+### Building your own image
+
+To build locally or for a different OrcaSlicer version:
+
+```bash
+./scripts/build-docker.sh 2.3.2          # build only
+./scripts/build-docker.sh 2.3.2 --push   # build and push to Docker Hub
+```
+
+### Reproducible builds
+
+Pin both profiles and OrcaSlicer version for fully reproducible slicing:
+
+```bash
+# Pin profiles into your project
+fabprint profiles pin fabprint.toml
+
+# Slice with a pinned OrcaSlicer version
+fabprint slice fabprint.toml --docker-version 2.3.1
+```
+
+Commit the `profiles/` directory to git so slicing results are identical across machines.
+
 ## License
 
 Apache 2.0

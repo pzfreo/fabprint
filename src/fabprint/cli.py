@@ -24,6 +24,10 @@ def main(argv: list[str] | None = None) -> None:
     # Shared args for subcommands
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
+    common.add_argument(
+        "--scale", type=float, default=None,
+        help="Scale all parts by this factor (multiplies per-part scale)",
+    )
 
     # plate subcommand
     plate_cmd = sub.add_parser(
@@ -43,6 +47,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     slice_cmd.add_argument(
         "--view", action="store_true", help="Show plate in viewer before slicing"
+    )
+    slice_cmd.add_argument(
+        "--docker", action="store_true",
+        help="Force slicing via Docker (even if local slicer is available)",
+    )
+    slice_cmd.add_argument(
+        "--docker-version", type=str, default=None,
+        help="Use a specific OrcaSlicer Docker image version (e.g. 2.3.1)",
     )
 
     # profiles subcommand
@@ -95,13 +107,15 @@ def _generate_plate(
     names = []
     filament_ids = []
     part_info = []  # (name, copies, filament, scale, w, d, h) per unique part
+    global_scale = getattr(args, "scale", None)
     for part in cfg.parts:
         base_mesh = load_mesh(part.file)
         oriented = orient_mesh(base_mesh, part.orient, part.rotate)
-        if part.scale != 1.0:
-            oriented.apply_scale(part.scale)
+        scale = part.scale * global_scale if global_scale else part.scale
+        if scale != 1.0:
+            oriented.apply_scale(scale)
         w, d, h = oriented.extents
-        part_info.append((part.file.stem, part.copies, part.filament, part.scale, w, d, h))
+        part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
         for i in range(part.copies):
             meshes.append(oriented.copy())
             suffix = f"_{i + 1}" if part.copies > 1 else ""
@@ -162,6 +176,8 @@ def _cmd_slice(args: argparse.Namespace) -> None:
         filament_ids=filament_ids,
         overrides=cfg.slicer.overrides or None,
         project_dir=cfg.base_dir,
+        docker=args.docker or args.docker_version is not None,
+        docker_version=args.docker_version,
     )
     print(f"Sliced gcode in {output_dir}")
 
