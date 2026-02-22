@@ -22,7 +22,7 @@ Steps 2–7 are entirely manual and repetitive. fabprint is a CLI tool that take
 
 - **Config** (`config.py`) — TOML parsing with validation. Plate size, slicer settings, per-part orient/copies/filament/scale, slicer overrides.
 - **Loader** (`loader.py`) — STL, 3MF, and STEP file loading via trimesh (STEP requires `build123d` optional dep). Extracts `paint_color` data from pre-painted 3MF inputs.
-- **Orientation** (`orient.py`) — flat, upright, side presets, plus custom `[rx, ry, rz]` rotations.
+- **Orientation** (`orient.py`) — flat, upright, side presets, plus custom `[rx, ry, rz]` rotations. Flat skips reorientation when Z is already the smallest extent.
 - **Arrangement** (`arrange.py`) — 2D bin packing via rectpack (MaxRectsBssf). Padding, overflow detection.
 - **Plate assembly** (`plate.py`) — trimesh Scene → 3MF export. Origin-centered for slicer compatibility. Preserves `paint_color` attributes from pre-painted 3MF inputs through XML post-processing.
 - **Slicing** (`slicer.py`) — BambuStudio and OrcaSlicer CLI integration. Profile flattening (resolves full `inherits` chain), overrides (values converted to strings), gcode stats parsing (filament grams/cm3, print time).
@@ -58,6 +58,8 @@ Sliced gcode in output/
 - **OrcaSlicer `paint_color` + `--load-filaments` crash**: OrcaSlicer 2.3.1 CLI segfaults when a 3MF contains `paint_color` triangle attributes and `--load-filaments` is also passed. Workaround: skip `--load-filaments` when paint data is present (paint_color already encodes which extruder to use). This means we cannot inject `paint_color` for config-assigned filament IDs — only for pre-painted 3MF inputs.
 - **3MF XML namespace preservation**: When post-processing 3MF XML to inject `paint_color`, the original `<model>` opening tag must be preserved verbatim. Python's `xml.etree` drops unused namespace declarations on serialization, which causes OrcaSlicer to crash on the missing namespaces.
 - **3MF sub-object files**: BambuStudio/OrcaSlicer project 3MF files store geometry in `3D/Objects/*.model` sub-files rather than inline in `3D/3dmodel.model`. The paint_color extractor checks both locations.
+- **`orient = "flat"` and already-flat meshes**: `trimesh.bounds.oriented_bounds` finds the minimum bounding box but doesn't guarantee the smallest extent maps to Z. For thin flat meshes (rings, washers), it would rotate them onto their edge. Fix: skip reorientation when Z is already the smallest extent, and use the correct rotation axis (X or Y) in the post-transform fixup.
+- **OrcaSlicer 2.3.2-beta2 tested**: The `paint_color` + `--load-filaments` segfault is NOT fixed in 2.3.2-beta2. Same crash with 2+ filaments. The workaround (skip `--load-filaments` when paint data present) remains necessary.
 
 ## Project structure
 
