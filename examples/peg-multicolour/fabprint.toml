@@ -1,0 +1,22 @@
+# Peg multi-colour — ring + pip with pre-painted filament layers
+# Two-colour print: paint_color data in the 3MF files assigns
+# alternating layers to AMS slots 1 and 2.
+
+[plate]
+size = [256, 256]
+padding = 5.0
+
+[slicer]
+engine = "orca"
+printer = "Bambu Lab P1S 0.4 nozzle"
+process = "0.20mm Standard @BBL X1C"
+filaments = ["Generic PLA @base", "Generic PLA @base"]
+
+[[parts]]
+file = "/Users/paul/repos/peg/ring.3mf"
+copies = 1
+
+[[parts]]
+file = "/Users/paul/repos/peg/pip.3mf"
+copies = 1
+rotate = [180, 0, 0]  # upside down

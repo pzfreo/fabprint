@@ -18,13 +18,13 @@ Steps 2–7 are entirely manual and repetitive. fabprint is a CLI tool that take
 
 ### What's built (Phases 1 & 2 complete)
 
-**Core pipeline** — 1,255 lines of source, 963 lines of tests (67 tests):
+**Core pipeline**:
 
 - **Config** (`config.py`) — TOML parsing with validation. Plate size, slicer settings, per-part orient/copies/filament/scale, slicer overrides.
-- **Loader** (`loader.py`) — STL and STEP file loading via trimesh (STEP requires `build123d` optional dep).
+- **Loader** (`loader.py`) — STL, 3MF, and STEP file loading via trimesh (STEP requires `build123d` optional dep). Extracts `paint_color` data from pre-painted 3MF inputs.
 - **Orientation** (`orient.py`) — flat, upright, side presets, plus custom `[rx, ry, rz]` rotations.
 - **Arrangement** (`arrange.py`) — 2D bin packing via rectpack (MaxRectsBssf). Padding, overflow detection.
-- **Plate assembly** (`plate.py`) — trimesh Scene → 3MF export. Origin-centered for slicer compatibility.
+- **Plate assembly** (`plate.py`) — trimesh Scene → 3MF export. Origin-centered for slicer compatibility. Preserves `paint_color` attributes from pre-painted 3MF inputs through XML post-processing.
 - **Slicing** (`slicer.py`) — BambuStudio and OrcaSlicer CLI integration. Profile flattening (resolves full `inherits` chain), overrides (values converted to strings), gcode stats parsing (filament grams/cm3, print time).
 - **Profiles** (`profiles.py`) — Discover system profiles, 3-tier resolution (path → pinned → system), inheritance flattening, profile pinning for reproducibility.
 - **Docker** — Versioned OrcaSlicer Docker images (`fabprint:orca-2.3.1`). `--docker` / `--docker-version` CLI flags. Automatic fallback when local slicer not installed. Published to Docker Hub (`fabprint/fabprint`).
@@ -55,6 +55,9 @@ Sliced gcode in output/
 - **3MF origin centering**: OrcaSlicer expects bed center at (0,0). Meshes are offset by -plate_center.
 - **`--load-filament-ids` is STL-only**: Skipped for 3MF inputs (OrcaSlicer limitation).
 - **Docker profile mounting**: Profiles written under `output_dir/.profiles/` to share the same volume mount (avoids macOS Docker temp-dir visibility issues).
+- **OrcaSlicer `paint_color` + `--load-filaments` crash**: OrcaSlicer 2.3.1 CLI segfaults when a 3MF contains `paint_color` triangle attributes and `--load-filaments` is also passed. Workaround: skip `--load-filaments` when paint data is present (paint_color already encodes which extruder to use). This means we cannot inject `paint_color` for config-assigned filament IDs — only for pre-painted 3MF inputs.
+- **3MF XML namespace preservation**: When post-processing 3MF XML to inject `paint_color`, the original `<model>` opening tag must be preserved verbatim. Python's `xml.etree` drops unused namespace declarations on serialization, which causes OrcaSlicer to crash on the missing namespaces.
+- **3MF sub-object files**: BambuStudio/OrcaSlicer project 3MF files store geometry in `3D/Objects/*.model` sub-files rather than inline in `3D/3dmodel.model`. The paint_color extractor checks both locations.
 
 ## Project structure
 
@@ -77,9 +80,10 @@ fabprint/
 │   ├── profiles.py            # Profile discovery, resolution, pinning
 │   ├── slicer.py              # Slicer CLI + Docker integration
 │   └── viewer.py              # OCP CAD viewer
-├── tests/                     # 67 tests
+├── tests/                     # 75 tests
 ├── examples/
-│   └── gib-tuners-c13-10/     # Example with pinned profiles
+│   ├── gib-tuners-c13-10/     # Example with pinned profiles
+│   └── peg-multicolour/       # Multi-colour 3MF with paint_color preservation
 └── fabprint-plan.md           # This file
 ```
 
@@ -111,6 +115,6 @@ Send sliced gcode to a Bambu Lab printer via the cloud API.
 
 ## Future work
 
-- **Multi-colour preservation**: When a part has `paint_color` data in its 3MF, preserve through the arrange+export pipeline.
+- **Config-assigned filament painting**: Currently blocked by OrcaSlicer CLI bug (segfault on `paint_color` + `--load-filaments`). When fixed upstream, we can inject `paint_color` for `filament = N` config entries to get per-part filament assignment in 3MF exports.
 - **Multiple plates**: If parts don't fit on one plate, generate multiple plate files (rectpack supports multiple bins).
 - **Per-plate filament assignment**: Currently filament IDs are only supported for STL inputs, not 3MF.
