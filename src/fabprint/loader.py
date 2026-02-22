@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
 import trimesh
 
 log = logging.getLogger(__name__)
+
+NS_3MF = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 
 MESH_EXTENSIONS = {".stl", ".3mf"}
 STEP_EXTENSIONS = {".step", ".stp"}
@@ -42,6 +46,50 @@ def load_mesh(path: Path) -> trimesh.Trimesh:
         raise ValueError(f"Could not load {path} as a single mesh")
 
     return result
+
+
+def extract_paint_colors(path: Path) -> list[str] | None:
+    """Extract per-triangle paint_color attributes from a 3MF file.
+
+    Handles both simple 3MF (geometry in 3D/3dmodel.model) and BambuStudio
+    project 3MF (geometry in 3D/Objects/*.model sub-files).
+
+    Returns a list of paint_color hex strings (one per face), or None if
+    the file has no paint data or isn't a 3MF.
+    """
+    path = Path(path)
+    if path.suffix.lower() != ".3mf":
+        return None
+
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            # Collect all model XML files (root + sub-objects)
+            model_files = []
+            if "3D/3dmodel.model" in zf.namelist():
+                model_files.append("3D/3dmodel.model")
+            model_files.extend(
+                n for n in zf.namelist()
+                if n.startswith("3D/Objects/") and n.endswith(".model")
+            )
+            if not model_files:
+                return None
+
+            colors = []
+            has_paint = False
+            for mf in model_files:
+                root = ET.fromstring(zf.read(mf))
+                for tri in root.iter(f"{{{NS_3MF}}}triangle"):
+                    pc = tri.get("paint_color")
+                    if pc is not None:
+                        has_paint = True
+                    colors.append(pc)
+    except (zipfile.BadZipFile, FileNotFoundError):
+        return None
+
+    if not has_paint:
+        return None
+
+    return colors
 
 
 def _load_step(path: Path) -> trimesh.Trimesh:

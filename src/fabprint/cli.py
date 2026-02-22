@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fabprint.arrange import arrange
 from fabprint.config import FabprintConfig, load_config
-from fabprint.loader import load_mesh
+from fabprint.loader import extract_paint_colors, load_mesh
 from fabprint.orient import orient_mesh
 from fabprint.plate import build_plate, export_plate
 
@@ -99,13 +99,17 @@ def main(argv: list[str] | None = None) -> None:
 
 def _generate_plate(
     args: argparse.Namespace, output: Path
-) -> tuple[FabprintConfig, list[int]]:
-    """Shared logic: load config, orient, arrange, optionally view, export 3MF."""
+) -> tuple[FabprintConfig, list[int], bool]:
+    """Shared logic: load config, orient, arrange, optionally view, export 3MF.
+
+    Returns (config, filament_ids, has_paint_colors).
+    """
     cfg = load_config(args.config)
 
     meshes = []
     names = []
     filament_ids = []
+    has_paint_colors = False
     part_info = []  # (name, copies, filament, scale, w, d, h) per unique part
     global_scale = getattr(args, "scale", None)
     for part in cfg.parts:
@@ -114,6 +118,12 @@ def _generate_plate(
         scale = part.scale * global_scale if global_scale else part.scale
         if scale != 1.0:
             oriented.apply_scale(scale)
+        # Store paint data in metadata (survives copy/transform)
+        oriented.metadata["filament_id"] = part.filament
+        paint_colors = extract_paint_colors(part.file)
+        if paint_colors:
+            oriented.metadata["paint_colors"] = paint_colors
+            has_paint_colors = True
         w, d, h = oriented.extents
         part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
         for i in range(part.copies):
@@ -135,7 +145,7 @@ def _generate_plate(
 
     scene = build_plate(placements, cfg.plate.size)
     export_plate(scene, output)
-    return cfg, filament_ids
+    return cfg, filament_ids, has_paint_colors
 
 
 def _print_summary(
@@ -155,7 +165,7 @@ def _print_summary(
 
 def _cmd_plate(args: argparse.Namespace) -> None:
     output = args.output or Path("plate.3mf")
-    cfg, _filament_ids = _generate_plate(args, output)
+    _generate_plate(args, output)
     print(f"Plate exported to {output}")
 
 
@@ -163,8 +173,13 @@ def _cmd_slice(args: argparse.Namespace) -> None:
     from fabprint.slicer import parse_gcode_stats, slice_plate
 
     plate_3mf = Path("plate.3mf")
-    cfg, filament_ids = _generate_plate(args, plate_3mf)
+    cfg, filament_ids, has_paint_colors = _generate_plate(args, plate_3mf)
     print(f"Plate exported to {plate_3mf}")
+
+    # OrcaSlicer 2.3.1 CLI segfaults on paint_color + --load-filaments.
+    # Skip filament profiles when paint_color data is present — the
+    # paint_color attributes already encode which extruder to use.
+    filaments = None if has_paint_colors else cfg.slicer.filaments
 
     output_dir = slice_plate(
         input_3mf=plate_3mf,
@@ -172,7 +187,7 @@ def _cmd_slice(args: argparse.Namespace) -> None:
         output_dir=args.output_dir,
         printer=cfg.slicer.printer,
         process=cfg.slicer.process,
-        filaments=cfg.slicer.filaments,
+        filaments=filaments,
         filament_ids=filament_ids,
         overrides=cfg.slicer.overrides or None,
         project_dir=cfg.base_dir,
