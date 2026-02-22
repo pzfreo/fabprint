@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -14,6 +15,8 @@ from pathlib import Path
 from fabprint.profiles import resolve_profile_data
 
 log = logging.getLogger(__name__)
+
+DOCKER_IMAGE = os.environ.get("FABPRINT_DOCKER_IMAGE", "fabprint:latest")
 
 
 def _slicer_paths() -> dict[str, Path]:
@@ -101,6 +104,91 @@ def _apply_overrides(data: dict, overrides: dict[str, object], name: str) -> Pat
     return Path(tmp.name)
 
 
+def _has_docker() -> bool:
+    """Check if Docker is available and the fabprint image exists."""
+    try:
+        r = subprocess.run(
+            ["docker", "image", "inspect", DOCKER_IMAGE],
+            capture_output=True, timeout=10,
+        )
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _slice_via_docker(
+    input_3mf: Path,
+    output_dir: Path,
+    profile_files: list[Path],
+    settings_args: list[str],
+    filament_args: list[str],
+) -> Path:
+    """Run the slicer inside the fabprint Docker container.
+
+    Mounts the input 3MF, output dir, and all temp profile files into the
+    container, then invokes orca-slicer directly.
+    """
+    input_3mf = input_3mf.resolve()
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        "docker", "run", "--rm",
+        "-v", f"{input_3mf}:/work/input.3mf:ro",
+        "-v", f"{output_dir}:/work/output",
+    ]
+
+    # Mount each profile file and rewrite args to use container paths
+    container_settings = []
+    container_filaments = []
+    for i, pf in enumerate(profile_files):
+        container_path = f"/work/profiles/p{i}.json"
+        cmd.extend(["-v", f"{pf.resolve()}:{container_path}:ro"])
+
+    # Rebuild settings/filament args with container paths
+    idx = 0
+    for arg in settings_args:
+        parts = []
+        for _ in arg.split(";"):
+            parts.append(f"/work/profiles/p{idx}.json")
+            idx += 1
+        container_settings.append(";".join(parts))
+    for arg in filament_args:
+        parts = []
+        for _ in arg.split(";"):
+            parts.append(f"/work/profiles/p{idx}.json")
+            idx += 1
+        container_filaments.append(";".join(parts))
+
+    cmd.extend([
+        "--entrypoint", "orca-slicer",
+        DOCKER_IMAGE,
+    ])
+    if container_settings:
+        cmd.extend(["--load-settings", ";".join(container_settings)])
+    if container_filaments:
+        cmd.extend(["--load-filaments", ";".join(container_filaments)])
+    cmd.extend([
+        "--slice", "0",
+        "--outputdir", "/work/output",
+        "/work/input.3mf",
+    ])
+
+    log.info("Slicing via Docker: %s", " ".join(cmd))
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+    if result.returncode != 0:
+        log.error("Docker slicer stderr:\n%s", result.stderr)
+        raise RuntimeError(
+            f"Docker slicer failed (exit code {result.returncode}):\n{result.stderr[:500]}"
+        )
+
+    log.info("Docker slicer stdout:\n%s", result.stdout)
+    log.info("Slicing complete. Output in %s", output_dir)
+    return output_dir
+
+
 def slice_plate(
     input_3mf: Path,
     engine: str = "bambu",
@@ -116,9 +204,19 @@ def slice_plate(
 
     Profile names are resolved via profiles.resolve_profile().
     If overrides are provided, they are patched into the process profile.
+    Falls back to Docker if the slicer is not installed locally.
     Returns the output directory containing the sliced gcode.
     """
-    slicer = find_slicer(engine)
+    use_docker = False
+    try:
+        slicer = find_slicer(engine)
+    except FileNotFoundError:
+        if _has_docker():
+            log.info("Slicer not found locally, falling back to Docker (%s)", DOCKER_IMAGE)
+            use_docker = True
+        else:
+            raise
+
     input_3mf = input_3mf.resolve()
 
     if not input_3mf.exists():
@@ -129,8 +227,11 @@ def slice_plate(
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    tmp_files = []
-    cmd = [str(slicer)]
+    # Resolve profiles to temp JSON files (works even without the slicer binary,
+    # since profiles are just JSON — only the actual slicing needs the slicer).
+    tmp_files: list[Path] = []
+    settings_args: list[str] = []
+    filament_args: list[str] = []
 
     try:
         # Resolve and load settings (machine + process)
@@ -151,7 +252,7 @@ def slice_plate(
             tmp_files.append(path)
             settings.append(str(path))
         if settings:
-            cmd.extend(["--load-settings", ";".join(settings)])
+            settings_args.append(";".join(settings))
 
         if filaments:
             resolved = []
@@ -160,7 +261,19 @@ def slice_plate(
                 path = _write_tmp_profile(data)
                 tmp_files.append(path)
                 resolved.append(str(path))
-            cmd.extend(["--load-filaments", ";".join(resolved)])
+            filament_args.append(";".join(resolved))
+
+        if use_docker:
+            return _slice_via_docker(
+                input_3mf, output_dir, tmp_files, settings_args, filament_args,
+            )
+
+        # Local slicer path
+        cmd = [str(slicer)]
+        if settings_args:
+            cmd.extend(["--load-settings", settings_args[0]])
+        if filament_args:
+            cmd.extend(["--load-filaments", filament_args[0]])
 
         # Note: --load-filament-ids is only supported with STL inputs, not 3MF.
         # For 3MF, filament assignment must be embedded in the file itself.

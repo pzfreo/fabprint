@@ -1,0 +1,33 @@
+name: Slice
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: "Path to fabprint.toml"
+        required: true
+        default: "fabprint.toml"
+
+jobs:
+  slice:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build fabprint image
+        run: docker build -t fabprint:latest .
+
+      - name: Generate plate and slice
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/project" \
+            fabprint:latest \
+            slice "${{ inputs.config }}" -v
+
+      - name: Upload gcode
+        uses: actions/upload-artifact@v4
+        with:
+          name: gcode
+          path: |
+            output/*.gcode
+            plate.3mf

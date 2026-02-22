@@ -1,0 +1,16 @@
+.git/
+.github/
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.egg-info/
+build/
+dist/
+tests/
+examples/
+*.3mf
+*.gcode
+*.whl
+output/
+fabprint-plan.md

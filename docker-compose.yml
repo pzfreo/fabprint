@@ -1,0 +1,8 @@
+services:
+  fabprint:
+    build: .
+    image: fabprint:latest
+    volumes:
+      - .:/project
+    working_dir: /project
+    user: "${UID:-1000}:${GID:-1000}"

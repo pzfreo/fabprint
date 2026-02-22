@@ -147,6 +147,48 @@ Slicers on PATH are also detected (Flatpak, Snap, custom installs).
 
 Profile directories follow platform conventions (`~/Library/Application Support/` on macOS, `~/.config/` on Linux, `%APPDATA%` on Windows).
 
+## Docker
+
+fabprint includes a Docker image with OrcaSlicer pre-installed for reproducible slicing without any local slicer setup.
+
+### Build the image
+
+```bash
+docker build -t fabprint .
+```
+
+### Run from your project directory
+
+```bash
+docker run --rm -v "$PWD:/project" fabprint slice fabprint.toml
+docker run --rm -v "$PWD:/project" fabprint plate fabprint.toml -o plate.3mf
+docker run --rm fabprint profiles list
+```
+
+Or with docker compose:
+
+```bash
+docker compose run --rm fabprint slice fabprint.toml
+```
+
+### Automatic Docker fallback
+
+If OrcaSlicer isn't installed locally, `fabprint slice` automatically delegates slicing to the Docker image. Plate arrangement still runs locally (it's pure Python), only the slicer step uses Docker. Set `FABPRINT_DOCKER_IMAGE` to override the image name.
+
+### Reproducible builds
+
+For production workflows, pin both profiles and OrcaSlicer version:
+
+```bash
+# Pin profiles into your project
+docker run --rm -v "$PWD:/project" fabprint profiles pin fabprint.toml
+
+# Build with a specific OrcaSlicer version
+docker build --build-arg ORCA_VERSION=2.3.1 -t fabprint:orca-2.3.1 .
+```
+
+Commit the `profiles/` directory to git so slicing results are identical across machines.
+
 ## License
 
 Apache 2.0
