@@ -18,26 +18,22 @@ enable_support = 1
 file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/frame_lh_5gang.stl"
 copies = 1
 rotate = [180, 0, 0]  # flip so mounting plate faces down
-scale = 1.5
 filament = 3           # PETG-CF in AMS slot 3
 
 [[parts]]
 file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/peg_head_lh.stl"
 copies = 5
 rotate = [90, 0, 0]   # shaft horizontal for layer strength
-scale = 1.5
 filament = 3
 
 [[parts]]
 file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/wheel_lh.stl"
 copies = 5
 orient = "upright"     # gear face flat on bed
-scale = 1.5
 filament = 3
 
 [[parts]]
 file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/string_post.stl"
 copies = 5
 rotate = [0, 90, 0]   # shaft horizontal for strength
-scale = 1.5
 filament = 3
