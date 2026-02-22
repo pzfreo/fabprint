@@ -7,6 +7,10 @@ on:
         description: "Path to fabprint.toml"
         required: true
         default: "fabprint.toml"
+      orca_version:
+        description: "OrcaSlicer version"
+        required: true
+        default: "2.3.1"
 
 jobs:
   slice:
@@ -15,13 +19,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build fabprint image
-        run: docker build -t fabprint:latest .
+        run: |
+          docker build \
+            --build-arg ORCA_VERSION=${{ inputs.orca_version }} \
+            -t fabprint:orca-${{ inputs.orca_version }} .
 
       - name: Generate plate and slice
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/project" \
-            fabprint:latest \
+            fabprint:orca-${{ inputs.orca_version }} \
             slice "${{ inputs.config }}" -v
 
       - name: Upload gcode

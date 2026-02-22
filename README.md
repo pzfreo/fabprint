@@ -149,42 +149,46 @@ Profile directories follow platform conventions (`~/Library/Application Support/
 
 ## Docker
 
-fabprint includes a Docker image with OrcaSlicer pre-installed for reproducible slicing without any local slicer setup.
+fabprint includes a Docker image with OrcaSlicer pre-installed for reproducible slicing without any local slicer setup. Images are versioned by OrcaSlicer version.
 
-### Build the image
+### Build a versioned image
 
 ```bash
-docker build -t fabprint .
+docker build --build-arg ORCA_VERSION=2.3.1 -t fabprint:orca-2.3.1 .
 ```
 
 ### Run from your project directory
 
 ```bash
-docker run --rm -v "$PWD:/project" fabprint slice fabprint.toml
-docker run --rm -v "$PWD:/project" fabprint plate fabprint.toml -o plate.3mf
-docker run --rm fabprint profiles list
+docker run --rm -v "$PWD:/project" fabprint:orca-2.3.1 slice fabprint.toml
+docker run --rm -v "$PWD:/project" fabprint:orca-2.3.1 plate fabprint.toml -o plate.3mf
+docker run --rm fabprint:orca-2.3.1 profiles list
 ```
 
-Or with docker compose:
+### Slicing via Docker from the CLI
+
+Use `--docker` to force Docker slicing, or `--docker-version` to pick a specific OrcaSlicer version:
 
 ```bash
-docker compose run --rm fabprint slice fabprint.toml
+# Use default fabprint:latest image
+fabprint slice fabprint.toml --docker
+
+# Use a specific OrcaSlicer version
+fabprint slice fabprint.toml --docker-version 2.3.1
 ```
 
-### Automatic Docker fallback
-
-If OrcaSlicer isn't installed locally, `fabprint slice` automatically delegates slicing to the Docker image. Plate arrangement still runs locally (it's pure Python), only the slicer step uses Docker. Set `FABPRINT_DOCKER_IMAGE` to override the image name.
+If OrcaSlicer isn't installed locally, `fabprint slice` automatically falls back to Docker.
 
 ### Reproducible builds
 
-For production workflows, pin both profiles and OrcaSlicer version:
+Pin both profiles and OrcaSlicer version for fully reproducible slicing:
 
 ```bash
 # Pin profiles into your project
-docker run --rm -v "$PWD:/project" fabprint profiles pin fabprint.toml
+fabprint profiles pin fabprint.toml
 
-# Build with a specific OrcaSlicer version
-docker build --build-arg ORCA_VERSION=2.3.1 -t fabprint:orca-2.3.1 .
+# Slice with a pinned OrcaSlicer version
+fabprint slice fabprint.toml --docker-version 2.3.1
 ```
 
 Commit the `profiles/` directory to git so slicing results are identical across machines.

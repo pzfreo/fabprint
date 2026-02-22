@@ -1,13 +1,13 @@
 # Multi-stage build: OrcaSlicer CLI + fabprint
 #
 # Usage:
-#   docker build -t fabprint .
-#   docker run --rm -v "$PWD:/project" fabprint slice fabprint.toml
+#   docker build --build-arg ORCA_VERSION=2.3.1 -t fabprint:orca-2.3.1 .
+#   docker run --rm -v "$PWD:/project" fabprint:orca-2.3.1 slice fabprint.toml
 
 # ---------------------------------------------------------------------------
-# Stage 1: Extract OrcaSlicer from AppImage
+# Stage 1: Extract OrcaSlicer from AppImage (x86_64 only)
 # ---------------------------------------------------------------------------
-FROM ubuntu:24.04 AS orca
+FROM --platform=linux/amd64 ubuntu:24.04 AS orca
 
 ARG ORCA_VERSION=2.3.1
 
@@ -24,12 +24,17 @@ RUN curl -fSL -o orca.AppImage \
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime image
 # ---------------------------------------------------------------------------
-FROM ubuntu:24.04
+FROM --platform=linux/amd64 ubuntu:24.04
+
+ARG ORCA_VERSION=2.3.1
+LABEL org.opencontainers.image.description="fabprint with OrcaSlicer ${ORCA_VERSION}"
+LABEL fabprint.orca-version="${ORCA_VERSION}"
 
 # OrcaSlicer runtime deps (needed even for CLI — links GTK/GL at startup)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libgl1 libgl1-mesa-dri libegl1 \
         libgtk-3-0 \
+        libwebkit2gtk-4.1-0 \
         libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*

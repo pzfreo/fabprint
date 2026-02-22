@@ -44,6 +44,14 @@ def main(argv: list[str] | None = None) -> None:
     slice_cmd.add_argument(
         "--view", action="store_true", help="Show plate in viewer before slicing"
     )
+    slice_cmd.add_argument(
+        "--docker", action="store_true",
+        help="Force slicing via Docker (even if local slicer is available)",
+    )
+    slice_cmd.add_argument(
+        "--docker-version", type=str, default=None,
+        help="Use a specific OrcaSlicer Docker image version (e.g. 2.3.1)",
+    )
 
     # profiles subcommand
     profiles_cmd = sub.add_parser(
@@ -162,6 +170,8 @@ def _cmd_slice(args: argparse.Namespace) -> None:
         filament_ids=filament_ids,
         overrides=cfg.slicer.overrides or None,
         project_dir=cfg.base_dir,
+        docker=args.docker or args.docker_version is not None,
+        docker_version=args.docker_version,
     )
     print(f"Sliced gcode in {output_dir}")
 
