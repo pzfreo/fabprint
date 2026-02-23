@@ -283,3 +283,73 @@ file = "cube.stl"
     )
     cfg = load_config(path)
     assert cfg.slicer.version == "2.3.1"
+
+
+def test_printer_config(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        """
+[printer]
+mode = "lan"
+ip = "192.168.1.100"
+access_code = "12345678"
+serial = "01P00A000000"
+
+[[parts]]
+file = "cube.stl"
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.printer is not None
+    assert cfg.printer.mode == "lan"
+    assert cfg.printer.ip == "192.168.1.100"
+    assert cfg.printer.access_code == "12345678"
+    assert cfg.printer.serial == "01P00A000000"
+
+
+def test_printer_config_cloud(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        """
+[printer]
+mode = "cloud"
+
+[[parts]]
+file = "cube.stl"
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.printer is not None
+    assert cfg.printer.mode == "cloud"
+    assert cfg.printer.ip is None
+
+
+def test_printer_config_absent(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.printer is None
+
+
+def test_printer_bad_mode(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        """
+[printer]
+mode = "usb"
+
+[[parts]]
+file = "cube.stl"
+""",
+        create_files=["cube.stl"],
+    )
+    with pytest.raises(ValueError, match="printer.mode"):
+        load_config(path)

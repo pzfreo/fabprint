@@ -72,6 +72,45 @@ def main(argv: list[str] | None = None) -> None:
         help="AMS slot for --filament-type (default: 1)",
     )
 
+    # print subcommand
+    print_cmd = sub.add_parser(
+        "print", parents=[common], help="Arrange, slice, and send to printer"
+    )
+    print_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
+    print_cmd.add_argument(
+        "--gcode", type=Path, default=None, help="Send pre-sliced gcode (skip arrange/slice)"
+    )
+    print_cmd.add_argument("-o", "--output-dir", type=Path, default=None, help="Output directory")
+    print_cmd.add_argument(
+        "--dry-run", action="store_true", help="Do everything except send to printer"
+    )
+    print_cmd.add_argument(
+        "--view", action="store_true", help="Show plate in viewer before slicing"
+    )
+    print_cmd.add_argument(
+        "--docker",
+        action="store_true",
+        help="Force slicing via Docker (even if local slicer is available)",
+    )
+    print_cmd.add_argument(
+        "--docker-version",
+        type=str,
+        default=None,
+        help="Use a specific OrcaSlicer Docker image version (e.g. 2.3.1)",
+    )
+    print_cmd.add_argument(
+        "--filament-type",
+        type=str,
+        default=None,
+        help="Override filament profile name (e.g. 'Generic PLA @base')",
+    )
+    print_cmd.add_argument(
+        "--filament-slot",
+        type=int,
+        default=1,
+        help="AMS slot for --filament-type (default: 1)",
+    )
+
     # profiles subcommand
     profiles_cmd = sub.add_parser("profiles", parents=[common], help="List or pin slicer profiles")
     profiles_sub = profiles_cmd.add_subparsers(dest="profiles_command")
@@ -110,6 +149,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_plate(args)
     elif args.command == "slice":
         _cmd_slice(args)
+    elif args.command == "print":
+        _cmd_print(args)
     elif args.command == "profiles":
         _cmd_profiles(args)
 
@@ -186,7 +227,8 @@ def _cmd_plate(args: argparse.Namespace) -> None:
     print(f"Plate exported to {output}")
 
 
-def _cmd_slice(args: argparse.Namespace) -> None:
+def _do_slice(args: argparse.Namespace) -> Path:
+    """Arrange, export, and slice. Returns the output directory."""
     from fabprint.slicer import parse_gcode_stats, slice_plate
 
     plate_3mf = Path("plate.3mf")
@@ -233,6 +275,36 @@ def _cmd_slice(args: argparse.Namespace) -> None:
         parts.append(f"estimated {stats['print_time']}")
     if parts:
         print(f"  {', '.join(parts)}")
+
+    return output_dir
+
+
+def _cmd_slice(args: argparse.Namespace) -> None:
+    _do_slice(args)
+
+
+def _cmd_print(args: argparse.Namespace) -> None:
+    from fabprint.printer import send_print
+
+    cfg = load_config(args.config)
+
+    if cfg.printer is None:
+        raise ValueError("No [printer] section in config. Required for printing.")
+
+    if args.gcode:
+        # Send pre-sliced gcode directly
+        gcode_path = args.gcode.resolve()
+        if not gcode_path.exists():
+            raise FileNotFoundError(f"Gcode file not found: {gcode_path}")
+    else:
+        # Full pipeline: arrange → slice → find gcode
+        output_dir = _do_slice(args)
+        gcode_files = list(output_dir.glob("*.gcode"))
+        if not gcode_files:
+            raise RuntimeError(f"No gcode files found in {output_dir}")
+        gcode_path = gcode_files[0]
+
+    send_print(gcode_path, cfg.printer, dry_run=args.dry_run)
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:

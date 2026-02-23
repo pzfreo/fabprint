@@ -10,9 +10,10 @@ dependencies = [
 
 [project.optional-dependencies]
 step = ["build123d>=0.10.0"]
+lan = ["bambulabs-api>=2.6.0"]
 cloud = ["bambu-lab-cloud-api"]
-all = ["fabprint[step,cloud]"]
-dev = ["pytest>=8.0.0", "ruff>=0.4.0"]
+all = ["fabprint[step,lan,cloud]"]
+dev = ["pytest>=8.0.0", "ruff>=0.4.0", "packaging>=23.0"]
 
 [project.scripts]
 fabprint = "fabprint.cli:main"
