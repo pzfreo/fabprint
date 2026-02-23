@@ -95,9 +95,46 @@ def _apply_overrides(data: dict, overrides: dict[str, object], name: str) -> dic
 
     log.info(
         "Applied %d override(s) to %s:\n%s",
-        len(applied), name, "\n".join(applied),
+        len(applied),
+        name,
+        "\n".join(applied),
     )
     return data
+
+
+def _detect_slicer_version(slicer: Path) -> str | None:
+    """Detect the version of a local slicer by parsing --help output."""
+    try:
+        r = subprocess.run(
+            [str(slicer), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        # OrcaSlicer prints "OrcaSlicer-2.3.1:" on the first few lines
+        for line in (r.stdout + r.stderr).splitlines()[:5]:
+            m = re.search(r"OrcaSlicer[- ]([\d][^\s:]+)", line)
+            if m:
+                return m.group(1)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _check_slicer_version(
+    actual: str | None,
+    required: str,
+    source: str,
+) -> None:
+    """Raise if the detected slicer version doesn't match the required one."""
+    if actual is None:
+        raise RuntimeError(
+            f"Could not detect {source} slicer version; config requires version {required}"
+        )
+    if actual != required:
+        raise RuntimeError(
+            f"{source} slicer version {actual} does not match config-required version {required}"
+        )
 
 
 def _has_docker(image: str) -> bool:
@@ -105,7 +142,8 @@ def _has_docker(image: str) -> bool:
     try:
         r = subprocess.run(
             ["docker", "image", "inspect", image],
-            capture_output=True, timeout=10,
+            capture_output=True,
+            timeout=10,
         )
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -135,11 +173,17 @@ def _slice_via_docker(
     container_prefix = "/work/output/" + profile_dir.name
 
     cmd = [
-        "docker", "run", "--rm",
-        "--platform", "linux/amd64",
-        "-v", f"{input_3mf}:/work/input.3mf:ro",
-        "-v", f"{output_dir}:/work/output",
-        "--entrypoint", "orca-slicer",
+        "docker",
+        "run",
+        "--rm",
+        "--platform",
+        "linux/amd64",
+        "-v",
+        f"{input_3mf}:/work/input.3mf:ro",
+        "-v",
+        f"{output_dir}:/work/output",
+        "--entrypoint",
+        "orca-slicer",
         image,
     ]
 
@@ -150,11 +194,15 @@ def _slice_via_docker(
         rewritten = filament_arg.replace(host_prefix, container_prefix)
         cmd.extend(["--load-filaments", rewritten])
 
-    cmd.extend([
-        "--slice", "0",
-        "--outputdir", "/work/output",
-        "/work/input.3mf",
-    ])
+    cmd.extend(
+        [
+            "--slice",
+            "0",
+            "--outputdir",
+            "/work/output",
+            "/work/input.3mf",
+        ]
+    )
 
     log.info("Slicing via Docker (%s): %s", image, " ".join(cmd))
 
@@ -163,8 +211,7 @@ def _slice_via_docker(
     if result.returncode != 0:
         log.error("Docker slicer stderr:\n%s", result.stderr)
         raise RuntimeError(
-            f"Docker slicer failed (exit code {result.returncode}):\n"
-            f"{result.stderr[:500]}"
+            f"Docker slicer failed (exit code {result.returncode}):\n{result.stderr[:500]}"
         )
 
     log.info("Docker slicer stdout:\n%s", result.stdout)
@@ -223,6 +270,7 @@ def slice_plate(
     project_dir: Path | None = None,
     docker: bool = False,
     docker_version: str | None = None,
+    required_version: str | None = None,
 ) -> Path:
     """Slice a 3MF file using BambuStudio or OrcaSlicer CLI.
 
@@ -234,8 +282,17 @@ def slice_plate(
       docker_version="X"   - use Docker with fabprint:orca-X image
       neither + no local   - fallback to Docker with default image
 
+    If required_version is set (from config), the slicer version is checked
+    and must match exactly. For Docker, the image tag is used as the version.
+
     Returns the output directory containing the sliced gcode.
     """
+    # If config specifies a version and no explicit docker_version was given,
+    # use it as the docker_version for Docker-based slicing.
+    if required_version and not docker_version:
+        docker_version = required_version
+        docker = True
+
     use_docker = docker or docker_version is not None
     image = _docker_image(docker_version)
 
@@ -244,9 +301,7 @@ def slice_plate(
             slicer = find_slicer(engine)
         except FileNotFoundError:
             if _has_docker(image):
-                log.info(
-                    "Slicer not found locally, falling back to Docker (%s)", image
-                )
+                log.info("Slicer not found locally, falling back to Docker (%s)", image)
                 use_docker = True
             else:
                 raise
@@ -257,6 +312,19 @@ def slice_plate(
             f"Build it with: docker build --build-arg "
             f"ORCA_VERSION={docker_version or 'X.Y.Z'} -t {image} ."
         )
+
+    # Detect and verify slicer version
+    if use_docker:
+        detected_version = docker_version
+    else:
+        detected_version = _detect_slicer_version(slicer)
+
+    if required_version:
+        _check_slicer_version(
+            detected_version, required_version, "Docker" if use_docker else "local"
+        )
+
+    print(f"Slicer: OrcaSlicer {detected_version or 'unknown'}{' (Docker)' if use_docker else ''}")
 
     input_3mf = input_3mf.resolve()
     if not input_3mf.exists():
@@ -277,13 +345,23 @@ def slice_plate(
 
     try:
         settings_arg, filament_arg = _resolve_profiles(
-            engine, printer, process, filaments, overrides, project_dir, tmp_dir,
+            engine,
+            printer,
+            process,
+            filaments,
+            overrides,
+            project_dir,
+            tmp_dir,
         )
 
         if use_docker:
             return _slice_via_docker(
-                input_3mf, output_dir, tmp_dir,
-                settings_arg, filament_arg, image,
+                input_3mf,
+                output_dir,
+                tmp_dir,
+                settings_arg,
+                filament_arg,
+                image,
             )
 
         # Local slicer path
@@ -297,23 +375,29 @@ def slice_plate(
         if filament_ids and not str(input_3mf).endswith(".3mf"):
             cmd.extend(["--load-filament-ids", ",".join(str(i) for i in filament_ids)])
 
-        cmd.extend([
-            "--slice", "0",
-            "--outputdir", str(output_dir),
-            str(input_3mf),
-        ])
+        cmd.extend(
+            [
+                "--slice",
+                "0",
+                "--outputdir",
+                str(output_dir),
+                str(input_3mf),
+            ]
+        )
 
         log.info("Slicing with %s: %s", engine, " ".join(cmd))
 
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
 
         if result.returncode != 0:
             log.error("Slicer stderr:\n%s", result.stderr)
             raise RuntimeError(
-                f"Slicer failed (exit code {result.returncode}):\n"
-                f"{result.stderr[:500]}"
+                f"Slicer failed (exit code {result.returncode}):\n{result.stderr[:500]}"
             )
 
         log.info("Slicer stdout:\n%s", result.stdout)
@@ -342,20 +426,14 @@ def parse_gcode_stats(output_dir: Path) -> dict[str, str | float]:
     for line in lines[:300]:
         if m := re.search(r"total estimated time:\s*(.+?)(?:;|$)", line):
             stats["print_time"] = m.group(1).strip()
-        elif m := re.match(
-            r";\s*estimated printing time.*?=\s*(.+)", line
-        ):
+        elif m := re.match(r";\s*estimated printing time.*?=\s*(.+)", line):
             stats["print_time"] = m.group(1).strip()
 
     # Scan tail for filament stats
     for line in lines[-50:]:
-        if m := re.match(
-            r";\s*(?:total )?filament used \[g\]\s*=\s*([\d.]+)", line
-        ):
+        if m := re.match(r";\s*(?:total )?filament used \[g\]\s*=\s*([\d.]+)", line):
             stats["filament_g"] = float(m.group(1))
-        elif m := re.match(
-            r";\s*(?:total )?filament used \[cm3\]\s*=\s*([\d.]+)", line
-        ):
+        elif m := re.match(r";\s*(?:total )?filament used \[cm3\]\s*=\s*([\d.]+)", line):
             stats["filament_cm3"] = float(m.group(1))
 
     return stats

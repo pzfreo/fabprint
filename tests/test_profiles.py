@@ -94,9 +94,7 @@ def test_resolve_profile_data_flattens_inheritance(tmp_path):
     child = {"from": "system", "inherits": "root", "wall_loops": 3}
     cat_dir.joinpath("child.json").write_text(json.dumps(child))
 
-    data = resolve_profile_data(
-        str(cat_dir / "child.json"), "orca", "process", tmp_path
-    )
+    data = resolve_profile_data(str(cat_dir / "child.json"), "orca", "process", tmp_path)
     # Child overrides wall_loops, inherits enable_support and infill from root
     assert data["wall_loops"] == 3
     assert data["enable_support"] == 0
@@ -108,9 +106,7 @@ def test_resolve_profile_data_flattens_inheritance(tmp_path):
 @pytest.mark.skipif(not _has_orca(), reason="OrcaSlicer not installed")
 def test_resolve_profile_data_real_process():
     """Verify real OrcaSlicer process profile resolves enable_support."""
-    data = resolve_profile_data(
-        "0.20mm Standard @BBL X1C", "orca", "process"
-    )
+    data = resolve_profile_data("0.20mm Standard @BBL X1C", "orca", "process")
     # Must have enable_support from the root of the chain
     assert "enable_support" in data
     # Must not have inherits (fully flattened)

@@ -87,9 +87,7 @@ def _inject_paint_data(output: Path, scene: trimesh.Scene) -> None:
     # Re-register all namespaces from the original XML so ET preserves
     # prefixes (avoids ns0: renames). Note: ET.tostring still drops
     # unused namespace declarations from the root element.
-    for _event, (prefix, uri) in ET.iterparse(
-        io.BytesIO(model_xml), events=["start-ns"]
-    ):
+    for _event, (prefix, uri) in ET.iterparse(io.BytesIO(model_xml), events=["start-ns"]):
         ET.register_namespace(prefix, uri)
 
     root = ET.fromstring(model_xml)

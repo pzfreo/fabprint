@@ -61,10 +61,14 @@ def test_apply_overrides():
         "sparse_infill_density": "15%",
         "other_setting": "keep",
     }
-    result = _apply_overrides(data, {
-        "wall_loops": 4,
-        "sparse_infill_density": "25%",
-    }, "test_profile")
+    result = _apply_overrides(
+        data,
+        {
+            "wall_loops": 4,
+            "sparse_infill_density": "25%",
+        },
+        "test_profile",
+    )
 
     assert result["wall_loops"] == "4"
     assert result["sparse_infill_density"] == "25%"
@@ -93,7 +97,8 @@ def test_has_docker_true():
         assert _has_docker("fabprint:orca-2.3.1") is True
         mock_run.assert_called_once_with(
             ["docker", "image", "inspect", "fabprint:orca-2.3.1"],
-            capture_output=True, timeout=10,
+            capture_output=True,
+            timeout=10,
         )
 
 
@@ -128,8 +133,12 @@ def test_slice_via_docker_command(tmp_path):
     mock_result = MagicMock(returncode=0, stdout="", stderr="")
     with patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run:
         _slice_via_docker(
-            input_3mf, output_dir, profile_dir,
-            settings_arg, filament_arg, "fabprint:orca-2.3.1",
+            input_3mf,
+            output_dir,
+            profile_dir,
+            settings_arg,
+            filament_arg,
+            "fabprint:orca-2.3.1",
         )
 
     cmd = mock_run.call_args[0][0]
@@ -159,7 +168,12 @@ def test_slice_via_docker_failure(tmp_path):
     with patch("fabprint.slicer.subprocess.run", return_value=mock_result):
         with pytest.raises(RuntimeError, match="Docker slicer failed"):
             _slice_via_docker(
-                input_3mf, output_dir, profile_dir, None, None, "fabprint:latest",
+                input_3mf,
+                output_dir,
+                profile_dir,
+                None,
+                None,
+                "fabprint:latest",
             )
 
 
@@ -186,9 +200,13 @@ def test_slice_plate_local_command(tmp_path):
         patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run,
     ):
         slice_plate(
-            input_3mf, engine="orca", output_dir=output_dir,
-            printer="My Printer", process="My Process",
-            filaments=["PLA"], overrides={"wall_loops": 4},
+            input_3mf,
+            engine="orca",
+            output_dir=output_dir,
+            printer="My Printer",
+            process="My Process",
+            filaments=["PLA"],
+            overrides={"wall_loops": 4},
         )
 
     cmd = mock_run.call_args[0][0]
@@ -214,7 +232,9 @@ def test_slice_plate_docker_fallback(tmp_path):
         patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run,
     ):
         slice_plate(
-            input_3mf, engine="orca", output_dir=output_dir,
+            input_3mf,
+            engine="orca",
+            output_dir=output_dir,
             printer="My Printer",
         )
 
@@ -237,8 +257,11 @@ def test_slice_plate_docker_explicit(tmp_path):
         patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run,
     ):
         slice_plate(
-            input_3mf, engine="orca", output_dir=output_dir,
-            printer="My Printer", docker=True,
+            input_3mf,
+            engine="orca",
+            output_dir=output_dir,
+            printer="My Printer",
+            docker=True,
         )
 
     cmd = mock_run.call_args[0][0]
@@ -260,8 +283,11 @@ def test_slice_plate_docker_version(tmp_path):
         patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run,
     ):
         slice_plate(
-            input_3mf, engine="orca", output_dir=output_dir,
-            printer="My Printer", docker_version="2.3.1",
+            input_3mf,
+            engine="orca",
+            output_dir=output_dir,
+            printer="My Printer",
+            docker_version="2.3.1",
         )
 
     cmd = mock_run.call_args[0][0]
@@ -279,7 +305,9 @@ def test_slice_plate_docker_image_missing(tmp_path):
     ):
         with pytest.raises(FileNotFoundError, match="Docker image.*not found"):
             slice_plate(
-                input_3mf, engine="orca", docker_version="9.9.9",
+                input_3mf,
+                engine="orca",
+                docker_version="9.9.9",
             )
 
 

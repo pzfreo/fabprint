@@ -58,9 +58,7 @@ def _make_painted_3mf(path, paint_colors):
     ET.register_namespace("", ns)
     with zipfile.ZipFile(path, "r") as zf:
         model_xml = zf.read("3D/3dmodel.model")
-        other_files = {
-            n: zf.read(n) for n in zf.namelist() if n != "3D/3dmodel.model"
-        }
+        other_files = {n: zf.read(n) for n in zf.namelist() if n != "3D/3dmodel.model"}
 
     root = ET.fromstring(model_xml)
     triangles = list(root.iter(f"{{{ns}}}triangle"))

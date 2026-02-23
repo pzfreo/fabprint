@@ -18,6 +18,7 @@ class PlateConfig:
 @dataclass
 class SlicerConfig:
     engine: str = "bambu"
+    version: str | None = None  # required OrcaSlicer version (e.g. "2.3.1")
     printer: str | None = None
     process: str | None = None
     filaments: list[str] = field(default_factory=list)
@@ -64,6 +65,7 @@ def load_config(path: Path) -> FabprintConfig:
     slicer_raw = raw.get("slicer", {})
     slicer = SlicerConfig(
         engine=slicer_raw.get("engine", "bambu"),
+        version=slicer_raw.get("version"),
         printer=slicer_raw.get("printer"),
         process=slicer_raw.get("process"),
         filaments=slicer_raw.get("filaments", []),
@@ -83,9 +85,7 @@ def load_config(path: Path) -> FabprintConfig:
             raise ValueError(f"parts[{i}]: 'file' is required")
         orient = p.get("orient", "flat")
         if orient not in VALID_ORIENTS:
-            raise ValueError(
-                f"parts[{i}]: orient must be one of {VALID_ORIENTS}, got '{orient}'"
-            )
+            raise ValueError(f"parts[{i}]: orient must be one of {VALID_ORIENTS}, got '{orient}'")
         file_path = base_dir / p["file"]
         if not file_path.exists():
             raise FileNotFoundError(f"parts[{i}]: file not found: {file_path}")
@@ -103,13 +103,15 @@ def load_config(path: Path) -> FabprintConfig:
         scale = float(p.get("scale", 1.0))
         if scale <= 0:
             raise ValueError(f"parts[{i}]: scale must be > 0, got {scale}")
-        parts.append(PartConfig(
-            file=file_path,
-            copies=copies,
-            orient=orient,
-            rotate=rotate,
-            filament=filament,
-            scale=scale,
-        ))
+        parts.append(
+            PartConfig(
+                file=file_path,
+                copies=copies,
+                orient=orient,
+                rotate=rotate,
+                filament=filament,
+                scale=scale,
+            )
+        )
 
     return FabprintConfig(plate=plate, slicer=slicer, parts=parts, base_dir=base_dir)
