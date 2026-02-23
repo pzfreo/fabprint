@@ -71,9 +71,14 @@ def _send_cloud(
     serial: str | None = None,
     dry_run: bool = False,
 ) -> None:
-    """Send gcode to printer via Bambu cloud API."""
+    """Send gcode to printer via Bambu cloud API.
+
+    Uses BambuAuthenticator to get/cache a token, then BambuClient
+    for API calls. Tokens are cached in ~/.bambu_token.
+    """
     try:
         from bambulab import BambuClient
+        from bambulab.auth import BambuAuthenticator
     except ImportError:
         raise ImportError(
             "bambu-lab-cloud-api is required for cloud printing. "
@@ -86,7 +91,11 @@ def _send_cloud(
         print(f"  [dry-run] Would upload {gcode_path.name} and start cloud print")
         return
 
-    client = BambuClient(email=email, password=password)
+    # Authenticate (uses cached token if valid, else logs in)
+    auth = BambuAuthenticator()
+    token = auth.get_or_create_token(username=email, password=password)
+    client = BambuClient(token=token)
+
     devices = client.get_devices()
     if not devices:
         raise RuntimeError("No printers found on Bambu cloud account")
