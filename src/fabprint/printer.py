@@ -126,7 +126,13 @@ def _send_cloud(
     if upload_only:
         print("  File uploaded — start from Bambu Studio or printer when ready")
     else:
-        client.start_cloud_print(device_id=device_id, filename=gcode_path.name)
+        # upload_file returns the S3 URL but doesn't register a file_id,
+        # so use start_print_job directly with the upload URL.
+        client.start_print_job(
+            device_id=device_id,
+            file_name=gcode_path.name,
+            file_url=result["upload_url"],
+        )
         print("  Print started via cloud")
 
 
