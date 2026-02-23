@@ -2,10 +2,10 @@
 
 import os
 import subprocess
-from packaging.version import Version
 from pathlib import Path
 
 import pytest
+from packaging.version import Version
 
 from fabprint.cli import main
 from fabprint.profiles import SYSTEM_DIRS
@@ -51,6 +51,11 @@ skip_no_docker = pytest.mark.skipif(
 )
 
 
+def _posix(p: Path) -> str:
+    """Return a forward-slash path string (avoids TOML backslash escaping on Windows)."""
+    return p.as_posix()
+
+
 def _write_config(tmp_path: Path, engine: str = "orca") -> Path:
     toml = tmp_path / "fabprint.toml"
     toml.write_text(f"""
@@ -62,12 +67,12 @@ padding = 5.0
 engine = "{engine}"
 
 [[parts]]
-file = "{FIXTURES / 'cube_10mm.stl'}"
+file = "{_posix(FIXTURES / 'cube_10mm.stl')}"
 copies = 2
 orient = "flat"
 
 [[parts]]
-file = "{FIXTURES / 'cylinder_5x20mm.stl'}"
+file = "{_posix(FIXTURES / 'cylinder_5x20mm.stl')}"
 orient = "upright"
 """)
     return toml
@@ -118,7 +123,7 @@ process = "0.20mm Standard @BBL X1C"
 filaments = ["Generic PLA @base"]
 
 [[parts]]
-file = "{FIXTURES / 'cube_10mm.stl'}"
+file = "{_posix(FIXTURES / 'cube_10mm.stl')}"
 """)
     main(["profiles", "pin", str(config)])
     assert (tmp_path / "profiles" / "machine" / "Bambu Lab P1S 0.4 nozzle.json").exists()
@@ -152,7 +157,7 @@ process = "0.20mm Standard @BBL X1C"
 filaments = [{filament_toml}]
 
 [[parts]]
-file = "{FIXTURES / 'cube_10mm.stl'}"
+file = "{_posix(FIXTURES / 'cube_10mm.stl')}"
 copies = 1
 """)
     return toml
