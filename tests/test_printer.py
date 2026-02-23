@@ -43,10 +43,11 @@ def test_send_print_lan_dry_run(tmp_path, capsys):
     gcode = tmp_path / "test.gcode"
     gcode.write_text("; test gcode")
     config = PrinterConfig(mode="lan", ip="10.0.0.1", access_code="abc", serial="SN123")
-    send_print(gcode, config, dry_run=True)
-    output = capsys.readouterr().out
-    assert "dry-run" in output
-    assert "10.0.0.1" in output
+    with patch("fabprint.printer._send_lan") as mock_send:
+        send_print(gcode, config, dry_run=True)
+        mock_send.assert_called_once_with(
+            gcode, ip="10.0.0.1", access_code="abc", serial="SN123", dry_run=True
+        )
 
 
 def test_send_print_cloud_dry_run(tmp_path, capsys, monkeypatch):
@@ -55,10 +56,11 @@ def test_send_print_cloud_dry_run(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("BAMBU_EMAIL", "user@test.com")
     monkeypatch.setenv("BAMBU_PASSWORD", "secret")
     config = PrinterConfig(mode="cloud")
-    send_print(gcode, config, dry_run=True)
-    output = capsys.readouterr().out
-    assert "dry-run" in output
-    assert "cloud" in output
+    with patch("fabprint.printer._send_cloud") as mock_send:
+        send_print(gcode, config, dry_run=True)
+        mock_send.assert_called_once_with(
+            gcode, email="user@test.com", password="secret", serial=None, dry_run=True
+        )
 
 
 def test_send_print_lan_missing_ip():
