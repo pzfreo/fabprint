@@ -79,12 +79,14 @@ def _send_cloud(
 ) -> None:
     """Send gcode to printer via Bambu cloud API.
 
-    Uses BambuAuthenticator to get/cache a token, then BambuClient
-    for API calls. Tokens are cached in ~/.bambu_token.
+    Uses BambuAuthenticator for token auth, BambuClient for HTTP API
+    (device listing, file upload), and MQTTClient to send the print
+    command. Tokens are cached in ~/.bambu_token.
     """
     try:
         from bambulab import BambuClient
         from bambulab.auth import BambuAuthenticator
+        from bambulab.mqtt import MQTTClient
     except ImportError:
         raise ImportError(
             "bambu-lab-cloud-api is required for cloud printing. "
@@ -120,20 +122,55 @@ def _send_cloud(
     print(f"  Printer: {device['name']} ({device_id})")
 
     result = client.upload_file(str(gcode_path))
+    upload_url = result["upload_url"]
     log.info("Cloud upload result: %s", result)
     print(f"  Uploaded {gcode_path.name}")
 
     if upload_only:
-        print("  File uploaded — start from Bambu Studio or printer when ready")
-    else:
-        # upload_file returns the S3 URL but doesn't register a file_id,
-        # so use start_print_job directly with the upload URL.
-        client.start_print_job(
-            device_id=device_id,
-            file_name=gcode_path.name,
-            file_url=result["upload_url"],
+        return
+
+    # Get user ID for MQTT auth
+    user_info = client.get_user_info()
+    uid = str(user_info.get("uid", user_info.get("user_id", "")))
+    if not uid:
+        raise RuntimeError("Could not determine user ID for MQTT connection")
+
+    # Connect to cloud MQTT broker and send print command
+    import time
+
+    mqtt_client = MQTTClient(
+        username=uid,
+        access_token=token,
+        device_id=device_id,
+    )
+    mqtt_client.connect(blocking=False)
+
+    # Wait for MQTT connection
+    for _ in range(50):
+        if mqtt_client.connected:
+            break
+        time.sleep(0.1)
+    if not mqtt_client.connected:
+        mqtt_client.disconnect()
+        raise RuntimeError("Failed to connect to Bambu cloud MQTT broker")
+
+    try:
+        mqtt_client.publish(
+            {
+                "print": {
+                    "sequence_id": "0",
+                    "command": "gcode_file",
+                    "param": upload_url,
+                    "subtask_name": gcode_path.stem,
+                    "url": upload_url,
+                }
+            }
         )
+        # Give broker time to deliver the message
+        time.sleep(1)
         print("  Print started via cloud")
+    finally:
+        mqtt_client.disconnect()
 
 
 def send_print(
