@@ -101,15 +101,15 @@ def _send_cloud(
         raise RuntimeError("No printers found on Bambu cloud account")
 
     if serial:
-        device = next((d for d in devices if d.serial == serial), None)
+        device = next((d for d in devices if d["dev_id"] == serial), None)
         if not device:
-            available = ", ".join(d.serial for d in devices)
+            available = ", ".join(d["dev_id"] for d in devices)
             raise RuntimeError(f"Printer {serial} not found. Available: {available}")
     else:
         device = devices[0]
-        log.info("Using first available printer: %s (%s)", device.name, device.serial)
+        log.info("Using first available printer: %s (%s)", device["name"], device["dev_id"])
 
-    print(f"  Printer: {device.name} ({device.serial})")
+    print(f"  Printer: {device['name']} ({device['dev_id']})")
 
     result = client.upload_file(str(gcode_path))
     log.info("Cloud upload result: %s", result)
