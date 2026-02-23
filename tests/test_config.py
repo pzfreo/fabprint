@@ -19,7 +19,9 @@ def _write_toml(tmp_path: Path, content: str, create_files: list[str] | None = N
 
 
 def test_valid_config(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [plate]
 size = [200, 200]
 padding = 3.0
@@ -40,7 +42,9 @@ filament = 1
 file = "cyl.stl"
 orient = "upright"
 filament = 2
-""", create_files=["cube.stl", "cyl.stl"])
+""",
+        create_files=["cube.stl", "cyl.stl"],
+    )
 
     cfg = load_config(path)
     assert cfg.plate.size == (200, 200)
@@ -59,10 +63,14 @@ filament = 2
 
 
 def test_defaults(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "cube.stl"
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
 
     cfg = load_config(path)
     assert cfg.plate.size == (256.0, 256.0)
@@ -73,117 +81,161 @@ file = "cube.stl"
 
 
 def test_missing_parts(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [plate]
 size = [200, 200]
-""")
+""",
+    )
     with pytest.raises(ValueError, match="At least one"):
         load_config(path)
 
 
 def test_bad_orient(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "cube.stl"
 orient = "diagonal"
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     with pytest.raises(ValueError, match="orient"):
         load_config(path)
 
 
 def test_bad_plate_size(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [plate]
 size = [-1, 200]
 
 [[parts]]
 file = "cube.stl"
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     with pytest.raises(ValueError, match="plate.size"):
         load_config(path)
 
 
 def test_missing_file(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "nonexistent.stl"
-""")
+""",
+    )
     with pytest.raises(FileNotFoundError, match="nonexistent.stl"):
         load_config(path)
 
 
 def test_filament_defaults_to_1(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "cube.stl"
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     cfg = load_config(path)
     assert cfg.parts[0].filament == 1
 
 
 def test_bad_filament(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "cube.stl"
 filament = 0
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     with pytest.raises(ValueError, match="filament"):
         load_config(path)
 
 
 def test_bad_copies(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "cube.stl"
 copies = 0
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     with pytest.raises(ValueError, match="copies"):
         load_config(path)
 
 
 def test_bad_engine(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [slicer]
 engine = "cura"
 
 [[parts]]
 file = "cube.stl"
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     with pytest.raises(ValueError, match="engine"):
         load_config(path)
 
 
 def test_scale(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "cube.stl"
 scale = 2.0
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     cfg = load_config(path)
     assert cfg.parts[0].scale == 2.0
 
 
 def test_scale_default(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "cube.stl"
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     cfg = load_config(path)
     assert cfg.parts[0].scale == 1.0
 
 
 def test_bad_scale(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "cube.stl"
 scale = 0
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     with pytest.raises(ValueError, match="scale"):
         load_config(path)
 
 
 def test_overrides(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [slicer]
 engine = "orca"
 
@@ -193,7 +245,9 @@ wall_loops = 3
 
 [[parts]]
 file = "cube.stl"
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     cfg = load_config(path)
     assert cfg.slicer.overrides == {
         "sparse_infill_density": "25%",
@@ -202,22 +256,30 @@ file = "cube.stl"
 
 
 def test_overrides_default_empty(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [[parts]]
 file = "cube.stl"
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     cfg = load_config(path)
     assert cfg.slicer.overrides == {}
 
 
 def test_version(tmp_path):
-    path = _write_toml(tmp_path, """
+    path = _write_toml(
+        tmp_path,
+        """
 [slicer]
 engine = "orca"
 version = "2.3.1"
 
 [[parts]]
 file = "cube.stl"
-""", create_files=["cube.stl"])
+""",
+        create_files=["cube.stl"],
+    )
     cfg = load_config(path)
     assert cfg.slicer.version == "2.3.1"

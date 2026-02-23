@@ -38,9 +38,9 @@ def test_build_and_export_3mf(tmp_path):
 
 
 def test_encode_paint_color():
-    assert _encode_paint_color(0) == "4"   # filament 1
-    assert _encode_paint_color(1) == "8"   # filament 2
-    assert _encode_paint_color(2) == "C"   # filament 3
+    assert _encode_paint_color(0) == "4"  # filament 1
+    assert _encode_paint_color(1) == "8"  # filament 2
+    assert _encode_paint_color(2) == "C"  # filament 3
     assert _encode_paint_color(3) == "10"  # filament 4
 
 

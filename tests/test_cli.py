@@ -28,7 +28,9 @@ def _docker_orca_version() -> str | None:
     try:
         r = subprocess.run(
             ["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         versions = []
         for line in r.stdout.splitlines():
@@ -67,12 +69,12 @@ padding = 5.0
 engine = "{engine}"
 
 [[parts]]
-file = "{_posix(FIXTURES / 'cube_10mm.stl')}"
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
 copies = 2
 orient = "flat"
 
 [[parts]]
-file = "{_posix(FIXTURES / 'cylinder_5x20mm.stl')}"
+file = "{_posix(FIXTURES / "cylinder_5x20mm.stl")}"
 orient = "upright"
 """)
     return toml
@@ -123,7 +125,7 @@ process = "0.20mm Standard @BBL X1C"
 filaments = ["Generic PLA @base"]
 
 [[parts]]
-file = "{_posix(FIXTURES / 'cube_10mm.stl')}"
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
 """)
     main(["profiles", "pin", str(config)])
     assert (tmp_path / "profiles" / "machine" / "Bambu Lab P1S 0.4 nozzle.json").exists()
@@ -157,7 +159,7 @@ process = "0.20mm Standard @BBL X1C"
 filaments = [{filament_toml}]
 
 [[parts]]
-file = "{_posix(FIXTURES / 'cube_10mm.stl')}"
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
 copies = 1
 """)
     return toml
@@ -173,15 +175,20 @@ def test_slice_docker(tmp_path, monkeypatch):
     output_dir = work_dir / "output"
     monkeypatch.chdir(work_dir)
     try:
-        main([
-            "slice", str(config),
-            "-o", str(output_dir),
-        ])
+        main(
+            [
+                "slice",
+                str(config),
+                "-o",
+                str(output_dir),
+            ]
+        )
         gcode_files = list(output_dir.glob("*.gcode"))
         assert len(gcode_files) >= 1, "Expected at least one gcode file"
         assert gcode_files[0].stat().st_size > 0
     finally:
         import shutil
+
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
@@ -198,17 +205,24 @@ def test_slice_docker_filament_override(tmp_path, monkeypatch):
     output_dir = work_dir / "output"
     monkeypatch.chdir(work_dir)
     try:
-        main([
-            "slice", str(config),
-            "-o", str(output_dir),
-            "--filament-type", "Generic PLA @base",
-            "--filament-slot", "1",
-        ])
+        main(
+            [
+                "slice",
+                str(config),
+                "-o",
+                str(output_dir),
+                "--filament-type",
+                "Generic PLA @base",
+                "--filament-slot",
+                "1",
+            ]
+        )
         gcode_files = list(output_dir.glob("*.gcode"))
         assert len(gcode_files) >= 1, "Expected at least one gcode file"
         assert gcode_files[0].stat().st_size > 0
     finally:
         import shutil
+
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
@@ -221,10 +235,15 @@ def test_slice_docker_version_mismatch(tmp_path, monkeypatch):
     monkeypatch.chdir(work_dir)
     try:
         with pytest.raises(FileNotFoundError, match="Docker image"):
-            main([
-                "slice", str(config),
-                "-o", str(work_dir / "output"),
-            ])
+            main(
+                [
+                    "slice",
+                    str(config),
+                    "-o",
+                    str(work_dir / "output"),
+                ]
+            )
     finally:
         import shutil
+
         shutil.rmtree(work_dir, ignore_errors=True)

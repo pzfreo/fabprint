@@ -25,7 +25,9 @@ def main(argv: list[str] | None = None) -> None:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     common.add_argument(
-        "--scale", type=float, default=None,
+        "--scale",
+        type=float,
+        default=None,
         help="Scale all parts by this factor (multiplies per-part scale)",
     )
 
@@ -42,42 +44,49 @@ def main(argv: list[str] | None = None) -> None:
         "slice", parents=[common], help="Arrange, export, and slice to gcode"
     )
     slice_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
-    slice_cmd.add_argument(
-        "-o", "--output-dir", type=Path, default=None, help="Output directory"
-    )
+    slice_cmd.add_argument("-o", "--output-dir", type=Path, default=None, help="Output directory")
     slice_cmd.add_argument(
         "--view", action="store_true", help="Show plate in viewer before slicing"
     )
     slice_cmd.add_argument(
-        "--docker", action="store_true",
+        "--docker",
+        action="store_true",
         help="Force slicing via Docker (even if local slicer is available)",
     )
     slice_cmd.add_argument(
-        "--docker-version", type=str, default=None,
+        "--docker-version",
+        type=str,
+        default=None,
         help="Use a specific OrcaSlicer Docker image version (e.g. 2.3.1)",
     )
     slice_cmd.add_argument(
-        "--filament-type", type=str, default=None,
+        "--filament-type",
+        type=str,
+        default=None,
         help="Override filament profile name (e.g. 'Generic PLA @base')",
     )
     slice_cmd.add_argument(
-        "--filament-slot", type=int, default=1,
+        "--filament-slot",
+        type=int,
+        default=1,
         help="AMS slot for --filament-type (default: 1)",
     )
 
     # profiles subcommand
-    profiles_cmd = sub.add_parser(
-        "profiles", parents=[common], help="List or pin slicer profiles"
-    )
+    profiles_cmd = sub.add_parser("profiles", parents=[common], help="List or pin slicer profiles")
     profiles_sub = profiles_cmd.add_subparsers(dest="profiles_command")
 
     list_cmd = profiles_sub.add_parser("list", help="List available profiles")
     list_cmd.add_argument(
-        "--engine", default="orca", choices=["orca", "bambu"],
+        "--engine",
+        default="orca",
+        choices=["orca", "bambu"],
         help="Slicer engine (default: orca)",
     )
     list_cmd.add_argument(
-        "--category", default=None, choices=["machine", "process", "filament"],
+        "--category",
+        default=None,
+        choices=["machine", "process", "filament"],
         help="Filter by category",
     )
 
@@ -147,9 +156,7 @@ def _generate_plate(
     if getattr(args, "view", False):
         from fabprint.viewer import show_plate
 
-        show_plate(
-            [p.mesh for p in placements], [p.name for p in placements], cfg.plate.size
-        )
+        show_plate([p.mesh for p in placements], [p.name for p in placements], cfg.plate.size)
 
     scene = build_plate(placements, cfg.plate.size)
     export_plate(scene, output)
@@ -157,7 +164,9 @@ def _generate_plate(
 
 
 def _print_summary(
-    part_info: list[tuple], total: int, plate_size: tuple[float, float],
+    part_info: list[tuple],
+    total: int,
+    plate_size: tuple[float, float],
 ) -> None:
     """Print a build summary table."""
     name_width = max(len(name) for name, *_ in part_info)

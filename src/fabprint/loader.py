@@ -68,8 +68,7 @@ def extract_paint_colors(path: Path) -> list[str] | None:
             if "3D/3dmodel.model" in zf.namelist():
                 model_files.append("3D/3dmodel.model")
             model_files.extend(
-                n for n in zf.namelist()
-                if n.startswith("3D/Objects/") and n.endswith(".model")
+                n for n in zf.namelist() if n.startswith("3D/Objects/") and n.endswith(".model")
             )
             if not model_files:
                 return None
