@@ -100,6 +100,39 @@ def _apply_overrides(data: dict, overrides: dict[str, object], name: str) -> dic
     return data
 
 
+def _detect_slicer_version(slicer: Path) -> str | None:
+    """Detect the version of a local slicer by parsing --help output."""
+    try:
+        r = subprocess.run(
+            [str(slicer), "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        # OrcaSlicer prints "OrcaSlicer-2.3.1:" on the first few lines
+        for line in (r.stdout + r.stderr).splitlines()[:5]:
+            m = re.search(r"OrcaSlicer[- ]([\d][^\s:]+)", line)
+            if m:
+                return m.group(1)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _check_slicer_version(
+    actual: str | None, required: str, source: str,
+) -> None:
+    """Raise if the detected slicer version doesn't match the required one."""
+    if actual is None:
+        raise RuntimeError(
+            f"Could not detect {source} slicer version; "
+            f"config requires version {required}"
+        )
+    if actual != required:
+        raise RuntimeError(
+            f"{source} slicer version {actual} does not match "
+            f"config-required version {required}"
+        )
+
+
 def _has_docker(image: str) -> bool:
     """Check if Docker is available and the given image exists."""
     try:
@@ -223,6 +256,7 @@ def slice_plate(
     project_dir: Path | None = None,
     docker: bool = False,
     docker_version: str | None = None,
+    required_version: str | None = None,
 ) -> Path:
     """Slice a 3MF file using BambuStudio or OrcaSlicer CLI.
 
@@ -234,8 +268,17 @@ def slice_plate(
       docker_version="X"   - use Docker with fabprint:orca-X image
       neither + no local   - fallback to Docker with default image
 
+    If required_version is set (from config), the slicer version is checked
+    and must match exactly. For Docker, the image tag is used as the version.
+
     Returns the output directory containing the sliced gcode.
     """
+    # If config specifies a version and no explicit docker_version was given,
+    # use it as the docker_version for Docker-based slicing.
+    if required_version and not docker_version:
+        docker_version = required_version
+        docker = True
+
     use_docker = docker or docker_version is not None
     image = _docker_image(docker_version)
 
@@ -257,6 +300,19 @@ def slice_plate(
             f"Build it with: docker build --build-arg "
             f"ORCA_VERSION={docker_version or 'X.Y.Z'} -t {image} ."
         )
+
+    # Detect and verify slicer version
+    if use_docker:
+        detected_version = docker_version
+    else:
+        detected_version = _detect_slicer_version(slicer)
+
+    if required_version:
+        _check_slicer_version(detected_version, required_version,
+                              "Docker" if use_docker else "local")
+
+    print(f"Slicer: OrcaSlicer {detected_version or 'unknown'}"
+          f"{' (Docker)' if use_docker else ''}")
 
     input_3mf = input_3mf.resolve()
     if not input_3mf.exists():

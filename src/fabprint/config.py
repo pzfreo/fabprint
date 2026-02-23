@@ -18,6 +18,7 @@ class PlateConfig:
 @dataclass
 class SlicerConfig:
     engine: str = "bambu"
+    version: str | None = None  # required OrcaSlicer version (e.g. "2.3.1")
     printer: str | None = None
     process: str | None = None
     filaments: list[str] = field(default_factory=list)
@@ -64,6 +65,7 @@ def load_config(path: Path) -> FabprintConfig:
     slicer_raw = raw.get("slicer", {})
     slicer = SlicerConfig(
         engine=slicer_raw.get("engine", "bambu"),
+        version=slicer_raw.get("version"),
         printer=slicer_raw.get("printer"),
         process=slicer_raw.get("process"),
         filaments=slicer_raw.get("filaments", []),

@@ -49,6 +49,7 @@ filament = 2
     assert cfg.slicer.printer == "Bambu Lab P1S 0.4 nozzle"
     assert cfg.slicer.process == "0.20mm Standard @BBL X1C"
     assert cfg.slicer.filaments == ["Generic PLA @base"]
+    assert cfg.slicer.version is None
     assert len(cfg.parts) == 2
     assert cfg.parts[0].copies == 2
     assert cfg.parts[0].orient == "flat"
@@ -207,3 +208,16 @@ file = "cube.stl"
 """, create_files=["cube.stl"])
     cfg = load_config(path)
     assert cfg.slicer.overrides == {}
+
+
+def test_version(tmp_path):
+    path = _write_toml(tmp_path, """
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[[parts]]
+file = "cube.stl"
+""", create_files=["cube.stl"])
+    cfg = load_config(path)
+    assert cfg.slicer.version == "2.3.1"
