@@ -1,14 +1,150 @@
-"""Send gcode to a Bambu Lab printer via LAN or cloud."""
+"""Send gcode to a Bambu Lab printer via LAN or Bambu Connect."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import re
+import zipfile
 from pathlib import Path
 
 from fabprint.config import PrinterConfig
 
 log = logging.getLogger(__name__)
+
+
+def _parse_gcode_metadata(gcode_path: Path) -> dict[str, str | float]:
+    """Extract print time and filament weight from gcode comments."""
+    lines = gcode_path.read_text().splitlines()
+    stats: dict[str, str | float] = {}
+
+    for line in lines[:300]:
+        if m := re.search(r"total estimated time:\s*(.+?)(?:;|$)", line):
+            stats["print_time"] = m.group(1).strip()
+        elif m := re.match(r";\s*estimated printing time.*?=\s*(.+)", line):
+            stats["print_time"] = m.group(1).strip()
+
+    for line in lines[-50:]:
+        if m := re.match(r";\s*(?:total )?filament used \[g\]\s*=\s*([\d.]+)", line):
+            stats["filament_g"] = float(m.group(1))
+
+    # Convert time string like "1h 7m 32s" to seconds
+    if "print_time" in stats:
+        t = stats["print_time"]
+        secs = 0
+        if hm := re.search(r"(\d+)h", t):
+            secs += int(hm.group(1)) * 3600
+        if mm := re.search(r"(\d+)m", t):
+            secs += int(mm.group(1)) * 60
+        if sm := re.search(r"(\d+)s", t):
+            secs += int(sm.group(1))
+        if secs > 0:
+            stats["print_time_secs"] = secs
+
+    return stats
+
+
+def wrap_gcode_3mf(gcode_path: Path, output_path: Path | None = None) -> Path:
+    """Wrap a gcode file into a .gcode.3mf for Bambu Connect.
+
+    Creates a minimal but valid .gcode.3mf archive that Bambu Connect
+    can import and send to a printer.
+    """
+    if output_path is None:
+        output_path = gcode_path.parent / f"{gcode_path.stem}.gcode.3mf"
+
+    gcode_bytes = gcode_path.read_bytes()
+    md5 = hashlib.md5(gcode_bytes).hexdigest()
+    stats = _parse_gcode_metadata(gcode_path)
+
+    prediction = int(stats.get("print_time_secs", 0))
+    weight = f"{stats.get('filament_g', 0):.2f}"
+
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
+        ' <Default Extension="rels"'
+        ' ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
+        ' <Default Extension="model"'
+        ' ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n'
+        ' <Default Extension="gcode" ContentType="text/x.gcode"/>\n'
+        "</Types>"
+    )
+
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Relationships xmlns="
+        '"http://schemas.openxmlformats.org/package/2006/relationships">\n'
+        ' <Relationship Target="/3D/3dmodel.model" Id="rel-1"'
+        ' Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>\n'
+        "</Relationships>"
+    )
+
+    model = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<model unit="millimeter" xml:lang="en-US"'
+        ' xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"'
+        ' xmlns:BambuStudio="http://schemas.bambulab.com/package/2021"'
+        ' xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06"'
+        ' requiredextensions="p">\n'
+        ' <metadata name="Application">OrcaSlicer</metadata>\n'
+        ' <metadata name="BambuStudio:3mfVersion">1</metadata>\n'
+        " <resources/>\n"
+        " <build/>\n"
+        "</model>"
+    )
+
+    model_settings = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<config>\n"
+        "  <plate>\n"
+        '    <metadata key="plater_id" value="1"/>\n'
+        '    <metadata key="plater_name" value=""/>\n'
+        '    <metadata key="locked" value="false"/>\n'
+        '    <metadata key="gcode_file" value="Metadata/plate_1.gcode"/>\n'
+        "  </plate>\n"
+        "</config>"
+    )
+
+    model_settings_rels = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<Relationships xmlns="
+        '"http://schemas.openxmlformats.org/package/2006/relationships">\n'
+        ' <Relationship Target="/Metadata/plate_1.gcode" Id="rel-1"'
+        ' Type="http://schemas.bambulab.com/package/2021/gcode"/>\n'
+        "</Relationships>"
+    )
+
+    slice_info = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<config>\n"
+        "  <header>\n"
+        '    <header_item key="X-BBL-Client-Type" value="slicer"/>\n'
+        '    <header_item key="X-BBL-Client-Version" value="02.03.01.00"/>\n'
+        "  </header>\n"
+        "  <plate>\n"
+        f'    <metadata key="index" value="1"/>\n'
+        f'    <metadata key="prediction" value="{prediction}"/>\n'
+        f'    <metadata key="weight" value="{weight}"/>\n'
+        "  </plate>\n"
+        "</config>"
+    )
+
+    cut_info = '<?xml version="1.0" encoding="utf-8"?>\n<objects/>'
+
+    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("3D/3dmodel.model", model)
+        zf.writestr("Metadata/plate_1.gcode", gcode_bytes)
+        zf.writestr("Metadata/plate_1.gcode.md5", md5)
+        zf.writestr("Metadata/model_settings.config", model_settings)
+        zf.writestr("Metadata/_rels/model_settings.config.rels", model_settings_rels)
+        zf.writestr("Metadata/slice_info.config", slice_info)
+        zf.writestr("Metadata/cut_information.xml", cut_info)
+
+    return output_path
 
 
 def _resolve_credentials(config: PrinterConfig) -> dict[str, str | None]:
@@ -69,108 +205,39 @@ def _send_lan(
         log.info("Disconnected from printer")
 
 
-def _send_cloud(
+def _send_bambu_connect(
     gcode_path: Path,
-    email: str,
-    password: str,
-    serial: str | None = None,
     dry_run: bool = False,
-    upload_only: bool = False,
 ) -> None:
-    """Send gcode to printer via Bambu cloud API.
+    """Send gcode to printer via Bambu Connect.
 
-    Uses BambuAuthenticator for token auth, BambuClient for HTTP API
-    (device listing, file upload), and MQTTClient to send the print
-    command. Tokens are cached in ~/.bambu_token.
+    Wraps gcode in a .gcode.3mf and opens it in Bambu Connect using
+    the bambu-connect:// URL scheme. The user confirms and starts the
+    print from the Bambu Connect UI.
     """
-    try:
-        from bambulab import BambuClient
-        from bambulab.auth import BambuAuthenticator
-        from bambulab.mqtt import MQTTClient
-    except ImportError:
-        raise ImportError(
-            "bambu-lab-cloud-api is required for cloud printing. "
-            "Install with: pip install fabprint[cloud]"
-        ) from None
+    import subprocess
+    import sys
+    from urllib.parse import quote
 
-    print(f"Sending {gcode_path.name} via Bambu cloud")
+    threemf_path = wrap_gcode_3mf(gcode_path)
+    print(f"  Wrapped as {threemf_path.name}")
 
     if dry_run:
-        action = "upload" if upload_only else "upload and start cloud print"
-        print(f"  [dry-run] Would {action} {gcode_path.name}")
+        print(f"  [dry-run] Would open {threemf_path.name} in Bambu Connect")
         return
 
-    # Authenticate (uses cached token if valid, else logs in)
-    auth = BambuAuthenticator()
-    token = auth.get_or_create_token(username=email, password=password)
-    client = BambuClient(token=token)
+    encoded_path = quote(str(threemf_path), safe="")
+    encoded_name = quote(gcode_path.stem, safe="")
+    url = f"bambu-connect://import-file?path={encoded_path}&name={encoded_name}&version=1.0.0"
 
-    devices = client.get_devices()
-    if not devices:
-        raise RuntimeError("No printers found on Bambu cloud account")
-
-    if serial:
-        device = next((d for d in devices if d["dev_id"] == serial), None)
-        if not device:
-            available = ", ".join(d["dev_id"] for d in devices)
-            raise RuntimeError(f"Printer {serial} not found. Available: {available}")
+    if sys.platform == "darwin":
+        subprocess.run(["open", url], check=True)
+    elif sys.platform == "win32":
+        os.startfile(url)  # noqa: S606
     else:
-        device = devices[0]
-        log.info("Using first available printer: %s (%s)", device["name"], device["dev_id"])
+        subprocess.run(["xdg-open", url], check=True)
 
-    device_id = device["dev_id"]
-    print(f"  Printer: {device['name']} ({device_id})")
-
-    result = client.upload_file(str(gcode_path))
-    upload_url = result["upload_url"]
-    log.info("Cloud upload result: %s", result)
-    print(f"  Uploaded {gcode_path.name}")
-
-    if upload_only:
-        return
-
-    # Get user ID for MQTT auth
-    user_info = client.get_user_info()
-    uid = str(user_info.get("uid", user_info.get("user_id", "")))
-    if not uid:
-        raise RuntimeError("Could not determine user ID for MQTT connection")
-
-    # Connect to cloud MQTT broker and send print command
-    import time
-
-    mqtt_client = MQTTClient(
-        username=uid,
-        access_token=token,
-        device_id=device_id,
-    )
-    mqtt_client.connect(blocking=False)
-
-    # Wait for MQTT connection
-    for _ in range(50):
-        if mqtt_client.connected:
-            break
-        time.sleep(0.1)
-    if not mqtt_client.connected:
-        mqtt_client.disconnect()
-        raise RuntimeError("Failed to connect to Bambu cloud MQTT broker")
-
-    try:
-        mqtt_client.publish(
-            {
-                "print": {
-                    "sequence_id": "0",
-                    "command": "gcode_file",
-                    "param": upload_url,
-                    "subtask_name": gcode_path.stem,
-                    "url": upload_url,
-                }
-            }
-        )
-        # Give broker time to deliver the message
-        time.sleep(1)
-        print("  Print started via cloud")
-    finally:
-        mqtt_client.disconnect()
+    print("  Opened in Bambu Connect — confirm and print from there")
 
 
 def send_print(
@@ -204,13 +271,7 @@ def send_print(
         )
 
     elif creds["mode"] == "cloud":
-        if not creds["email"] or not creds["password"]:
-            raise ValueError("Cloud mode requires BAMBU_EMAIL and BAMBU_PASSWORD env vars.")
-        _send_cloud(
+        _send_bambu_connect(
             gcode_path,
-            email=creds["email"],
-            password=creds["password"],
-            serial=creds.get("serial"),
             dry_run=dry_run,
-            upload_only=upload_only,
         )
