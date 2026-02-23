@@ -85,6 +85,11 @@ def main(argv: list[str] | None = None) -> None:
         "--dry-run", action="store_true", help="Do everything except send to printer"
     )
     print_cmd.add_argument(
+        "--upload-only",
+        action="store_true",
+        help="Upload gcode but don't start printing (start from touchscreen/app)",
+    )
+    print_cmd.add_argument(
         "--view", action="store_true", help="Show plate in viewer before slicing"
     )
     print_cmd.add_argument(
@@ -304,7 +309,7 @@ def _cmd_print(args: argparse.Namespace) -> None:
             raise RuntimeError(f"No gcode files found in {output_dir}")
         gcode_path = gcode_files[0]
 
-    send_print(gcode_path, cfg.printer, dry_run=args.dry_run)
+    send_print(gcode_path, cfg.printer, dry_run=args.dry_run, upload_only=args.upload_only)
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:

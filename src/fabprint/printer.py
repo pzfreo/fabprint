@@ -32,6 +32,7 @@ def _send_lan(
     access_code: str,
     serial: str,
     dry_run: bool = False,
+    upload_only: bool = False,
 ) -> None:
     """Send gcode to printer via LAN using bambulabs-api."""
     try:
@@ -44,7 +45,8 @@ def _send_lan(
     print(f"Sending {gcode_path.name} to printer at {ip}")
 
     if dry_run:
-        print(f"  [dry-run] Would upload {gcode_path.name} and start print")
+        action = "upload" if upload_only else "upload and start print"
+        print(f"  [dry-run] Would {action} {gcode_path.name}")
         return
 
     printer = Printer(ip_address=ip, access_code=access_code, serial=serial)
@@ -57,8 +59,11 @@ def _send_lan(
         log.info("Uploaded to %s", remote_path)
         print(f"  Uploaded {gcode_path.name}")
 
-        printer.start_print(filename=remote_path, plate_number=1)
-        print("  Print started")
+        if upload_only:
+            print("  File ready on printer — start from touchscreen when ready")
+        else:
+            printer.start_print(filename=remote_path, plate_number=1)
+            print("  Print started")
     finally:
         printer.disconnect()
         log.info("Disconnected from printer")
@@ -70,6 +75,7 @@ def _send_cloud(
     password: str,
     serial: str | None = None,
     dry_run: bool = False,
+    upload_only: bool = False,
 ) -> None:
     """Send gcode to printer via Bambu cloud API.
 
@@ -88,7 +94,8 @@ def _send_cloud(
     print(f"Sending {gcode_path.name} via Bambu cloud")
 
     if dry_run:
-        print(f"  [dry-run] Would upload {gcode_path.name} and start cloud print")
+        action = "upload" if upload_only else "upload and start cloud print"
+        print(f"  [dry-run] Would {action} {gcode_path.name}")
         return
 
     # Authenticate (uses cached token if valid, else logs in)
@@ -109,23 +116,31 @@ def _send_cloud(
         device = devices[0]
         log.info("Using first available printer: %s (%s)", device["name"], device["dev_id"])
 
-    print(f"  Printer: {device['name']} ({device['dev_id']})")
+    device_id = device["dev_id"]
+    print(f"  Printer: {device['name']} ({device_id})")
 
     result = client.upload_file(str(gcode_path))
     log.info("Cloud upload result: %s", result)
     print(f"  Uploaded {gcode_path.name}")
-    print("  Print started via cloud")
+
+    if upload_only:
+        print("  File uploaded — start from Bambu Studio or printer when ready")
+    else:
+        client.start_cloud_print(device_id=device_id, filename=gcode_path.name)
+        print("  Print started via cloud")
 
 
 def send_print(
     gcode_path: Path,
     config: PrinterConfig,
     dry_run: bool = False,
+    upload_only: bool = False,
 ) -> None:
     """Send gcode to a Bambu Lab printer.
 
     Dispatches to LAN or cloud mode based on config.
     Env vars override config values (see _resolve_credentials).
+    If upload_only is True, uploads without starting the print.
     """
     creds = _resolve_credentials(config)
 
@@ -142,6 +157,7 @@ def send_print(
             access_code=creds["access_code"],
             serial=creds["serial"],
             dry_run=dry_run,
+            upload_only=upload_only,
         )
 
     elif creds["mode"] == "cloud":
@@ -153,4 +169,5 @@ def send_print(
             password=creds["password"],
             serial=creds.get("serial"),
             dry_run=dry_run,
+            upload_only=upload_only,
         )
