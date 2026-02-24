@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import zipfile
 from pathlib import Path
 
 from fabprint.profiles import resolve_profile_data
@@ -198,6 +199,9 @@ def _slice_via_docker(
         [
             "--slice",
             "0",
+            "--export-3mf",
+            "plate_sliced.gcode.3mf",
+            "--min-save",
             "--outputdir",
             "/work/output",
             "/work/input.3mf",
@@ -256,6 +260,200 @@ def _resolve_profiles(
 
     settings_arg = ";".join(settings) if settings else None
     return settings_arg, filament_arg
+
+
+# Keys that OrcaSlicer CLI --min-save omits but Bambu Connect requires.
+_BC_DEFAULT_KEYS: dict[str, object] = {
+    "bbl_use_printhost": "1",
+    "default_bed_type": "",
+    "filament_retract_lift_above": ["0"],
+    "filament_retract_lift_below": ["0"],
+    "filament_retract_lift_enforce": [""],
+    "host_type": "octoprint",
+    "pellet_flow_coefficient": "0",
+    "pellet_modded_printer": "0",
+    "printhost_authorization_type": "key",
+    "printhost_ssl_ignore_revoke": "0",
+    "thumbnails_format": "BTT_TFT",
+}
+
+# Minimum array length for filament-related settings in project_settings.
+# Bambu Connect rejects files where these arrays are shorter than the
+# printer's AMS slot count. 5 covers P1S (4-slot AMS + external spool).
+_MIN_FILAMENT_SLOTS = 5
+
+
+def _generate_plate_thumbnail(width: int = 256, height: int = 256) -> bytes:
+    """Generate a minimal plate thumbnail PNG using pure Python (no Pillow).
+
+    Returns PNG bytes for a dark plate graphic with 'fabprint' branding.
+    """
+    import struct
+    import zlib as _zlib
+
+    # Colors (RGB)
+    bg = (25, 25, 30)
+    plate_c = (50, 52, 58)
+    accent = (0, 150, 136)  # teal
+
+    # Simple 5x7 pixel font for "fabprint"
+    _font: dict[str, list[int]] = {
+        "f": [0x7C, 0x40, 0x78, 0x40, 0x40, 0x40, 0x40],
+        "a": [0x38, 0x44, 0x44, 0x7C, 0x44, 0x44, 0x44],
+        "b": [0x78, 0x44, 0x44, 0x78, 0x44, 0x44, 0x78],
+        "p": [0x78, 0x44, 0x44, 0x78, 0x40, 0x40, 0x40],
+        "r": [0x78, 0x44, 0x44, 0x78, 0x50, 0x48, 0x44],
+        "i": [0x38, 0x10, 0x10, 0x10, 0x10, 0x10, 0x38],
+        "n": [0x44, 0x64, 0x54, 0x4C, 0x44, 0x44, 0x44],
+        "t": [0x7C, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10],
+    }
+    text = "fabprint"
+    char_w, char_h, spacing = 7, 7, 1
+    text_w = len(text) * (char_w + spacing) - spacing
+    scale = 2
+    tx = (width - text_w * scale) // 2
+    ty = height // 2 - (char_h * scale) // 2
+
+    rows = []
+    for y in range(height):
+        row = bytearray(width * 3)
+        for x in range(width):
+            # Plate rectangle
+            mx, my = 20, 40
+            if mx <= x < width - mx and my <= y < height - my:
+                if y <= my + 2:
+                    r, g, b = accent
+                else:
+                    r, g, b = plate_c
+            else:
+                r, g, b = bg
+
+            # Text overlay
+            sx = (x - tx) // scale
+            sy = (y - ty) // scale
+            if 0 <= sy < char_h and 0 <= sx < text_w:
+                ci = sx // (char_w + spacing)
+                cx = sx % (char_w + spacing)
+                if ci < len(text) and cx < char_w:
+                    ch = text[ci]
+                    if ch in _font:
+                        row_bits = _font[ch][sy]
+                        if row_bits & (0x80 >> cx):
+                            r, g, b = accent
+
+            off = x * 3
+            row[off] = r
+            row[off + 1] = g
+            row[off + 2] = b
+        rows.append(bytes([0]) + bytes(row))
+
+    raw = b"".join(rows)
+    compressed = _zlib.compress(raw)
+
+    def _chunk(ctype: bytes, data: bytes) -> bytes:
+        c = ctype + data
+        crc = _zlib.crc32(c) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + c + struct.pack(">I", crc)
+
+    png = b"\x89PNG\r\n\x1a\n"
+    png += _chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    png += _chunk(b"IDAT", compressed)
+    png += _chunk(b"IEND", b"")
+    return png
+
+
+def _fix_sliced_3mf(path: Path) -> None:
+    """Post-process a --min-save 3mf so Bambu Connect accepts it.
+
+    OrcaSlicer CLI's --min-save export needs three fixes:
+    1. project_settings.config — short filament arrays and missing keys
+    2. model_settings.config — filament_maps padding + thumbnail references
+    3. Thumbnail PNGs — add placeholder images
+    """
+    import io
+    import re as _re
+
+    if not path.exists():
+        return
+
+    with zipfile.ZipFile(path, "r") as zin:
+        try:
+            ps_raw = zin.read("Metadata/project_settings.config")
+        except KeyError:
+            return  # No project_settings — nothing to fix
+
+        # --- Fix project_settings.config ---
+        ps = json.loads(ps_raw)
+        for key, default in _BC_DEFAULT_KEYS.items():
+            if key not in ps:
+                ps[key] = default
+        for key, val in ps.items():
+            if isinstance(val, list) and 0 < len(val) < _MIN_FILAMENT_SLOTS:
+                while len(val) < _MIN_FILAMENT_SLOTS:
+                    val.append(val[-1])
+
+        # --- Fix model_settings.config ---
+        try:
+            ms_raw = zin.read("Metadata/model_settings.config").decode()
+        except KeyError:
+            ms_raw = None
+
+        ms_patched = None
+        if ms_raw:
+            # Pad filament_maps value (e.g. "1" -> "1 1 1 1 1")
+            def _pad_filament_maps(m: _re.Match) -> str:
+                val = m.group(1)
+                parts = val.split()
+                while len(parts) < _MIN_FILAMENT_SLOTS:
+                    parts.append(parts[-1] if parts else "1")
+                return f'key="filament_maps" value="{" ".join(parts)}"'
+
+            ms_patched = _re.sub(
+                r'key="filament_maps" value="([^"]*)"',
+                _pad_filament_maps,
+                ms_raw,
+            )
+
+            # Add missing metadata keys that Bambu Connect requires.
+            # Thumbnail/bbox references are needed even if files don't exist.
+            extra_keys = {
+                "thumbnail_file": "Metadata/plate_1.png",
+                "thumbnail_no_light_file": "Metadata/plate_no_light_1.png",
+                "top_file": "Metadata/top_1.png",
+                "pick_file": "Metadata/pick_1.png",
+                "pattern_bbox_file": "Metadata/plate_1.json",
+            }
+            for key, val in extra_keys.items():
+                if f'key="{key}"' not in ms_patched:
+                    ms_patched = ms_patched.replace(
+                        "  </plate>",
+                        f'    <metadata key="{key}" value="{val}"/>\n  </plate>',
+                    )
+
+        # Generate placeholder thumbnails
+        thumb = _generate_plate_thumbnail(256, 256)
+        thumb_small = _generate_plate_thumbnail(128, 128)
+        existing_files = set(zin.namelist())
+
+        # Rewrite the zip
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename == "Metadata/project_settings.config":
+                    zout.writestr(item, json.dumps(ps, indent=4))
+                elif item.filename == "Metadata/model_settings.config" and ms_patched:
+                    zout.writestr(item, ms_patched)
+                else:
+                    zout.writestr(item, zin.read(item.filename))
+
+            # Add thumbnails if not already present
+            if "Metadata/plate_1.png" not in existing_files:
+                zout.writestr("Metadata/plate_1.png", thumb)
+            if "Metadata/plate_1_small.png" not in existing_files:
+                zout.writestr("Metadata/plate_1_small.png", thumb_small)
+
+    path.write_bytes(buf.getvalue())
+    log.info("Patched sliced 3mf for Bambu Connect compatibility")
 
 
 def slice_plate(
@@ -355,7 +553,7 @@ def slice_plate(
         )
 
         if use_docker:
-            return _slice_via_docker(
+            result_dir = _slice_via_docker(
                 input_3mf,
                 output_dir,
                 tmp_dir,
@@ -363,6 +561,8 @@ def slice_plate(
                 filament_arg,
                 image,
             )
+            _fix_sliced_3mf(result_dir / "plate_sliced.gcode.3mf")
+            return result_dir
 
         # Local slicer path
         cmd = [str(slicer)]
@@ -379,6 +579,9 @@ def slice_plate(
             [
                 "--slice",
                 "0",
+                "--export-3mf",
+                "plate_sliced.gcode.3mf",
+                "--min-save",
                 "--outputdir",
                 str(output_dir),
                 str(input_3mf),
@@ -401,6 +604,7 @@ def slice_plate(
             )
 
         log.info("Slicer stdout:\n%s", result.stdout)
+        _fix_sliced_3mf(output_dir / "plate_sliced.gcode.3mf")
         log.info("Slicing complete. Output in %s", output_dir)
         return output_dir
 

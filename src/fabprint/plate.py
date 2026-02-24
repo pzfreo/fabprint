@@ -48,13 +48,61 @@ def build_plate(
 
 
 def export_plate(scene: trimesh.Scene, output: Path) -> Path:
-    """Export a plate scene to 3MF, injecting paint_color if needed."""
+    """Export a plate scene to 3MF, injecting metadata as needed."""
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     scene.export(str(output))
     _inject_paint_data(output, scene)
+    _inject_extruder_metadata(output, scene)
     log.info("Exported plate to %s", output)
     return output
+
+
+def _inject_extruder_metadata(output: Path, scene: trimesh.Scene) -> None:
+    """Add per-object extruder assignments to the 3MF via model_settings.config.
+
+    OrcaSlicer reads ``Metadata/model_settings.config`` for per-object settings
+    including which extruder (AMS slot) each object uses.  Without this, all
+    objects default to extruder 1 regardless of the config's ``filament`` field.
+
+    Object IDs in model_settings.config must match the ``id`` attributes in
+    ``3D/3dmodel.model``, which trimesh assigns sequentially starting at 1.
+    """
+    geometries = list(scene.geometry.values())
+    if not any(geom.metadata.get("filament_id") for geom in geometries):
+        return
+
+    # Read object IDs from the 3MF model XML to ensure correct mapping
+    with zipfile.ZipFile(output, "r") as zf:
+        model_xml = zf.read("3D/3dmodel.model")
+
+    root = ET.fromstring(model_xml)
+    objects = root.findall(f".//{{{NS_3MF}}}object")
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<config>"]
+    for i, obj in enumerate(objects):
+        if i >= len(geometries):
+            break
+        filament_id = geometries[i].metadata.get("filament_id")
+        if filament_id:
+            obj_id = obj.get("id")
+            lines.append(f'  <object id="{obj_id}">')
+            lines.append(f'    <metadata key="extruder" value="{filament_id}"/>')
+            lines.append("  </object>")
+    lines.append("</config>")
+
+    model_settings = "\n".join(lines)
+
+    # Add model_settings.config to the archive
+    buf = io.BytesIO()
+    with zipfile.ZipFile(output, "r") as zin:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                zout.writestr(item, zin.read(item.filename))
+            zout.writestr("Metadata/model_settings.config", model_settings)
+
+    output.write_bytes(buf.getvalue())
+    log.info("Injected per-object extruder metadata into %s", output)
 
 
 def _inject_paint_data(output: Path, scene: trimesh.Scene) -> None:

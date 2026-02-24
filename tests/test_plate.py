@@ -75,6 +75,42 @@ def test_export_filament_id_no_paint(tmp_path):
     assert len(meta) == 0
 
 
+def test_export_injects_extruder_metadata(tmp_path):
+    """Per-object extruder metadata is injected into model_settings.config."""
+    m1 = trimesh.creation.box(extents=[10, 10, 10])
+    m2 = trimesh.creation.box(extents=[10, 10, 10])
+    m1.metadata["filament_id"] = 1
+    m2.metadata["filament_id"] = 3
+
+    placements = arrange([m1, m2], ["part_a", "part_b"], plate_size=(256, 256))
+    scene = build_plate(placements)
+
+    out = tmp_path / "plate.3mf"
+    export_plate(scene, out)
+
+    # model_settings.config should exist with per-object extruder
+    with zipfile.ZipFile(out) as zf:
+        ms = zf.read("Metadata/model_settings.config").decode()
+
+    ms_root = ET.fromstring(ms)
+    objects = ms_root.findall("object")
+    assert len(objects) == 2
+
+    # First object: extruder 1
+    meta0 = {m.get("key"): m.get("value") for m in objects[0].findall("metadata")}
+    assert meta0["extruder"] == "1"
+
+    # Second object: extruder 3
+    meta1 = {m.get("key"): m.get("value") for m in objects[1].findall("metadata")}
+    assert meta1["extruder"] == "3"
+
+    # Object IDs should match the 3dmodel.model
+    model_root = _read_3mf_xml(out)
+    model_objects = model_root.findall(f".//{{{NS_3MF}}}object")
+    assert objects[0].get("id") == model_objects[0].get("id")
+    assert objects[1].get("id") == model_objects[1].get("id")
+
+
 def test_export_preserves_paint_colors(tmp_path):
     """Pre-painted meshes (paint_colors in metadata) are preserved in export."""
     mesh = trimesh.creation.box(extents=[10, 10, 10])

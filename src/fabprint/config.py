@@ -36,11 +36,20 @@ class PartConfig:
 
 
 @dataclass
+class PrinterConfig:
+    mode: str = "bambu-lan"  # "bambu-lan", "bambu-connect", "bambu-cloud", or legacy "lan"/"cloud"
+    ip: str | None = None
+    access_code: str | None = None
+    serial: str | None = None
+
+
+@dataclass
 class FabprintConfig:
     plate: PlateConfig
     slicer: SlicerConfig
     parts: list[PartConfig]
     base_dir: Path  # directory containing the toml file
+    printer: PrinterConfig | None = None
 
 
 def load_config(path: Path) -> FabprintConfig:
@@ -114,4 +123,21 @@ def load_config(path: Path) -> FabprintConfig:
             )
         )
 
-    return FabprintConfig(plate=plate, slicer=slicer, parts=parts, base_dir=base_dir)
+    # Printer config (optional)
+    printer = None
+    printer_raw = raw.get("printer")
+    if printer_raw:
+        mode = printer_raw.get("mode", "bambu-lan")
+        valid_modes = ("bambu-lan", "bambu-connect", "bambu-cloud", "lan", "cloud")
+        if mode not in valid_modes:
+            raise ValueError(f"printer.mode must be one of {valid_modes}, got '{mode}'")
+        printer = PrinterConfig(
+            mode=mode,
+            ip=printer_raw.get("ip"),
+            access_code=printer_raw.get("access_code"),
+            serial=printer_raw.get("serial"),
+        )
+
+    return FabprintConfig(
+        plate=plate, slicer=slicer, parts=parts, base_dir=base_dir, printer=printer
+    )

@@ -1,6 +1,9 @@
 # Gib Tuners MK2 — C13-10, 5-gang LH
 # FDM print plate for Bambu Lab P1S
 
+[printer]
+mode = "bambu-connect"    # preferred
+
 [plate]
 size = [256, 256]
 padding = 5.0
@@ -13,6 +16,7 @@ filaments = ["Generic PLA @base", "Generic PLA @base", "Generic PETG-CF @base"]
 
 [slicer.overrides]
 enable_support = 1
+curr_bed_type = "Textured PEI Plate"
 
 [[parts]]
 file = "/Users/paul/repos/gib-tuners-mk2/output/c13-10/frame_lh_5gang.stl"

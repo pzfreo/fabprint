@@ -64,6 +64,19 @@ wheels = [
 ]
 
 [[package]]
+name = "bambulabs-api"
+version = "2.6.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "paho-mqtt" },
+    { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b5/cf/67c41d13db19ad3cdefdb620157460250666926725607604add678d1dfac/bambulabs_api-2.6.6.tar.gz", hash = "sha256:69aff2da11d460807ddf8ef4d9afdd5e5a625366cef7c6103f0060c3cd7cc13c", size = 36043, upload-time = "2026-01-31T19:25:51.643Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/91/a4183ae0e8e4ce4f88ed027a6e5471f9de7f63ceadc65a21a63ba7dbbc94/bambulabs_api-2.6.6-py3-none-any.whl", hash = "sha256:f1dff54bdd328b98c00925376c886d4a8b8b57811a475e4e55ed71340572bb09", size = 26734, upload-time = "2026-01-31T19:25:50.291Z" },
+]
+
+[[package]]
 name = "blinker"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -439,14 +452,19 @@ dependencies = [
 [package.optional-dependencies]
 all = [
     { name = "bambu-lab-cloud-api" },
+    { name = "bambulabs-api" },
     { name = "build123d" },
 ]
 cloud = [
     { name = "bambu-lab-cloud-api" },
 ]
 dev = [
+    { name = "packaging" },
     { name = "pytest" },
     { name = "ruff" },
+]
+lan = [
+    { name = "bambulabs-api" },
 ]
 step = [
     { name = "build123d" },
@@ -455,14 +473,16 @@ step = [
 [package.metadata]
 requires-dist = [
     { name = "bambu-lab-cloud-api", marker = "extra == 'cloud'" },
+    { name = "bambulabs-api", marker = "extra == 'lan'", specifier = ">=2.6.0" },
     { name = "build123d", marker = "extra == 'step'", specifier = ">=0.10.0" },
-    { name = "fabprint", extras = ["step", "cloud"], marker = "extra == 'all'" },
+    { name = "fabprint", extras = ["step", "lan", "cloud"], marker = "extra == 'all'" },
+    { name = "packaging", marker = "extra == 'dev'", specifier = ">=23.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "rectpack", specifier = ">=0.2.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "trimesh", extras = ["easy"], specifier = ">=4.0.0" },
 ]
-provides-extras = ["step", "cloud", "all", "dev"]
+provides-extras = ["step", "lan", "cloud", "all", "dev"]
 
 [[package]]
 name = "flask"
