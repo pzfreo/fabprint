@@ -252,6 +252,54 @@ def fix_gcode_3mf(path: str) -> None:
         f.write(buf.getvalue())
 ```
 
+## Per-Object Filament Assignment in the Input 3MF
+
+When building a plate 3MF with parts assigned to different AMS slots, OrcaSlicer
+needs to know which extruder each object uses. There are two mechanisms:
+
+### `--load-filament-ids` (STL only)
+
+The `--load-filament-ids` CLI flag assigns filaments to parts by index:
+
+```bash
+orca-slicer --load-filament-ids "0,2,2" part_a.stl part_b.stl part_c.stl
+```
+
+This only works with STL inputs. When the input is a 3MF, the flag is silently
+ignored and all objects default to extruder 1.
+
+### `model_settings.config` (3MF)
+
+For 3MF inputs, per-object extruder assignment is stored in
+`Metadata/model_settings.config` inside the 3MF archive:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <object id="1">
+    <metadata key="extruder" value="3"/>
+  </object>
+  <object id="2">
+    <metadata key="extruder" value="3"/>
+  </object>
+</config>
+```
+
+The `id` attribute must match the object IDs in `3D/3dmodel.model`. The
+`extruder` value is 1-indexed (matches AMS slot numbers).
+
+This is what fabprint uses: `export_plate()` writes a `model_settings.config`
+with per-object extruder metadata so OrcaSlicer slices each part with the
+correct filament.
+
+### `paint_color` (per-triangle, avoid)
+
+BambuStudio/OrcaSlicer also supports per-triangle extruder assignment via
+`paint_color` attributes on `<triangle>` elements. However, OrcaSlicer 2.3.x
+CLI segfaults when `paint_color` is combined with `--load-filaments`
+([OrcaSlicer #12426](https://github.com/SoftFever/OrcaSlicer/issues/12426)).
+Use `model_settings.config` instead.
+
 ## Opening in Bambu Connect Programmatically
 
 On macOS, use the `bambu-connect://` URL scheme:
