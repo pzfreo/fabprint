@@ -8,3 +8,6 @@ build/
 *.3mf
 *.gcode
 output/
+.DS_Store
+.coverage
+*.png
