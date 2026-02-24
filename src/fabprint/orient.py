@@ -52,7 +52,7 @@ def _orient_flat(mesh: trimesh.Trimesh) -> None:
     try:
         _, transform = trimesh.bounds.oriented_bounds(mesh)
         mesh.apply_transform(transform)
-    except Exception:
+    except (ValueError, RuntimeError, TypeError):
         transform = mesh.principal_inertia_transform
         mesh.apply_transform(transform)
 

@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "trimesh[easy]>=4.0.0",
     "rectpack>=0.2.0",
+    "defusedxml>=0.7.0",
 ]
 
 [project.optional-dependencies]

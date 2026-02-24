@@ -12,6 +12,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from fabprint.gcode import parse_gcode_metadata
 from fabprint.profiles import resolve_profile_data
 
 log = logging.getLogger(__name__)
@@ -612,32 +613,14 @@ def slice_plate(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def parse_gcode_stats(output_dir: Path) -> dict[str, str | float]:
-    """Parse filament usage and print time from gcode comments.
+def parse_gcode_stats(output_dir: Path) -> dict[str, str | float | int]:
+    """Parse filament usage and print time from gcode in an output directory.
 
-    Scans header (first 300 lines) for print time, and tail (last 50 lines)
-    for filament usage. Handles multiple OrcaSlicer/BambuStudio formats.
+    Finds the first .gcode file and delegates to gcode.parse_gcode_metadata().
     Returns dict with 'filament_g' and/or 'filament_cm3' and/or 'print_time'.
     """
     gcode_files = list(output_dir.glob("*.gcode"))
     if not gcode_files:
         return {}
 
-    stats: dict[str, str | float] = {}
-    lines = gcode_files[0].read_text().splitlines()
-
-    # Scan header for print time
-    for line in lines[:300]:
-        if m := re.search(r"total estimated time:\s*(.+?)(?:;|$)", line):
-            stats["print_time"] = m.group(1).strip()
-        elif m := re.match(r";\s*estimated printing time.*?=\s*(.+)", line):
-            stats["print_time"] = m.group(1).strip()
-
-    # Scan tail for filament stats
-    for line in lines[-50:]:
-        if m := re.match(r";\s*(?:total )?filament used \[g\]\s*=\s*([\d.]+)", line):
-            stats["filament_g"] = float(m.group(1))
-        elif m := re.match(r";\s*(?:total )?filament used \[cm3\]\s*=\s*([\d.]+)", line):
-            stats["filament_cm3"] = float(m.group(1))
-
-    return stats
+    return parse_gcode_metadata(gcode_files[0])
