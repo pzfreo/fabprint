@@ -353,3 +353,59 @@ file = "cube.stl"
     )
     with pytest.raises(ValueError, match="printer.mode"):
         load_config(path)
+
+
+def test_rotate_valid(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+rotate = [90, 0, 45]
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].rotate == [90.0, 0.0, 45.0]
+
+
+def test_rotate_bad_length(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+rotate = [90, 0]
+""",
+        create_files=["cube.stl"],
+    )
+    with pytest.raises(ValueError, match="rotate"):
+        load_config(path)
+
+
+def test_rotate_not_list(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+rotate = 45
+""",
+        create_files=["cube.stl"],
+    )
+    with pytest.raises(ValueError, match="rotate"):
+        load_config(path)
+
+
+def test_negative_scale(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+scale = -1.0
+""",
+        create_files=["cube.stl"],
+    )
+    with pytest.raises(ValueError, match="scale"):
+        load_config(path)

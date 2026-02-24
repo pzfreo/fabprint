@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pytest
 
 from fabprint.config import PrinterConfig
+from fabprint.gcode import parse_gcode_metadata
 from fabprint.printer import (
-    _parse_gcode_metadata,
     _resolve_credentials,
     send_print,
     wrap_gcode_3mf,
@@ -110,7 +110,7 @@ def test_send_print_lan_dispatches(tmp_path):
 def test_parse_gcode_metadata(tmp_path):
     gcode = tmp_path / "test.gcode"
     gcode.write_text("; total estimated time: 1h 7m 32s\nG28\n; total filament used [g] = 14.02\n")
-    stats = _parse_gcode_metadata(gcode)
+    stats = parse_gcode_metadata(gcode)
     assert stats["print_time"] == "1h 7m 32s"
     assert stats["filament_g"] == 14.02
     assert stats["print_time_secs"] == 4052

@@ -10,12 +10,12 @@ import zipfile
 from pathlib import Path
 
 import trimesh
+from defusedxml import ElementTree as SafeET
 
 from fabprint.arrange import Placement
+from fabprint.constants import NS_3MF
 
 log = logging.getLogger(__name__)
-
-NS_3MF = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 
 
 def _encode_paint_color(extruder_idx: int) -> str:
@@ -76,7 +76,7 @@ def _inject_extruder_metadata(output: Path, scene: trimesh.Scene) -> None:
     with zipfile.ZipFile(output, "r") as zf:
         model_xml = zf.read("3D/3dmodel.model")
 
-    root = ET.fromstring(model_xml)
+    root = SafeET.fromstring(model_xml)
     objects = root.findall(f".//{{{NS_3MF}}}object")
 
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<config>"]
@@ -138,7 +138,7 @@ def _inject_paint_data(output: Path, scene: trimesh.Scene) -> None:
     for _event, (prefix, uri) in ET.iterparse(io.BytesIO(model_xml), events=["start-ns"]):
         ET.register_namespace(prefix, uri)
 
-    root = ET.fromstring(model_xml)
+    root = SafeET.fromstring(model_xml)
 
     # Find all object elements (in document order = insertion order)
     objects = root.findall(f".//{{{NS_3MF}}}object")

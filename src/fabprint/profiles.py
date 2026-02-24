@@ -80,7 +80,9 @@ def resolve_profile(
     3. Check slicer system directory
     """
     if _is_path(name_or_path):
-        path = Path(name_or_path)
+        path = Path(name_or_path).resolve()
+        if ".." in path.parts:
+            raise ValueError(f"Profile path must not contain '..': {name_or_path}")
         if not path.exists():
             raise FileNotFoundError(f"Profile path not found: {path}")
         return path

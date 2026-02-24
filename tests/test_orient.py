@@ -66,3 +66,28 @@ def test_unknown_strategy():
     mesh = _load("cube_10mm.stl")
     with pytest.raises(ValueError, match="Unknown"):
         orient_mesh(mesh, "diagonal")
+
+
+def test_custom_rotate_90_around_x():
+    mesh = _load("cylinder_5x20mm.stl")
+    original_z = mesh.extents[2]
+    result = orient_mesh(mesh, "upright", rotate=[90, 0, 0])
+    # Rotating 90 around X should change the Z extent
+    assert abs(result.bounds[0][2]) < 1e-6  # on plate
+    assert abs(result.extents[2] - original_z) > 1.0  # Z changed
+
+
+def test_custom_rotate_overrides_strategy():
+    mesh = _load("cube_10mm.stl")
+    # With rotate provided, strategy is ignored (even if invalid would normally raise)
+    result = orient_mesh(mesh, "flat", rotate=[0, 0, 45])
+    assert result is not mesh
+    assert abs(result.bounds[0][2]) < 1e-6  # on plate
+
+
+def test_custom_rotate_zero_is_noop():
+    mesh = _load("cube_10mm.stl")
+    original_extents = mesh.extents.copy()
+    result = orient_mesh(mesh, "upright", rotate=[0, 0, 0])
+    for i in range(3):
+        assert abs(result.extents[i] - original_extents[i]) < 0.1
