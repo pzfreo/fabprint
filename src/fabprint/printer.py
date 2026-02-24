@@ -229,9 +229,7 @@ def _send_cloud(
     email = os.environ.get("BAMBU_EMAIL")
     password = os.environ.get("BAMBU_PASSWORD")
     if not email or not password:
-        raise ValueError(
-            "bambu-cloud mode requires BAMBU_EMAIL and BAMBU_PASSWORD env vars."
-        )
+        raise ValueError("bambu-cloud mode requires BAMBU_EMAIL and BAMBU_PASSWORD env vars.")
 
     print(f"Sending {gcode_path.name} via Bambu Cloud (experimental)")
 
@@ -280,12 +278,29 @@ def _send_bambu_connect(
     import sys
     from urllib.parse import quote
 
-    threemf_path = wrap_gcode_3mf(gcode_path)
-    print(f"  Wrapped as {threemf_path.name}")
+    # Prefer the slicer's --min-save export (has proper project_settings).
+    # Fall back to wrap_gcode_3mf for pre-sliced gcode not produced by fabprint.
+    sliced_3mf = gcode_path.parent / "plate_sliced.gcode.3mf"
+    if sliced_3mf.exists():
+        threemf_path = sliced_3mf
+        print(f"  Using {threemf_path.name}")
+    else:
+        threemf_path = wrap_gcode_3mf(gcode_path)
+        print(f"  Wrapped as {threemf_path.name}")
 
     if dry_run:
         print(f"  [dry-run] Would open {threemf_path.name} in Bambu Connect")
         return
+
+    # Ensure Bambu Connect is running before sending the URL
+    import time
+
+    if sys.platform == "darwin":
+        subprocess.run(["open", "-a", "Bambu Connect"], check=True)
+    elif sys.platform == "win32":
+        os.startfile("Bambu Connect")  # noqa: S606
+    print("  Waiting for Bambu Connect...")
+    time.sleep(5)
 
     encoded_path = quote(str(threemf_path), safe="")
     encoded_name = quote(gcode_path.stem, safe="")

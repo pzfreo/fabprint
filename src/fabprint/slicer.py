@@ -427,8 +427,7 @@ def _fix_sliced_3mf(path: Path) -> None:
                 if f'key="{key}"' not in ms_patched:
                     ms_patched = ms_patched.replace(
                         "  </plate>",
-                        f'    <metadata key="{key}" value="{val}"/>\n'
-                        f"  </plate>",
+                        f'    <metadata key="{key}" value="{val}"/>\n  </plate>',
                     )
 
         # Generate placeholder thumbnails

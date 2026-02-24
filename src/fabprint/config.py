@@ -130,9 +130,7 @@ def load_config(path: Path) -> FabprintConfig:
         mode = printer_raw.get("mode", "bambu-lan")
         valid_modes = ("bambu-lan", "bambu-connect", "bambu-cloud", "lan", "cloud")
         if mode not in valid_modes:
-            raise ValueError(
-                f"printer.mode must be one of {valid_modes}, got '{mode}'"
-            )
+            raise ValueError(f"printer.mode must be one of {valid_modes}, got '{mode}'")
         printer = PrinterConfig(
             mode=mode,
             ip=printer_raw.get("ip"),

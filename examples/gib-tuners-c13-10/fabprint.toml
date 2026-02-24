@@ -1,6 +1,9 @@
 # Gib Tuners MK2 — C13-10, 5-gang LH
 # FDM print plate for Bambu Lab P1S
 
+[printer]
+mode = "bambu-connect"    # preferred
+
 [plate]
 size = [256, 256]
 padding = 5.0
