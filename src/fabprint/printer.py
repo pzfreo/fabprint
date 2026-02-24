@@ -205,6 +205,67 @@ def _send_lan(
         log.info("Disconnected from printer")
 
 
+def _send_cloud(
+    gcode_path: Path,
+    dry_run: bool = False,
+) -> None:
+    """Send gcode to printer via Bambu Cloud API (experimental).
+
+    Uses bambu-lab-cloud-api to upload gcode and start a print via
+    the HTTP + MQTT cloud APIs. This is experimental — Bambu's cloud
+    broker currently rejects third-party MQTT print commands with
+    "MQTT Command verification failed".
+    """
+    try:
+        from bambu_lab_cloud_api import BambuClient
+    except ImportError:
+        raise ImportError(
+            "bambu-lab-cloud-api is required for cloud printing. "
+            "Install with: pip install fabprint[cloud]"
+        ) from None
+
+    import os
+
+    email = os.environ.get("BAMBU_EMAIL")
+    password = os.environ.get("BAMBU_PASSWORD")
+    if not email or not password:
+        raise ValueError(
+            "bambu-cloud mode requires BAMBU_EMAIL and BAMBU_PASSWORD env vars."
+        )
+
+    print(f"Sending {gcode_path.name} via Bambu Cloud (experimental)")
+
+    if dry_run:
+        print(f"  [dry-run] Would upload {gcode_path.name} via cloud API")
+        return
+
+    client = BambuClient(email, password)
+    client.login()
+    log.info("Logged in to Bambu Cloud")
+
+    devices = client.get_devices()
+    if not devices:
+        raise RuntimeError("No printers found in Bambu Cloud account")
+
+    device = devices[0]
+    device_id = device["dev_id"]
+    device_name = device.get("name", device_id)
+    print(f"  Printer: {device_name} ({device_id})")
+
+    file_url = client.upload_file(str(gcode_path))
+    log.info("Uploaded to %s", file_url)
+    print(f"  Uploaded {gcode_path.name}")
+
+    # Attempt to start print via cloud API — currently returns 405 or
+    # MQTT command verification failure. Kept for future compatibility.
+    try:
+        client.start_print_job(device_id, gcode_path.name, file_url)
+        print("  Print started via cloud")
+    except Exception as e:
+        print(f"  Warning: Could not start print via cloud API: {e}")
+        print("  File uploaded — start manually from Bambu Handy or printer touchscreen")
+
+
 def _send_bambu_connect(
     gcode_path: Path,
     dry_run: bool = False,
@@ -254,7 +315,7 @@ def send_print(
     """
     creds = _resolve_credentials(config)
 
-    if creds["mode"] == "lan":
+    if creds["mode"] in ("bambu-lan", "lan"):
         for field in ("ip", "access_code", "serial"):
             if not creds[field]:
                 env_var = f"BAMBU_{field.upper()}" if field != "ip" else "BAMBU_PRINTER_IP"
@@ -270,8 +331,14 @@ def send_print(
             upload_only=upload_only,
         )
 
-    elif creds["mode"] == "cloud":
+    elif creds["mode"] in ("bambu-connect", "cloud"):
         _send_bambu_connect(
+            gcode_path,
+            dry_run=dry_run,
+        )
+
+    elif creds["mode"] == "bambu-cloud":
+        _send_cloud(
             gcode_path,
             dry_run=dry_run,
         )

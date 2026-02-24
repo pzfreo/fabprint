@@ -37,7 +37,7 @@ class PartConfig:
 
 @dataclass
 class PrinterConfig:
-    mode: str = "lan"  # "lan" or "cloud"
+    mode: str = "bambu-lan"  # "bambu-lan", "bambu-connect", "bambu-cloud", or legacy "lan"/"cloud"
     ip: str | None = None
     access_code: str | None = None
     serial: str | None = None
@@ -127,9 +127,12 @@ def load_config(path: Path) -> FabprintConfig:
     printer = None
     printer_raw = raw.get("printer")
     if printer_raw:
-        mode = printer_raw.get("mode", "lan")
-        if mode not in ("lan", "cloud"):
-            raise ValueError(f"printer.mode must be 'lan' or 'cloud', got '{mode}'")
+        mode = printer_raw.get("mode", "bambu-lan")
+        valid_modes = ("bambu-lan", "bambu-connect", "bambu-cloud", "lan", "cloud")
+        if mode not in valid_modes:
+            raise ValueError(
+                f"printer.mode must be one of {valid_modes}, got '{mode}'"
+            )
         printer = PrinterConfig(
             mode=mode,
             ip=printer_raw.get("ip"),
