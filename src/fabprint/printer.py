@@ -5,44 +5,13 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import re
 import zipfile
 from pathlib import Path
 
 from fabprint.config import PrinterConfig
+from fabprint.gcode import parse_gcode_metadata
 
 log = logging.getLogger(__name__)
-
-
-def _parse_gcode_metadata(gcode_path: Path) -> dict[str, str | float]:
-    """Extract print time and filament weight from gcode comments."""
-    lines = gcode_path.read_text().splitlines()
-    stats: dict[str, str | float] = {}
-
-    for line in lines[:300]:
-        if m := re.search(r"total estimated time:\s*(.+?)(?:;|$)", line):
-            stats["print_time"] = m.group(1).strip()
-        elif m := re.match(r";\s*estimated printing time.*?=\s*(.+)", line):
-            stats["print_time"] = m.group(1).strip()
-
-    for line in lines[-50:]:
-        if m := re.match(r";\s*(?:total )?filament used \[g\]\s*=\s*([\d.]+)", line):
-            stats["filament_g"] = float(m.group(1))
-
-    # Convert time string like "1h 7m 32s" to seconds
-    if "print_time" in stats:
-        t = stats["print_time"]
-        secs = 0
-        if hm := re.search(r"(\d+)h", t):
-            secs += int(hm.group(1)) * 3600
-        if mm := re.search(r"(\d+)m", t):
-            secs += int(mm.group(1)) * 60
-        if sm := re.search(r"(\d+)s", t):
-            secs += int(sm.group(1))
-        if secs > 0:
-            stats["print_time_secs"] = secs
-
-    return stats
 
 
 def wrap_gcode_3mf(gcode_path: Path, output_path: Path | None = None) -> Path:
@@ -56,7 +25,7 @@ def wrap_gcode_3mf(gcode_path: Path, output_path: Path | None = None) -> Path:
 
     gcode_bytes = gcode_path.read_bytes()
     md5 = hashlib.md5(gcode_bytes).hexdigest()
-    stats = _parse_gcode_metadata(gcode_path)
+    stats = parse_gcode_metadata(gcode_path)
 
     prediction = int(stats.get("print_time_secs", 0))
     weight = f"{stats.get('filament_g', 0):.2f}"
@@ -224,8 +193,6 @@ def _send_cloud(
             "Install with: pip install fabprint[cloud]"
         ) from None
 
-    import os
-
     email = os.environ.get("BAMBU_EMAIL")
     password = os.environ.get("BAMBU_PASSWORD")
     if not email or not password:
@@ -259,7 +226,7 @@ def _send_cloud(
     try:
         client.start_print_job(device_id, gcode_path.name, file_url)
         print("  Print started via cloud")
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError) as e:
         print(f"  Warning: Could not start print via cloud API: {e}")
         print("  File uploaded — start manually from Bambu Handy or printer touchscreen")
 

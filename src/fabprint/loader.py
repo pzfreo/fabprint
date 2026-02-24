@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import logging
 import tempfile
-import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
 import trimesh
+from defusedxml import ElementTree as ET
+
+from fabprint.constants import NS_3MF
 
 log = logging.getLogger(__name__)
-
-NS_3MF = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
 
 MESH_EXTENSIONS = {".stl", ".3mf"}
 STEP_EXTENSIONS = {".step", ".stp"}

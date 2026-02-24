@@ -53,3 +53,16 @@ def test_arrange_overflow():
     mesh = trimesh.creation.box(extents=[200, 200, 10])
     with pytest.raises(ValueError, match="fit"):
         arrange([mesh], ["big"], plate_size=(100, 100), padding=5.0)
+
+
+def test_arrange_mismatched_lengths():
+    mesh = trimesh.creation.box(extents=[10, 10, 10])
+    with pytest.raises(ValueError, match="same length"):
+        arrange([mesh], ["a", "b"], plate_size=(256, 256))
+
+
+def test_arrange_single_part():
+    mesh = trimesh.creation.box(extents=[10, 10, 10])
+    placements = arrange([mesh], ["solo"], plate_size=(256, 256), padding=5.0)
+    assert len(placements) == 1
+    assert placements[0].name == "solo"
