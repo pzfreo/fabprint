@@ -40,8 +40,10 @@ def test_try_trimesh_multiple_parts():
 
 def test_show_plate_falls_through_to_trimesh():
     mesh = trimesh.creation.box(extents=[10, 10, 10])
-    with patch("fabprint.viewer._try_ocp", return_value=False) as mock_ocp, \
-         patch("fabprint.viewer._try_trimesh") as mock_trimesh:
+    with (
+        patch("fabprint.viewer._try_ocp", return_value=False) as mock_ocp,
+        patch("fabprint.viewer._try_trimesh") as mock_trimesh,
+    ):
         show_plate([mesh], ["cube"], (256, 256))
         mock_ocp.assert_called_once()
         mock_trimesh.assert_called_once()
@@ -49,8 +51,10 @@ def test_show_plate_falls_through_to_trimesh():
 
 def test_show_plate_ocp_success_skips_trimesh():
     mesh = trimesh.creation.box(extents=[10, 10, 10])
-    with patch("fabprint.viewer._try_ocp", return_value=True) as mock_ocp, \
-         patch("fabprint.viewer._try_trimesh") as mock_trimesh:
+    with (
+        patch("fabprint.viewer._try_ocp", return_value=True) as mock_ocp,
+        patch("fabprint.viewer._try_trimesh") as mock_trimesh,
+    ):
         show_plate([mesh], ["cube"], (256, 256))
         mock_ocp.assert_called_once()
         mock_trimesh.assert_not_called()
