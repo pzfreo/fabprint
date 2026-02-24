@@ -1,6 +1,7 @@
 """Tests for CLI entry point."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -112,8 +113,8 @@ def test_profiles_list(capsys):
     """Profiles list should run and produce output."""
     main(["profiles", "list", "--engine", "orca", "--category", "machine"])
     captured = capsys.readouterr()
-    # Should print a header or profile names, not be empty
-    assert len(captured.out) > 0
+    # Should print category header even if no profiles are installed
+    assert "machine" in captured.out.lower()
 
 
 @pytest.mark.skipif(not _has_orca, reason="OrcaSlicer not installed")
@@ -136,6 +137,19 @@ file = "{_posix(FIXTURES / "cube_10mm.stl")}"
 
 
 # --- Docker-based slicing integration tests ---
+
+
+def _docker_work_dir(suffix: str = "") -> Path:
+    """Return a work directory suitable for Docker volume mounts.
+
+    On macOS, pytest's tmp_path resolves to /private/var/... which Docker
+    for Mac cannot mount by default. Use ~/.cache instead.
+    On Linux, tmp_path works fine, but we use ~/.cache uniformly for
+    consistency across platforms.
+    """
+    work_dir = Path.home() / ".cache" / f"fabprint-test{suffix}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return work_dir
 
 
 def _write_slice_config(
@@ -168,62 +182,74 @@ copies = 1
 
 
 @skip_no_docker
-def test_slice_docker(tmp_path, monkeypatch):
+def test_slice_docker(monkeypatch):
     """Slice a single cube via Docker using version from config."""
-    config = _write_slice_config(tmp_path, version=_docker_version)
-    output_dir = tmp_path / "output"
-    monkeypatch.chdir(tmp_path)
-    main(
-        [
-            "slice",
-            str(config),
-            "-o",
-            str(output_dir),
-        ]
-    )
-    gcode_files = list(output_dir.glob("*.gcode"))
-    assert len(gcode_files) >= 1, "Expected at least one gcode file"
-    assert gcode_files[0].stat().st_size > 0
-
-
-@skip_no_docker
-def test_slice_docker_filament_override(tmp_path, monkeypatch):
-    """--filament-type overrides config filaments with a single filament."""
-    config = _write_slice_config(
-        tmp_path,
-        filaments=["Generic PLA @base", "Generic PLA @base"],
-        version=_docker_version,
-    )
-    output_dir = tmp_path / "output"
-    monkeypatch.chdir(tmp_path)
-    main(
-        [
-            "slice",
-            str(config),
-            "-o",
-            str(output_dir),
-            "--filament-type",
-            "Generic PLA @base",
-            "--filament-slot",
-            "1",
-        ]
-    )
-    gcode_files = list(output_dir.glob("*.gcode"))
-    assert len(gcode_files) >= 1, "Expected at least one gcode file"
-    assert gcode_files[0].stat().st_size > 0
-
-
-@skip_no_docker
-def test_slice_docker_version_mismatch(tmp_path, monkeypatch):
-    """Config version that doesn't match any Docker image should fail."""
-    config = _write_slice_config(tmp_path, version="99.99.99")
-    monkeypatch.chdir(tmp_path)
-    with pytest.raises(FileNotFoundError, match="Docker image"):
+    work_dir = _docker_work_dir()
+    config = _write_slice_config(work_dir, version=_docker_version)
+    output_dir = work_dir / "output"
+    monkeypatch.chdir(work_dir)
+    try:
         main(
             [
                 "slice",
                 str(config),
                 "-o",
-                str(tmp_path / "output"),
+                str(output_dir),
             ]
         )
+        gcode_files = list(output_dir.glob("*.gcode"))
+        assert len(gcode_files) >= 1, "Expected at least one gcode file"
+        assert gcode_files[0].stat().st_size > 0
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+@skip_no_docker
+def test_slice_docker_filament_override(monkeypatch):
+    """--filament-type overrides config filaments with a single filament."""
+    work_dir = _docker_work_dir("-override")
+    config = _write_slice_config(
+        work_dir,
+        filaments=["Generic PLA @base", "Generic PLA @base"],
+        version=_docker_version,
+    )
+    output_dir = work_dir / "output"
+    monkeypatch.chdir(work_dir)
+    try:
+        main(
+            [
+                "slice",
+                str(config),
+                "-o",
+                str(output_dir),
+                "--filament-type",
+                "Generic PLA @base",
+                "--filament-slot",
+                "1",
+            ]
+        )
+        gcode_files = list(output_dir.glob("*.gcode"))
+        assert len(gcode_files) >= 1, "Expected at least one gcode file"
+        assert gcode_files[0].stat().st_size > 0
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+@skip_no_docker
+def test_slice_docker_version_mismatch(monkeypatch):
+    """Config version that doesn't match any Docker image should fail."""
+    work_dir = _docker_work_dir("-mismatch")
+    config = _write_slice_config(work_dir, version="99.99.99")
+    monkeypatch.chdir(work_dir)
+    try:
+        with pytest.raises(FileNotFoundError, match="Docker image"):
+            main(
+                [
+                    "slice",
+                    str(config),
+                    "-o",
+                    str(work_dir / "output"),
+                ]
+            )
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)

@@ -58,6 +58,12 @@ def test_resolve_not_found():
         resolve_profile("Nonexistent Printer", "orca", "machine")
 
 
+def test_resolve_path_traversal_rejected():
+    """Paths containing '..' should be rejected to prevent traversal."""
+    with pytest.raises(ValueError, match="must not contain"):
+        resolve_profile("../../etc/passwd", "orca", "machine")
+
+
 def test_discover_unknown_engine():
     with pytest.raises(ValueError, match="Unknown engine"):
         discover_profiles("cura")

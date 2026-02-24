@@ -5,12 +5,12 @@ from __future__ import annotations
 import io
 import logging
 import re
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # for SubElement, tostring, iterparse (not in defusedxml)
 import zipfile
 from pathlib import Path
 
 import trimesh
-from defusedxml import ElementTree as SafeET
+from defusedxml import ElementTree as SafeET  # safe fromstring for untrusted 3MF XML
 
 from fabprint.arrange import Placement
 from fabprint.constants import NS_3MF

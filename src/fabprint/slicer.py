@@ -12,6 +12,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from fabprint.gcode import parse_gcode_metadata
 from fabprint.profiles import resolve_profile_data
 
 log = logging.getLogger(__name__)
@@ -618,8 +619,6 @@ def parse_gcode_stats(output_dir: Path) -> dict[str, str | float | int]:
     Finds the first .gcode file and delegates to gcode.parse_gcode_metadata().
     Returns dict with 'filament_g' and/or 'filament_cm3' and/or 'print_time'.
     """
-    from fabprint.gcode import parse_gcode_metadata
-
     gcode_files = list(output_dir.glob("*.gcode"))
     if not gcode_files:
         return {}
