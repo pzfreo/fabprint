@@ -864,6 +864,7 @@ def main():
     filename = "unknown.3mf"
     model_id = "0"
     profile_id = "0"
+    cover_url = ""
 
     if args.file and not args.no_upload and not file_url:
         file_path = Path(args.file)
@@ -914,7 +915,7 @@ def main():
 
         # Step 3d: Fetch project details to get server-generated cover URL
         # After notification, the server processes the 3mf and extracts
-        # the thumbnail, serving it from or-cloud-model-prod bucket
+        # thumbnails, serving them from or-cloud-model-prod bucket
         print(f"\n[3d] Fetching project details for cover URL...")
         auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {auth['access_token']}"}
         proj_resp = requests.get(
@@ -922,13 +923,44 @@ def main():
             headers=auth_headers,
         )
         print(f"  Project details: {proj_resp.status_code}")
-        print(f"  Body: {proj_resp.text[:1500]}")
+        cover_url = ""
         if proj_resp.ok:
             proj_detail = proj_resp.json()
-            # Look for download_url or any cover/thumbnail URL
+            # Look through profiles for pictures/cover URLs
+            profiles = proj_detail.get("profiles", []) or []
+            for prof in profiles:
+                context = prof.get("context", {}) or {}
+                pictures = context.get("pictures", []) or []
+                for pic in pictures:
+                    url = pic.get("url", "")
+                    if url:
+                        cover_url = url
+                        print(f"  Found picture: {url[:120]}...")
+                        break
+                # Also check configs for plate images
+                configs = context.get("configs", []) or []
+                for cfg in configs:
+                    url = cfg.get("url", "")
+                    if url and "plate" in cfg.get("name", "").lower() and url.endswith(".png"):
+                        cover_url = url
+                        print(f"  Found plate config image: {url[:120]}...")
+                        break
+                if cover_url:
+                    break
+
+            # Check top-level fields too
             for key in ["download_url", "cover", "thumbnail", "cover_url"]:
                 if proj_detail.get(key):
-                    print(f"  Found {key}: {proj_detail[key][:120]}...")
+                    print(f"  Found {key}: {str(proj_detail[key])[:120]}...")
+
+            # Print full profile context for debugging
+            if profiles:
+                context = profiles[0].get("context", {})
+                print(f"  Profile context keys: {list(context.keys()) if context else 'none'}")
+                pictures = (context or {}).get("pictures", [])
+                configs = (context or {}).get("configs", [])
+                print(f"  Pictures: {json.dumps(pictures)[:500]}")
+                print(f"  Configs: {json.dumps(configs)[:500]}")
 
     elif file_url:
         filename = Path(file_url).name
@@ -951,10 +983,11 @@ def main():
             return
 
         if file_url:
-            # --- Step 4.5: Upload cover image and create cloud task ---
-            cover_url = ""
-            if args.file:
-                print(f"\n[4.5a] Uploading cover image...")
+            # --- Step 4.5: Create cloud task ---
+            # Use cover_url from project details (step 3d) if available,
+            # otherwise fall back to uploading the thumbnail separately
+            if not cover_url and args.file:
+                print(f"\n[4.5a] No cover from project — uploading thumbnail...")
                 cover_url = cloud_upload_cover(auth["access_token"], Path(args.file))
 
             print(f"\n[4.5b] Creating cloud task (modelId={model_id})...")
