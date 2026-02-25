@@ -397,34 +397,61 @@ def cloud_create_task(
     }
 
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
-
-    # Fetch existing tasks to see the real format
-    print("  Fetching existing tasks for reference...")
-    for tasks_endpoint in [
-        f"{API_BASE}/v1/user-service/my/tasks",
-        f"{API_BASE}/v1/user-service/my/tasks?limit=1",
-        f"{API_BASE}/v1/user-service/my/task?limit=1",
-    ]:
-        tasks_resp = requests.get(tasks_endpoint, headers=task_headers)
-        print(f"  GET {tasks_endpoint.split('.com')[1]}: {tasks_resp.status_code}")
-        if tasks_resp.ok:
-            print(f"  {tasks_resp.text[:1000]}")
-            break
-        elif tasks_resp.text:
-            print(f"  {tasks_resp.text[:200]}")
-
     task_url = f"{API_BASE}/v1/user-service/my/task"
 
-    print(f"\n  Task payload: {json.dumps(payload, indent=2)}")
-    resp = requests.post(task_url, headers=task_headers, json=payload)
-    print(f"  Response: {resp.status_code} (content-length: {resp.headers.get('Content-Length', '?')})")
-    if resp.text:
-        print(f"  Body: {resp.text[:500]}")
+    # Try multiple payload variants to find what works.
+    # The silent 400 (empty body) means we pass field validation but fail
+    # at business logic. Let's try different combinations.
+    variants = [
+        # V1: Based on real task format from GET /my/tasks — cover from model path
+        {
+            "deviceId": device_id,
+            "title": filename,
+            "modelId": model_id,
+            "profileId": profile_id_int,
+            "plateIndex": 1,
+            "designId": 0,
+            "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
+        },
+        # V2: Same but with status and feedbackStatus from real task
+        {
+            "deviceId": device_id,
+            "title": filename,
+            "modelId": model_id,
+            "profileId": profile_id_int,
+            "plateIndex": 1,
+            "designId": 0,
+            "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
+            "status": 0,
+            "feedbackStatus": 0,
+        },
+        # V3: With weight/length/costTime (maybe required)
+        {
+            "deviceId": device_id,
+            "title": filename,
+            "modelId": model_id,
+            "profileId": profile_id_int,
+            "plateIndex": 1,
+            "designId": 0,
+            "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
+            "weight": 0,
+            "length": 0,
+            "costTime": 0,
+            "amsDetailMapping": [],
+        },
+    ]
 
-    if resp.ok:
-        data = resp.json()
-        print(f"  Task data: {json.dumps(data, indent=2)[:500]}")
-        return data
+    for i, payload in enumerate(variants):
+        print(f"\n  Variant {i + 1}: {json.dumps(payload)[:400]}")
+        resp = requests.post(task_url, headers=task_headers, json=payload)
+        print(f"  Response: {resp.status_code}")
+        if resp.text:
+            print(f"  Body: {resp.text[:500]}")
+        if resp.ok:
+            data = resp.json()
+            print(f"  SUCCESS! Task data: {json.dumps(data, indent=2)[:500]}")
+            return data
+
     return {}
 
 
