@@ -190,16 +190,107 @@ def cloud_get_devices(token: str) -> list[dict]:
     return devices
 
 
-def cloud_create_task(token: str, device_id: str, filename: str, file_url: str) -> dict:
+def cloud_create_project(token: str, filename: str) -> dict:
+    """Create a cloud project to get project_id, model_id, and upload_ticket.
+
+    This is the first step in the cloud print flow — it registers
+    a project on Bambu's server before the file is uploaded.
+    """
+    auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
+
+    # Try creating a new project
+    resp = requests.post(
+        f"{API_BASE}/v1/iot-service/api/user/project",
+        headers=auth_headers,
+        json={"name": filename},
+    )
+    print(f"  Create project response: {resp.status_code}")
+    print(f"  Body: {resp.text[:1000]}")
+
+    if resp.ok:
+        data = resp.json()
+        project_id = data.get("project_id", "")
+        model_id = data.get("model_id", "")
+        upload_ticket = data.get("upload_ticket", "")
+        print(f"  project_id={project_id}, model_id={model_id}, upload_ticket={upload_ticket}")
+        return data
+
+    # If POST isn't supported, try listing existing projects
+    print("  Falling back to project listing...")
+    resp = requests.get(
+        f"{API_BASE}/v1/iot-service/api/user/project",
+        headers=auth_headers,
+    )
+    print(f"  List projects response: {resp.status_code}")
+    print(f"  Body: {resp.text[:1000]}")
+    if resp.ok:
+        data = resp.json()
+        projects = data.get("projects", [])
+        if isinstance(data, list):
+            projects = data
+        if projects:
+            # Use the most recent project
+            proj = projects[-1]
+            project_id = proj.get("project_id", "")
+            print(f"  Using existing project: {project_id}")
+            # Fetch full project details for upload_ticket
+            detail_resp = requests.get(
+                f"{API_BASE}/v1/iot-service/api/user/project/{project_id}",
+                headers=auth_headers,
+            )
+            if detail_resp.ok:
+                return detail_resp.json()
+            return proj
+    return {}
+
+
+def cloud_notify_upload(token: str, upload_ticket: str, max_retries: int = 10) -> dict:
+    """Notify Bambu's server that the S3 upload is complete and poll for confirmation.
+
+    The notification endpoint confirms the upload was processed. It may need
+    to be polled multiple times while the server processes the file.
+    """
+    auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
+
+    for attempt in range(max_retries):
+        resp = requests.get(
+            f"{API_BASE}/v1/iot-service/api/user/notification",
+            headers=auth_headers,
+            params={"action": "upload", "ticket": upload_ticket},
+        )
+        print(f"  Notification poll {attempt + 1}/{max_retries}: {resp.status_code}")
+        print(f"  Body: {resp.text[:500]}")
+
+        if resp.ok:
+            data = resp.json()
+            # Check if upload processing is complete
+            status = data.get("status", "")
+            if status and status.lower() not in ("processing", "pending"):
+                return data
+            # Even if no explicit status, a 200 response may mean success
+            if not status:
+                return data
+
+        if attempt < max_retries - 1:
+            time.sleep(2)
+
+    print("  Warning: Notification polling timed out")
+    return {}
+
+
+def cloud_create_task(token: str, device_id: str, filename: str, model_id: str, profile_id: str = "0") -> dict:
     """Create a cloud print task. Returns task info including task_id."""
+    payload = {
+        "deviceId": device_id,
+        "title": filename,
+        "modelId": model_id,
+        "profileId": profile_id,
+    }
+    print(f"  Task payload: {json.dumps(payload)}")
     resp = requests.post(
         f"{API_BASE}/v1/user-service/my/task",
         headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
-        json={
-            "deviceId": device_id,
-            "title": filename,
-            "url": file_url,
-        },
+        json=payload,
     )
     print(f"  Create task response: {resp.status_code}")
     if resp.status_code != 200:
@@ -213,11 +304,15 @@ def cloud_create_task(token: str, device_id: str, filename: str, file_url: str) 
 
 
 def cloud_upload_file(token: str, file_path: Path) -> str:
-    """Upload a file to Bambu Cloud (S3) and return the file URL."""
+    """Upload a file to Bambu Cloud (S3) and return the file URL.
+
+    Gets a signed S3 upload URL, PUTs the file data, and uploads
+    the size metadata.
+    """
     file_size = file_path.stat().st_size
     filename = file_path.name
 
-    # Step 1: Get a signed upload URL
+    # Get a signed upload URL
     upload_endpoint = f"{API_BASE}/v1/iot-service/api/user/upload"
     auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     params = {"filename": filename, "size": file_size}
@@ -232,7 +327,7 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
     upload_data = resp.json()
     print(f"  Upload response: {json.dumps(upload_data, indent=2)[:1000]}")
 
-    # Response may have upload_url directly, or a urls array
+    # Response has a urls array with filename and size entries
     upload_url = upload_data.get("upload_url")
     size_url = None
 
@@ -247,13 +342,13 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
     if not upload_url:
         raise RuntimeError(f"No upload URL returned: {upload_data}")
 
-    # Step 2: PUT the file to S3 (empty headers — signed URLs can fail
+    # PUT the file to S3 (empty headers — signed URLs can fail
     # if extra headers are included that weren't part of the signature)
     file_content = file_path.read_bytes()
     put_resp = requests.put(upload_url, data=file_content, headers={}, timeout=300)
     put_resp.raise_for_status()
 
-    # Step 3: Upload size metadata if a size URL was provided
+    # Upload size metadata if a size URL was provided
     if size_url:
         requests.put(
             size_url,
@@ -264,8 +359,7 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
 
     print(f"  Uploaded {filename} ({file_size} bytes)")
 
-    # Return the full URL including query params — the printer needs the
-    # S3 signed URL parameters to download the file from cloud storage
+    # Return the full URL including query params
     return upload_url
 
 
@@ -646,9 +740,11 @@ def main():
     device_name = device.get("name", device_id)
     print(f"  Selected: {device_name}")
 
-    # --- Step 3: Upload file ---
+    # --- Step 3: Create project + Upload file ---
     file_url = args.file_url
     filename = "unknown.3mf"
+    model_id = "0"
+    profile_id = "0"
 
     if args.file and not args.no_upload and not file_url:
         file_path = Path(args.file)
@@ -656,9 +752,34 @@ def main():
             print(f"  Error: File not found: {file_path}")
             sys.exit(1)
         filename = file_path.name
-        print(f"\n[3] Uploading {filename}...")
+
+        # Step 3a: Create a project to get model_id and upload_ticket
+        print(f"\n[3a] Creating cloud project for {filename}...")
+        project_data = cloud_create_project(auth["access_token"], filename)
+        model_id = str(project_data.get("model_id", "0"))
+        upload_ticket = project_data.get("upload_ticket", "")
+        project_id = str(project_data.get("project_id", "0"))
+        print(f"  model_id={model_id}, project_id={project_id}, ticket={upload_ticket}")
+
+        # Step 3b: Upload file to S3
+        print(f"\n[3b] Uploading {filename} to S3...")
         file_url = cloud_upload_file(auth["access_token"], file_path)
-        print(f"  URL: {file_url}")
+        print(f"  URL: {file_url[:120]}...")
+
+        # Step 3c: Notify server that upload is complete
+        if upload_ticket:
+            print(f"\n[3c] Notifying server of upload completion (ticket={upload_ticket})...")
+            notify_data = cloud_notify_upload(auth["access_token"], upload_ticket)
+            # The notification response may contain updated model_id
+            if notify_data.get("model_id"):
+                model_id = str(notify_data["model_id"])
+                print(f"  Updated model_id from notification: {model_id}")
+        else:
+            print(f"\n[3c] No upload_ticket — skipping notification")
+            # Try to get model_id from project listing as fallback
+            print("  Waiting 3s for server to process upload...")
+            time.sleep(3)
+
     elif file_url:
         filename = Path(file_url).name
         print(f"\n[3] Using existing URL: {file_url}")
@@ -681,13 +802,13 @@ def main():
 
         if file_url:
             # --- Step 4.5: Create cloud task ---
-            print(f"\n[4.5] Creating cloud task...")
+            print(f"\n[4.5] Creating cloud task (modelId={model_id})...")
             task_data = cloud_create_task(
-                auth["access_token"], device_id, filename, file_url
+                auth["access_token"], device_id, filename, model_id, profile_id
             )
-            task_id = task_data.get("id", "0")
+            task_id = str(task_data.get("id", "0"))
 
-            # --- Step 5: Start print ---
+            # --- Step 5: Start print via MQTT ---
             print(f"\n[5] Starting print: {filename} (task_id={task_id})")
             mqttc.start_print(
                 file_url=file_url,
