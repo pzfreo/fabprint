@@ -759,11 +759,27 @@ def main():
         model_id = str(project_data.get("model_id", "0"))
         upload_ticket = project_data.get("upload_ticket", "")
         project_id = str(project_data.get("project_id", "0"))
-        print(f"  model_id={model_id}, project_id={project_id}, ticket={upload_ticket}")
+        project_upload_url = project_data.get("upload_url", "")
+        if project_data.get("profile_id"):
+            profile_id = str(project_data["profile_id"])
+        print(f"  model_id={model_id}, project_id={project_id}, profile_id={profile_id}")
+        print(f"  ticket={upload_ticket}")
+        if project_upload_url:
+            print(f"  project upload_url: {project_upload_url[:120]}...")
 
         # Step 3b: Upload file to S3
-        print(f"\n[3b] Uploading {filename} to S3...")
-        file_url = cloud_upload_file(auth["access_token"], file_path)
+        # Use the project's upload_url if available (uploads to models/ path),
+        # otherwise fall back to the generic upload endpoint (filename/ path)
+        if project_upload_url:
+            print(f"\n[3b] Uploading {filename} to project S3 URL...")
+            file_content = file_path.read_bytes()
+            put_resp = requests.put(project_upload_url, data=file_content, headers={}, timeout=300)
+            put_resp.raise_for_status()
+            file_url = project_upload_url
+            print(f"  Uploaded {filename} ({len(file_content)} bytes) to project URL")
+        else:
+            print(f"\n[3b] Uploading {filename} to S3 (generic)...")
+            file_url = cloud_upload_file(auth["access_token"], file_path)
         print(f"  URL: {file_url[:120]}...")
 
         # Step 3c: Notify server that upload is complete
