@@ -399,59 +399,26 @@ def cloud_create_task(
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     task_url = f"{API_BASE}/v1/user-service/my/task"
 
-    # Try multiple payload variants to find what works.
-    # The silent 400 (empty body) means we pass field validation but fail
-    # at business logic. Let's try different combinations.
-    variants = [
-        # V1: Based on real task format from GET /my/tasks — cover from model path
-        {
-            "deviceId": device_id,
-            "title": filename,
-            "modelId": model_id,
-            "profileId": profile_id_int,
-            "plateIndex": 1,
-            "designId": 0,
-            "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
-        },
-        # V2: Same but with status and feedbackStatus from real task
-        {
-            "deviceId": device_id,
-            "title": filename,
-            "modelId": model_id,
-            "profileId": profile_id_int,
-            "plateIndex": 1,
-            "designId": 0,
-            "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
-            "status": 0,
-            "feedbackStatus": 0,
-        },
-        # V3: With weight/length/costTime (maybe required)
-        {
-            "deviceId": device_id,
-            "title": filename,
-            "modelId": model_id,
-            "profileId": profile_id_int,
-            "plateIndex": 1,
-            "designId": 0,
-            "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
-            "weight": 0,
-            "length": 0,
-            "costTime": 0,
-            "amsDetailMapping": [],
-        },
-    ]
+    payload = {
+        "deviceId": device_id,
+        "title": filename,
+        "modelId": model_id,
+        "profileId": profile_id_int,
+        "plateIndex": 1,
+        "designId": 0,
+        "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
+    }
 
-    for i, payload in enumerate(variants):
-        print(f"\n  Variant {i + 1}: {json.dumps(payload)[:400]}")
-        resp = requests.post(task_url, headers=task_headers, json=payload)
-        print(f"  Response: {resp.status_code}")
-        if resp.text:
-            print(f"  Body: {resp.text[:500]}")
-        if resp.ok:
-            data = resp.json()
-            print(f"  SUCCESS! Task data: {json.dumps(data, indent=2)[:500]}")
-            return data
+    print(f"  Task payload: {json.dumps(payload)[:500]}")
+    resp = requests.post(task_url, headers=task_headers, json=payload)
+    print(f"  Response: {resp.status_code}")
+    if resp.text:
+        print(f"  Body: {resp.text[:500]}")
 
+    if resp.ok:
+        data = resp.json()
+        print(f"  Task data: {json.dumps(data, indent=2)[:500]}")
+        return data
     return {}
 
 
@@ -938,15 +905,30 @@ def main():
         if upload_ticket:
             print(f"\n[3c] Notifying server of upload completion (ticket={upload_ticket})...")
             notify_data = cloud_notify_upload(auth["access_token"], upload_ticket, filename)
-            # The notification response may contain updated model_id
             if notify_data.get("model_id"):
                 model_id = str(notify_data["model_id"])
                 print(f"  Updated model_id from notification: {model_id}")
         else:
             print(f"\n[3c] No upload_ticket — skipping notification")
-            # Try to get model_id from project listing as fallback
-            print("  Waiting 3s for server to process upload...")
             time.sleep(3)
+
+        # Step 3d: Fetch project details to get server-generated cover URL
+        # After notification, the server processes the 3mf and extracts
+        # the thumbnail, serving it from or-cloud-model-prod bucket
+        print(f"\n[3d] Fetching project details for cover URL...")
+        auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {auth['access_token']}"}
+        proj_resp = requests.get(
+            f"{API_BASE}/v1/iot-service/api/user/project/{project_id}",
+            headers=auth_headers,
+        )
+        print(f"  Project details: {proj_resp.status_code}")
+        print(f"  Body: {proj_resp.text[:1500]}")
+        if proj_resp.ok:
+            proj_detail = proj_resp.json()
+            # Look for download_url or any cover/thumbnail URL
+            for key in ["download_url", "cover", "thumbnail", "cover_url"]:
+                if proj_detail.get(key):
+                    print(f"  Found {key}: {proj_detail[key][:120]}...")
 
     elif file_url:
         filename = Path(file_url).name
