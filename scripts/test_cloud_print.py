@@ -384,17 +384,6 @@ def cloud_create_task(
         profile_id_int = int(profile_id)
     except (ValueError, TypeError):
         profile_id_int = 0
-    payload = {
-        "deviceId": device_id,
-        "title": filename,
-        "modelId": model_id,
-        "profileId": profile_id_int,
-        "plateIndex": 1,
-        "designId": 0,
-        "amsDetailMapping": [],
-        "mode": "cloud_file",
-        "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
-    }
 
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     task_url = f"{API_BASE}/v1/user-service/my/task"
@@ -916,6 +905,7 @@ def main():
         # Step 3d: Fetch project details to get server-generated cover URL
         # After notification, the server processes the 3mf and extracts
         # thumbnails, serving them from or-cloud-model-prod bucket
+        # Step 3d: Fetch project details to get server-generated cover URL
         print(f"\n[3d] Fetching project details for cover URL...")
         auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {auth['access_token']}"}
         proj_resp = requests.get(
@@ -926,10 +916,10 @@ def main():
         cover_url = ""
         if proj_resp.ok:
             proj_detail = proj_resp.json()
-            # Look through profiles for pictures/cover URLs
             profiles = proj_detail.get("profiles", []) or []
             for prof in profiles:
                 context = prof.get("context", {}) or {}
+                # Look for pictures first
                 pictures = context.get("pictures", []) or []
                 for pic in pictures:
                     url = pic.get("url", "")
@@ -937,30 +927,24 @@ def main():
                         cover_url = url
                         print(f"  Found picture: {url[:120]}...")
                         break
-                # Also check configs for plate images
+                if cover_url:
+                    break
+                # Derive cover URL from config URL by replacing plate_1.json with plate_1.png
+                # Real tasks use: .../private/{modelId}/{profileId}/3mf/Metadata/plate_1.png
                 configs = context.get("configs", []) or []
                 for cfg in configs:
-                    url = cfg.get("url", "")
-                    if url and "plate" in cfg.get("name", "").lower() and url.endswith(".png"):
-                        cover_url = url
-                        print(f"  Found plate config image: {url[:120]}...")
+                    cfg_url = cfg.get("url", "")
+                    cfg_name = cfg.get("name", "")
+                    if cfg_url and cfg_name == "plate_1.json":
+                        # Replace .json with .png in the URL path (before query params)
+                        cover_url = cfg_url.replace("plate_1.json", "plate_1.png")
+                        print(f"  Derived cover from config: {cover_url[:120]}...")
                         break
                 if cover_url:
                     break
 
-            # Check top-level fields too
-            for key in ["download_url", "cover", "thumbnail", "cover_url"]:
-                if proj_detail.get(key):
-                    print(f"  Found {key}: {str(proj_detail[key])[:120]}...")
-
-            # Print full profile context for debugging
-            if profiles:
-                context = profiles[0].get("context", {})
-                print(f"  Profile context keys: {list(context.keys()) if context else 'none'}")
-                pictures = (context or {}).get("pictures", [])
-                configs = (context or {}).get("configs", [])
-                print(f"  Pictures: {json.dumps(pictures)[:500]}")
-                print(f"  Configs: {json.dumps(configs)[:500]}")
+        if not cover_url:
+            print("  No cover URL found in project details")
 
     elif file_url:
         filename = Path(file_url).name
