@@ -190,6 +190,28 @@ def cloud_get_devices(token: str) -> list[dict]:
     return devices
 
 
+def cloud_create_task(token: str, device_id: str, filename: str, file_url: str) -> dict:
+    """Create a cloud print task. Returns task info including task_id."""
+    resp = requests.post(
+        f"{API_BASE}/v1/user-service/my/task",
+        headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
+        json={
+            "deviceId": device_id,
+            "title": filename,
+            "url": file_url,
+        },
+    )
+    print(f"  Create task response: {resp.status_code}")
+    if resp.status_code != 200:
+        print(f"  Body: {resp.text[:500]}")
+    # Don't raise — task creation may fail but we still try MQTT
+    if resp.ok:
+        data = resp.json()
+        print(f"  Task data: {json.dumps(data, indent=2)[:500]}")
+        return data
+    return {}
+
+
 def cloud_upload_file(token: str, file_path: Path) -> str:
     """Upload a file to Bambu Cloud (S3) and return the file URL."""
     file_size = file_path.stat().st_size
@@ -373,6 +395,9 @@ class BambuCloudMQTT:
             payload = json.loads(msg.payload)
             self._responses.append(payload)
 
+            # Log ALL responses at debug level
+            log.debug("<< %s", json.dumps(payload, indent=2)[:2000])
+
             # Log interesting responses
             if "print" in payload:
                 p = payload["print"]
@@ -390,6 +415,10 @@ class BambuCloudMQTT:
                 if gcode_state:
                     extra = f" ({mc_percent}%)" if mc_percent is not None else ""
                     print(f"  << state: {gcode_state}{extra}")
+                # Show upload progress (printer downloading the file)
+                upload = p.get("upload")
+                if upload:
+                    print(f"  << upload: {upload}")
         except json.JSONDecodeError:
             pass
 
@@ -428,6 +457,7 @@ class BambuCloudMQTT:
         self,
         file_url: str,
         filename: str,
+        task_id: str = "0",
         plate_index: int = 1,
         use_ams: bool = False,
         bed_levelling: bool = True,
@@ -443,9 +473,10 @@ class BambuCloudMQTT:
                 "param": f"Metadata/plate_{plate_index}.gcode",
                 "project_id": "0",
                 "profile_id": "0",
-                "task_id": "0",
+                "task_id": task_id,
                 "subtask_id": "0",
                 "subtask_name": filename,
+                "file": "",
                 "url": file_url,
                 "md5": "",
                 "timelapse": timelapse,
@@ -459,29 +490,30 @@ class BambuCloudMQTT:
             }
         }
         print(f"  >> start_print: {filename}")
+        print(f"  >> url: {file_url[:100]}...")
         self._publish(cmd)
 
     def pause_print(self):
         """Pause the current print."""
-        cmd = {"print": {"sequence_id": self._next_seq(), "command": "pause"}}
+        cmd = {"print": {"sequence_id": self._next_seq(), "command": "pause", "param": ""}}
         print("  >> pause")
         self._publish(cmd)
 
     def resume_print(self):
         """Resume a paused print."""
-        cmd = {"print": {"sequence_id": self._next_seq(), "command": "resume"}}
+        cmd = {"print": {"sequence_id": self._next_seq(), "command": "resume", "param": ""}}
         print("  >> resume")
         self._publish(cmd)
 
     def stop_print(self):
         """Stop/cancel the current print."""
-        cmd = {"print": {"sequence_id": self._next_seq(), "command": "stop"}}
+        cmd = {"print": {"sequence_id": self._next_seq(), "command": "stop", "param": ""}}
         print("  >> stop")
         self._publish(cmd)
 
     def request_status(self):
         """Request full printer status (pushall)."""
-        cmd = {"pushing": {"sequence_id": self._next_seq(), "command": "pushall"}}
+        cmd = {"pushing": {"sequence_id": self._next_seq(), "command": "pushall", "version": 1, "push_target": 1}}
         print("  >> pushall (request status)")
         self._publish(cmd)
 
@@ -648,17 +680,25 @@ def main():
             return
 
         if file_url:
+            # --- Step 4.5: Create cloud task ---
+            print(f"\n[4.5] Creating cloud task...")
+            task_data = cloud_create_task(
+                auth["access_token"], device_id, filename, file_url
+            )
+            task_id = task_data.get("id", "0")
+
             # --- Step 5: Start print ---
-            print(f"\n[5] Starting print: {filename}")
+            print(f"\n[5] Starting print: {filename} (task_id={task_id})")
             mqttc.start_print(
                 file_url=file_url,
                 filename=filename,
+                task_id=task_id,
                 use_ams=args.use_ams,
             )
 
             # Wait for response
-            print("  Waiting for response (5s)...")
-            time.sleep(5)
+            print("  Waiting for response (10s)...")
+            time.sleep(10)
 
             if args.interactive:
                 interactive_loop(mqttc)
