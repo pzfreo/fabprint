@@ -244,49 +244,50 @@ def cloud_create_project(token: str, filename: str) -> dict:
     return {}
 
 
-def cloud_notify_upload(token: str, upload_ticket: str, max_retries: int = 10) -> dict:
+def cloud_notify_upload(token: str, upload_ticket: str, max_retries: int = 5) -> dict:
     """Notify Bambu's server that the S3 upload is complete and poll for confirmation.
 
-    The flow is:
-    1. PUT to notification endpoint to register the upload completion
-    2. GET to poll until the server confirms processing is done
+    Tries multiple PUT body formats since the exact format is undocumented,
+    then polls GET for confirmation.
     """
     auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     notify_url = f"{API_BASE}/v1/iot-service/api/user/notification"
 
-    # Step 1: PUT to register the upload completion (creates the action key)
-    put_resp = requests.put(
-        notify_url,
-        headers=auth_headers,
-        params={"action": "upload", "ticket": upload_ticket},
-    )
-    print(f"  PUT notification: {put_resp.status_code}")
-    print(f"  Body: {put_resp.text[:500]}")
+    # Try multiple PUT body variants — the exact format is proprietary
+    put_variants = [
+        # Variant 1: "upload" field in body with ticket in query params
+        {"params": {"action": "upload", "ticket": upload_ticket}, "json": {"upload": True}},
+        # Variant 2: all fields in JSON body
+        {"json": {"action": "upload", "ticket": upload_ticket}},
+        # Variant 3: all fields in body with upload as string
+        {"json": {"upload": upload_ticket}},
+    ]
 
-    # Step 2: Poll GET until processing is confirmed
+    for i, variant in enumerate(put_variants):
+        put_resp = requests.put(notify_url, headers=auth_headers, **variant)
+        print(f"  PUT variant {i + 1}: {put_resp.status_code} — {put_resp.text[:300]}")
+        if put_resp.ok:
+            break
+
+    # Poll GET for confirmation
     for attempt in range(max_retries):
+        time.sleep(2)
         resp = requests.get(
             notify_url,
             headers=auth_headers,
             params={"action": "upload", "ticket": upload_ticket},
         )
-        print(f"  GET notification poll {attempt + 1}/{max_retries}: {resp.status_code}")
-        print(f"  Body: {resp.text[:500]}")
+        print(f"  GET poll {attempt + 1}/{max_retries}: {resp.status_code} — {resp.text[:300]}")
 
         if resp.ok:
             data = resp.json()
-            # Check if upload processing is complete
             status = data.get("status", "")
             if status and status.lower() not in ("processing", "pending"):
                 return data
-            # A 200 with no explicit status likely means success
             if not status:
                 return data
 
-        if attempt < max_retries - 1:
-            time.sleep(2)
-
-    print("  Warning: Notification polling timed out")
+    print("  Warning: Notification polling did not succeed — continuing anyway")
     return {}
 
 
