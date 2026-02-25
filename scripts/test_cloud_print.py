@@ -396,31 +396,30 @@ def cloud_create_task(
         "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
     }
 
-    task_url = f"{API_BASE}/v1/user-service/my/task"
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
 
-    # First, fetch existing tasks to see what a real task looks like
+    # Fetch existing tasks to see the real format
     print("  Fetching existing tasks for reference...")
-    tasks_resp = requests.get(task_url, headers=task_headers)
-    if tasks_resp.ok:
-        tasks_data = tasks_resp.json()
-        if isinstance(tasks_data, list) and tasks_data:
-            print(f"  Example task: {json.dumps(tasks_data[0], indent=2)[:800]}")
-        elif isinstance(tasks_data, dict):
-            hits = tasks_data.get("hits", tasks_data.get("tasks", []))
-            if hits:
-                print(f"  Example task: {json.dumps(hits[0], indent=2)[:800]}")
-            else:
-                print(f"  Tasks response: {json.dumps(tasks_data)[:500]}")
-        else:
-            print(f"  Tasks response: {tasks_resp.text[:500]}")
-    else:
-        print(f"  Tasks GET: {tasks_resp.status_code} — {tasks_resp.text[:300]}")
+    for tasks_endpoint in [
+        f"{API_BASE}/v1/user-service/my/tasks",
+        f"{API_BASE}/v1/user-service/my/tasks?limit=1",
+        f"{API_BASE}/v1/user-service/my/task?limit=1",
+    ]:
+        tasks_resp = requests.get(tasks_endpoint, headers=task_headers)
+        print(f"  GET {tasks_endpoint.split('.com')[1]}: {tasks_resp.status_code}")
+        if tasks_resp.ok:
+            print(f"  {tasks_resp.text[:1000]}")
+            break
+        elif tasks_resp.text:
+            print(f"  {tasks_resp.text[:200]}")
 
-    print(f"  Task payload: {json.dumps(payload)[:500]}")
+    task_url = f"{API_BASE}/v1/user-service/my/task"
+
+    print(f"\n  Task payload: {json.dumps(payload, indent=2)}")
     resp = requests.post(task_url, headers=task_headers, json=payload)
     print(f"  Response: {resp.status_code} (content-length: {resp.headers.get('Content-Length', '?')})")
-    print(f"  Body: '{resp.text[:500]}'")
+    if resp.text:
+        print(f"  Body: {resp.text[:500]}")
 
     if resp.ok:
         data = resp.json()
