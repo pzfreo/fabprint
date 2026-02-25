@@ -43,6 +43,7 @@ import ssl
 import sys
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -298,13 +299,85 @@ def cloud_notify_upload(token: str, upload_ticket: str, filename: str = "") -> d
     return {}
 
 
+def cloud_upload_cover(token: str, file_path: Path, plate_index: int = 1) -> str:
+    """Extract plate thumbnail from 3mf and upload it to get a cover URL.
+
+    3mf files are zip archives containing plate thumbnails at
+    Metadata/plate_N.png or similar paths.
+    """
+    auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
+
+    # Try to extract thumbnail from 3mf
+    thumbnail_data = None
+    thumbnail_name = None
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            # Try common thumbnail paths
+            candidates = [
+                f"Metadata/plate_{plate_index}.png",
+                f"Metadata/top_{plate_index}.png",
+                "Metadata/plate_1.png",
+                "Metadata/top_1.png",
+            ]
+            # Also check for any png in Metadata/
+            for name in zf.namelist():
+                if name.startswith("Metadata/") and name.endswith(".png"):
+                    if name not in candidates:
+                        candidates.append(name)
+
+            for candidate in candidates:
+                if candidate in zf.namelist():
+                    thumbnail_data = zf.read(candidate)
+                    thumbnail_name = candidate.split("/")[-1]
+                    print(f"  Extracted thumbnail: {candidate} ({len(thumbnail_data)} bytes)")
+                    break
+    except (zipfile.BadZipFile, KeyError):
+        pass
+
+    if not thumbnail_data:
+        print("  No thumbnail found in 3mf")
+        # Return a minimal 1x1 PNG data URI — probably won't work but worth trying
+        return ""
+
+    # Upload thumbnail using generic upload endpoint
+    resp = requests.get(
+        f"{API_BASE}/v1/iot-service/api/user/upload",
+        headers=auth_headers,
+        params={"filename": thumbnail_name, "size": len(thumbnail_data)},
+    )
+    if not resp.ok:
+        print(f"  Failed to get thumbnail upload URL: {resp.status_code}")
+        return ""
+
+    upload_data = resp.json()
+    urls = upload_data.get("urls", [])
+    thumb_upload_url = None
+    for entry in urls:
+        if entry.get("type") == "filename":
+            thumb_upload_url = entry.get("url")
+
+    if not thumb_upload_url:
+        print("  No thumbnail upload URL returned")
+        return ""
+
+    put_resp = requests.put(thumb_upload_url, data=thumbnail_data, headers={}, timeout=60)
+    if put_resp.ok:
+        # Return the URL without query params (permanent S3 path)
+        cover_url = thumb_upload_url.split("?")[0]
+        print(f"  Uploaded thumbnail: {cover_url}")
+        return cover_url
+
+    print(f"  Thumbnail upload failed: {put_resp.status_code}")
+    return ""
+
+
 def cloud_create_task(
     token: str,
     device_id: str,
     filename: str,
     model_id: str,
     profile_id: str = "0",
-    file_url: str = "",
+    cover_url: str = "",
 ) -> dict:
     """Create a cloud print task. Returns task info including task_id."""
     # profileId must be an integer, not a string
@@ -321,7 +394,7 @@ def cloud_create_task(
         "designId": 0,
         "amsDetailMapping": [],
         "mode": "cloud_file",
-        "cover": None,
+        "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
     }
 
     task_url = f"{API_BASE}/v1/user-service/my/task"
@@ -854,10 +927,15 @@ def main():
             return
 
         if file_url:
-            # --- Step 4.5: Create cloud task ---
-            print(f"\n[4.5] Creating cloud task (modelId={model_id})...")
+            # --- Step 4.5: Upload cover image and create cloud task ---
+            cover_url = ""
+            if args.file:
+                print(f"\n[4.5a] Uploading cover image...")
+                cover_url = cloud_upload_cover(auth["access_token"], Path(args.file))
+
+            print(f"\n[4.5b] Creating cloud task (modelId={model_id})...")
             task_data = cloud_create_task(
-                auth["access_token"], device_id, filename, model_id, profile_id, file_url
+                auth["access_token"], device_id, filename, model_id, profile_id, cover_url
             )
             task_id = str(task_data.get("id", "0"))
 
