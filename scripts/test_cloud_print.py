@@ -11,6 +11,10 @@ Tests the full cloud print lifecycle:
   6. Resume print
   7. Stop print
 
+Login flow:
+    First login requires an email verification code (sent to your inbox).
+    The token is cached in ~/.bambu_cloud_token for subsequent runs.
+
 Usage:
     export BAMBU_EMAIL="your@email.com"
     export BAMBU_PASSWORD="your_password"
@@ -61,11 +65,28 @@ SLICER_HEADERS = {
 }
 
 
+def _request_verification_code(email: str) -> None:
+    """Request a verification code be sent to the user's email."""
+    resp = requests.post(
+        f"{API_BASE}/v1/user-service/user/sendemail/code",
+        headers=SLICER_HEADERS,
+        json={"email": email, "type": "codeLogin"},
+    )
+    resp.raise_for_status()
+    print(f"  Verification code sent to {email}")
+
+
 def cloud_login(email: str, password: str) -> dict:
     """Login to Bambu Cloud and return token + user info.
 
+    Handles three login flows:
+    1. Direct password login (if account allows it)
+    2. Verification code login (code sent to email)
+    3. Two-factor authentication (TFA key returned)
+
     Returns dict with keys: access_token, user_id
     """
+    # Try password login first
     resp = requests.post(
         f"{API_BASE}/v1/user-service/user/login",
         headers=SLICER_HEADERS,
@@ -75,10 +96,71 @@ def cloud_login(email: str, password: str) -> dict:
     data = resp.json()
 
     token = data.get("accessToken")
+    login_type = data.get("loginType", "")
+
+    # Handle verification code flow
+    if not token and login_type == "verifyCode":
+        print("  Account requires email verification code")
+        _request_verification_code(email)
+        code = input("  Enter verification code from email: ").strip()
+
+        resp = requests.post(
+            f"{API_BASE}/v1/user-service/user/login",
+            headers=SLICER_HEADERS,
+            json={"account": email, "code": code},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        token = data.get("accessToken")
+
+    # Handle TFA flow
+    if not token and data.get("tfaKey"):
+        tfa_key = data["tfaKey"]
+        print("  Account requires two-factor authentication")
+        tfa_code = input("  Enter 2FA code: ").strip()
+
+        resp = requests.post(
+            f"{API_BASE}/v1/user-service/user/tfa",
+            headers=SLICER_HEADERS,
+            json={"tfaKey": tfa_key, "tfaCode": tfa_code},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        token = data.get("accessToken")
+
     if not token:
         raise RuntimeError(f"Login failed: {data}")
 
-    # Get user ID for MQTT username
+    print(f"  Login successful (token: {token[:20]}...)")
+
+    # Save token for reuse
+    token_file = Path.home() / ".bambu_cloud_token"
+    token_file.write_text(json.dumps({"token": token, "email": email}))
+    token_file.chmod(0o600)
+    print(f"  Token saved to {token_file}")
+
+    return _get_user_info(token)
+
+
+def cloud_login_with_cache(email: str, password: str) -> dict:
+    """Login using cached token if available, falling back to fresh login."""
+    token_file = Path.home() / ".bambu_cloud_token"
+    if token_file.exists():
+        try:
+            cached = json.loads(token_file.read_text())
+            if cached.get("email") == email and cached.get("token"):
+                print("  Trying cached token...")
+                info = _get_user_info(cached["token"])
+                print(f"  Cached token valid (user {info['user_id']})")
+                return info
+        except Exception:
+            pass  # Token expired or invalid, fall through to fresh login
+
+    return cloud_login(email, password)
+
+
+def _get_user_info(token: str) -> dict:
+    """Get user ID from token for MQTT username."""
     profile_resp = requests.get(
         f"{API_BASE}/v1/design-user-service/my/preference",
         headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
@@ -403,7 +485,7 @@ def main():
 
     # --- Step 1: Login ---
     print("\n[1] Logging in...")
-    auth = cloud_login(email, password)
+    auth = cloud_login_with_cache(email, password)
     print(f"  Logged in as user {auth['user_id']}")
 
     # --- Step 2: List devices ---
