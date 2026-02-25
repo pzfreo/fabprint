@@ -312,7 +312,9 @@ def cloud_create_task(
         profile_id_int = int(profile_id)
     except (ValueError, TypeError):
         profile_id_int = 0
-    payload = {
+    # Try without url first (server knows file location from project),
+    # then with url if that fails
+    payload_base = {
         "deviceId": device_id,
         "title": filename,
         "modelId": model_id,
@@ -320,18 +322,33 @@ def cloud_create_task(
         "plateIndex": 1,
         "cover": "",
     }
-    if file_url:
-        payload["url"] = file_url
-    print(f"  Task payload: {json.dumps(payload)[:500]}")
+
+    # Attempt 1: minimal payload (no url)
+    print(f"  Task payload (attempt 1): {json.dumps(payload_base)[:500]}")
     resp = requests.post(
         f"{API_BASE}/v1/user-service/my/task",
         headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
-        json=payload,
+        json=payload_base,
     )
-    print(f"  Create task response: {resp.status_code}")
-    if resp.status_code != 200:
-        print(f"  Body: {resp.text[:500]}")
-    # Don't raise — task creation may fail but we still try MQTT
+    print(f"  Response: {resp.status_code} — {resp.text[:500]}")
+
+    if not resp.ok and file_url:
+        # Attempt 2: with url and extra fields
+        payload_full = {
+            **payload_base,
+            "url": file_url,
+            "bed_type": "auto",
+            "amsDetailMapping": [],
+            "mode": "cloud_file",
+        }
+        print(f"  Task payload (attempt 2): {json.dumps(payload_full)[:500]}")
+        resp = requests.post(
+            f"{API_BASE}/v1/user-service/my/task",
+            headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
+            json=payload_full,
+        )
+        print(f"  Response: {resp.status_code} — {resp.text[:500]}")
+
     if resp.ok:
         data = resp.json()
         print(f"  Task data: {json.dumps(data, indent=2)[:500]}")
