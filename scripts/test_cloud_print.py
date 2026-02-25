@@ -323,31 +323,15 @@ def cloud_create_task(
         "cover": "",
     }
 
-    # Attempt 1: minimal payload (no url)
-    print(f"  Task payload (attempt 1): {json.dumps(payload_base)[:500]}")
-    resp = requests.post(
-        f"{API_BASE}/v1/user-service/my/task",
-        headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
-        json=payload_base,
-    )
-    print(f"  Response: {resp.status_code} — {resp.text[:500]}")
+    task_url = f"{API_BASE}/v1/user-service/my/task"
+    task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
 
-    if not resp.ok and file_url:
-        # Attempt 2: with url and extra fields
-        payload_full = {
-            **payload_base,
-            "url": file_url,
-            "bed_type": "auto",
-            "amsDetailMapping": [],
-            "mode": "cloud_file",
-        }
-        print(f"  Task payload (attempt 2): {json.dumps(payload_full)[:500]}")
-        resp = requests.post(
-            f"{API_BASE}/v1/user-service/my/task",
-            headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
-            json=payload_full,
-        )
-        print(f"  Response: {resp.status_code} — {resp.text[:500]}")
+    print(f"  Task payload: {json.dumps(payload_base)[:500]}")
+    resp = requests.post(task_url, headers=task_headers, json=payload_base)
+    print(f"  Response: {resp.status_code}")
+    print(f"  Headers: {dict(resp.headers)}")
+    print(f"  Text: '{resp.text[:500]}'")
+    print(f"  Content: {resp.content[:500]}")
 
     if resp.ok:
         data = resp.json()
