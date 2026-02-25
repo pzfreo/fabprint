@@ -1,0 +1,488 @@
+#!/usr/bin/env python3
+"""Standalone test for Bambu Lab cloud printing via MQTT.
+
+Zero third-party dependencies beyond paho-mqtt and requests.
+Tests the full cloud print lifecycle:
+  1. Login (email/password → access token + user ID)
+  2. List devices
+  3. Upload a .3mf file to Bambu Cloud (S3)
+  4. Start print via MQTT project_file command
+  5. Pause print
+  6. Resume print
+  7. Stop print
+
+Usage:
+    export BAMBU_EMAIL="your@email.com"
+    export BAMBU_PASSWORD="your_password"
+
+    # Dry run — login, list devices, but don't actually print
+    python scripts/test_cloud_print.py
+
+    # Upload and start a print
+    python scripts/test_cloud_print.py path/to/file.gcode.3mf
+
+    # Interactive mode — send pause/resume/stop after print starts
+    python scripts/test_cloud_print.py path/to/file.gcode.3mf --interactive
+
+Requirements:
+    pip install paho-mqtt requests
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import ssl
+import sys
+import threading
+import time
+from pathlib import Path
+
+import paho.mqtt.client as mqtt
+import requests
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Bambu Cloud HTTP API
+# ---------------------------------------------------------------------------
+
+API_BASE = "https://api.bambulab.com"
+
+# Headers that mimic OrcaSlicer (the cloud API expects these)
+SLICER_HEADERS = {
+    "X-BBL-Client-Name": "OrcaSlicer",
+    "X-BBL-Client-Type": "slicer",
+    "X-BBL-Client-Version": "02.03.01.00",
+    "User-Agent": "bambu_network_agent/02.03.01.00",
+    "Content-Type": "application/json",
+}
+
+
+def cloud_login(email: str, password: str) -> dict:
+    """Login to Bambu Cloud and return token + user info.
+
+    Returns dict with keys: access_token, user_id
+    """
+    resp = requests.post(
+        f"{API_BASE}/v1/user-service/user/login",
+        headers=SLICER_HEADERS,
+        json={"account": email, "password": password, "apiError": ""},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    token = data.get("accessToken")
+    if not token:
+        raise RuntimeError(f"Login failed: {data}")
+
+    # Get user ID for MQTT username
+    profile_resp = requests.get(
+        f"{API_BASE}/v1/design-user-service/my/preference",
+        headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
+    )
+    profile_resp.raise_for_status()
+    uid = profile_resp.json().get("uid")
+    if not uid:
+        raise RuntimeError(f"Could not get user ID from profile: {profile_resp.json()}")
+
+    return {"access_token": token, "user_id": str(uid)}
+
+
+def cloud_get_devices(token: str) -> list[dict]:
+    """List printers bound to the account."""
+    resp = requests.get(
+        f"{API_BASE}/v1/iot-service/api/user/bind",
+        headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    devices = data.get("devices", [])
+    return devices
+
+
+def cloud_upload_file(token: str, file_path: Path) -> str:
+    """Upload a file to Bambu Cloud (S3) and return the file URL."""
+    file_size = file_path.stat().st_size
+    filename = file_path.name
+
+    # Step 1: Get a signed upload URL
+    resp = requests.put(
+        f"{API_BASE}/v1/storage/sign",
+        headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
+        json={"fileName": filename, "fileSize": file_size, "type": "application/octet-stream"},
+    )
+    resp.raise_for_status()
+    upload_data = resp.json()
+
+    upload_url = upload_data.get("url")
+    if not upload_url:
+        raise RuntimeError(f"No upload URL returned: {upload_data}")
+
+    # Step 2: PUT the file to S3
+    with open(file_path, "rb") as f:
+        put_resp = requests.put(
+            upload_url,
+            data=f,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+    put_resp.raise_for_status()
+
+    print(f"  Uploaded {filename} ({file_size} bytes)")
+    return upload_url.split("?")[0]  # Return URL without query params
+
+
+# ---------------------------------------------------------------------------
+# Bambu Cloud MQTT
+# ---------------------------------------------------------------------------
+
+MQTT_BROKER = "us.mqtt.bambulab.com"
+MQTT_PORT = 8883
+
+
+class BambuCloudMQTT:
+    """Minimal MQTT client for Bambu Cloud printer commands."""
+
+    def __init__(self, user_id: str, access_token: str, device_id: str):
+        self.user_id = user_id
+        self.access_token = access_token
+        self.device_id = device_id
+        self._seq = 0
+        self._connected = threading.Event()
+        self._responses: list[dict] = []
+
+        self.client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION2,
+            client_id=f"fabprint-test-{device_id[:8]}",
+        )
+        self.client.username_pw_set(f"u_{user_id}", access_token)
+        self.client.tls_set(cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS)
+        self.client.on_connect = self._on_connect
+        self.client.on_message = self._on_message
+        self.client.on_disconnect = self._on_disconnect
+
+    @property
+    def request_topic(self) -> str:
+        return f"device/{self.device_id}/request"
+
+    @property
+    def report_topic(self) -> str:
+        return f"device/{self.device_id}/report"
+
+    def _on_connect(self, client, userdata, flags, rc, properties=None):
+        if rc == 0:
+            print(f"  MQTT connected to {MQTT_BROKER}")
+            client.subscribe(self.report_topic)
+            self._connected.set()
+        else:
+            print(f"  MQTT connection failed: rc={rc}")
+
+    def _on_message(self, client, userdata, msg):
+        try:
+            payload = json.loads(msg.payload)
+            self._responses.append(payload)
+
+            # Log interesting responses
+            if "print" in payload:
+                p = payload["print"]
+                cmd = p.get("command", "")
+                result = p.get("result", "")
+                reason = p.get("reason", "")
+                if result:
+                    status = f"result={result}"
+                    if reason:
+                        status += f" reason={reason}"
+                    print(f"  << {cmd}: {status}")
+                # Show print progress
+                mc_percent = p.get("mc_percent")
+                gcode_state = p.get("gcode_state")
+                if gcode_state:
+                    extra = f" ({mc_percent}%)" if mc_percent is not None else ""
+                    print(f"  << state: {gcode_state}{extra}")
+        except json.JSONDecodeError:
+            pass
+
+    def _on_disconnect(self, client, userdata, flags, rc, properties=None):
+        self._connected.clear()
+        if rc != 0:
+            print(f"  MQTT disconnected unexpectedly: rc={rc}")
+
+    def connect(self, timeout: float = 10.0):
+        """Connect to the cloud MQTT broker."""
+        print(f"  Connecting MQTT to {MQTT_BROKER}:{MQTT_PORT}...")
+        self.client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+        self.client.loop_start()
+        if not self._connected.wait(timeout):
+            raise TimeoutError("MQTT connection timed out")
+
+    def disconnect(self):
+        self.client.loop_stop()
+        self.client.disconnect()
+        print("  MQTT disconnected")
+
+    def _next_seq(self) -> str:
+        self._seq += 1
+        return str(self._seq)
+
+    def _publish(self, command: dict):
+        """Publish a command and log it."""
+        payload = json.dumps(command)
+        log.debug(">> %s", payload)
+        self.client.publish(self.request_topic, payload)
+
+    # -- The four commands --------------------------------------------------
+
+    def start_print(
+        self,
+        file_url: str,
+        filename: str,
+        plate_index: int = 1,
+        use_ams: bool = False,
+        bed_levelling: bool = True,
+        flow_cali: bool = True,
+        vibration_cali: bool = True,
+        timelapse: bool = False,
+    ):
+        """Send project_file command to start a print."""
+        cmd = {
+            "print": {
+                "sequence_id": self._next_seq(),
+                "command": "project_file",
+                "param": f"Metadata/plate_{plate_index}.gcode",
+                "project_id": "0",
+                "profile_id": "0",
+                "task_id": "0",
+                "subtask_id": "0",
+                "subtask_name": filename,
+                "url": file_url,
+                "md5": "",
+                "timelapse": timelapse,
+                "bed_type": "auto",
+                "bed_levelling": bed_levelling,
+                "flow_cali": flow_cali,
+                "vibration_cali": vibration_cali,
+                "layer_inspect": False,
+                "ams_mapping": "",
+                "use_ams": use_ams,
+            }
+        }
+        print(f"  >> start_print: {filename}")
+        self._publish(cmd)
+
+    def pause_print(self):
+        """Pause the current print."""
+        cmd = {"print": {"sequence_id": self._next_seq(), "command": "pause"}}
+        print("  >> pause")
+        self._publish(cmd)
+
+    def resume_print(self):
+        """Resume a paused print."""
+        cmd = {"print": {"sequence_id": self._next_seq(), "command": "resume"}}
+        print("  >> resume")
+        self._publish(cmd)
+
+    def stop_print(self):
+        """Stop/cancel the current print."""
+        cmd = {"print": {"sequence_id": self._next_seq(), "command": "stop"}}
+        print("  >> stop")
+        self._publish(cmd)
+
+    def request_status(self):
+        """Request full printer status (pushall)."""
+        cmd = {"pushing": {"sequence_id": self._next_seq(), "command": "pushall"}}
+        print("  >> pushall (request status)")
+        self._publish(cmd)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def select_device(devices: list[dict]) -> dict:
+    """Let user pick a device if multiple are bound."""
+    if len(devices) == 1:
+        return devices[0]
+
+    print("\nAvailable printers:")
+    for i, d in enumerate(devices):
+        name = d.get("name", "unnamed")
+        dev_id = d.get("dev_id", "?")
+        online = "online" if d.get("online") else "offline"
+        model = d.get("dev_product_name", d.get("dev_model_name", "?"))
+        print(f"  [{i}] {name} ({model}) — {dev_id} [{online}]")
+
+    while True:
+        try:
+            idx = int(input("\nSelect printer [0]: ") or "0")
+            return devices[idx]
+        except (ValueError, IndexError):
+            print("Invalid selection, try again")
+
+
+def interactive_loop(mqttc: BambuCloudMQTT):
+    """Interactive command loop for pause/resume/stop."""
+    print("\n--- Interactive mode ---")
+    print("Commands: [p]ause  [r]esume  [s]top  [t]atus  [q]uit\n")
+
+    while True:
+        try:
+            cmd = input("> ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if cmd in ("p", "pause"):
+            mqttc.pause_print()
+        elif cmd in ("r", "resume"):
+            mqttc.resume_print()
+        elif cmd in ("s", "stop"):
+            mqttc.stop_print()
+        elif cmd in ("t", "status"):
+            mqttc.request_status()
+        elif cmd in ("q", "quit"):
+            break
+        else:
+            print("Unknown command. Use p/r/s/t/q")
+
+        # Give MQTT time to receive response
+        time.sleep(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Test Bambu Cloud print via MQTT")
+    parser.add_argument(
+        "file",
+        nargs="?",
+        help="Path to .gcode.3mf or .3mf file to print",
+    )
+    parser.add_argument(
+        "--interactive", "-i",
+        action="store_true",
+        help="Enter interactive mode after starting print (pause/resume/stop)",
+    )
+    parser.add_argument(
+        "--status-only",
+        action="store_true",
+        help="Just connect and request printer status, don't print",
+    )
+    parser.add_argument(
+        "--no-upload",
+        action="store_true",
+        help="Skip upload — use file_url from a previous upload",
+    )
+    parser.add_argument(
+        "--file-url",
+        help="Pre-existing cloud file URL (skip upload)",
+    )
+    parser.add_argument(
+        "--use-ams",
+        action="store_true",
+        help="Enable AMS filament system",
+    )
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable debug logging",
+    )
+    args = parser.parse_args()
+
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    # --- Credentials ---
+    email = os.environ.get("BAMBU_EMAIL")
+    password = os.environ.get("BAMBU_PASSWORD")
+    if not email or not password:
+        print("Error: Set BAMBU_EMAIL and BAMBU_PASSWORD environment variables")
+        sys.exit(1)
+
+    # --- Step 1: Login ---
+    print("\n[1] Logging in...")
+    auth = cloud_login(email, password)
+    print(f"  Logged in as user {auth['user_id']}")
+
+    # --- Step 2: List devices ---
+    print("\n[2] Fetching devices...")
+    devices = cloud_get_devices(auth["access_token"])
+    if not devices:
+        print("  No printers found on this account!")
+        sys.exit(1)
+
+    for d in devices:
+        name = d.get("name", "unnamed")
+        dev_id = d.get("dev_id", "?")
+        online = "online" if d.get("online") else "offline"
+        model = d.get("dev_product_name", d.get("dev_model_name", "?"))
+        print(f"  {name} ({model}) — {dev_id} [{online}]")
+
+    device = select_device(devices)
+    device_id = device["dev_id"]
+    device_name = device.get("name", device_id)
+    print(f"  Selected: {device_name}")
+
+    # --- Step 3: Upload file ---
+    file_url = args.file_url
+    filename = "unknown.3mf"
+
+    if args.file and not args.no_upload and not file_url:
+        file_path = Path(args.file)
+        if not file_path.exists():
+            print(f"  Error: File not found: {file_path}")
+            sys.exit(1)
+        filename = file_path.name
+        print(f"\n[3] Uploading {filename}...")
+        file_url = cloud_upload_file(auth["access_token"], file_path)
+        print(f"  URL: {file_url}")
+    elif file_url:
+        filename = Path(file_url).name
+        print(f"\n[3] Using existing URL: {file_url}")
+    elif not args.status_only:
+        print("\n[3] No file specified — skipping upload")
+
+    # --- Step 4: Connect MQTT ---
+    print(f"\n[4] Connecting MQTT...")
+    mqttc = BambuCloudMQTT(auth["user_id"], auth["access_token"], device_id)
+    try:
+        mqttc.connect()
+
+        if args.status_only:
+            print("\n[5] Requesting printer status...")
+            mqttc.request_status()
+            print("  Waiting for status (5s)...")
+            time.sleep(5)
+            print("\n  Done.")
+            return
+
+        if file_url:
+            # --- Step 5: Start print ---
+            print(f"\n[5] Starting print: {filename}")
+            mqttc.start_print(
+                file_url=file_url,
+                filename=filename,
+                use_ams=args.use_ams,
+            )
+
+            # Wait for response
+            print("  Waiting for response (5s)...")
+            time.sleep(5)
+
+            if args.interactive:
+                interactive_loop(mqttc)
+        else:
+            print("\n[5] No file to print. Use --status-only to check printer status.")
+
+    except KeyboardInterrupt:
+        print("\n  Interrupted")
+    finally:
+        mqttc.disconnect()
+
+    print("\nDone.")
+
+
+if __name__ == "__main__":
+    main()
