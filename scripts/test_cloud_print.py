@@ -29,12 +29,13 @@ Usage:
     python scripts/test_cloud_print.py path/to/file.gcode.3mf --interactive
 
 Requirements:
-    pip install paho-mqtt requests
+    pip install paho-mqtt requests cryptography
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -43,6 +44,9 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 import paho.mqtt.client as mqtt
 import requests
@@ -247,6 +251,82 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
 MQTT_BROKER = "us.mqtt.bambulab.com"
 MQTT_PORT = 8883
 
+# ---------------------------------------------------------------------------
+# X.509 Command Signing
+#
+# Bambu's cloud MQTT broker requires critical commands (print start, pause,
+# resume, stop) to be signed with the Bambu Connect app's private key.
+# The key was publicly extracted in January 2025 and is embedded in every
+# copy of the Bambu Connect desktop app.
+#
+# Reference: https://hackaday.com/2025/01/19/bambu-connects-authentication-x-509-certificate-and-private-key-extracted/
+# Implementation based on: https://github.com/schwarztim/bambu-mcp
+# ---------------------------------------------------------------------------
+
+BAMBU_CERT_ID = "GLOF3813734089-524a37c80000c6a6a274a47b3281"
+
+BAMBU_PRIVATE_KEY_PEM = """\
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDQNp2NfkajwcWH
+PIqosa08P1ZwETPr1veZCMqieQxWtYw97wp+JCxX4yBrBcAwid7o7PHI9KQVzPRM
+f0uXspaDUdSljrfJ/YwGEz7+GJz4+ml1UbWXBePyzXW1+N2hIGGn7BcNuA0v8rMY
+uvVgiIIQNjLErgGcCWmMHLwsMMQ7LNprUZZKsSNB4HaQDH7cQZmYBN/O45np6l+K
+VuLdzXdDpZcOM7bNO6smev822WPGDuKBo1iVfQbUe10X4dCNwkBR3QGpScVvg8gg
+tRYZDYue/qc4Xaj806RZPttknWfxdvfZgoOmAiwnyQ5K3+mzNYHgQZAOC2ydkK4J
+s+ZizK3lAgMBAAECggEAKwEcyXyrWmdLRQNcIDuSbD8ouzzSXIOp4BHQyH337nDQ
+5nnY0PTns79VksU9TMktIS7PQZJF0brjOmmQU2SvcbAVG5y+mRmlMhwHhrPOuB4A
+ahrWRrsQubV1+n/MRttJUEWS/WJmVuDp3NHAnI+VTYPkOHs4GeJXynik5PutjAr3
+tYmr3kaw0Wo/hYAXTKsI/R5aenC7jH8ZSyVcZ/j+bOSH5sT5/JY122AYmkQOFE7s
+JA0EfYJaJEwiuBWKOfRLQVEHhOFodUBZdGQcWeW3uFb88aYKN8QcKTO8/f6e4r8w
+QojgK3QMj1zmfS7xid6XCOVa17ary2hZHAEPnjcigQKBgQDQnm4TlbVTsM+CbFUS
+1rOIJRzPdnH3Y7x3IcmVKZt81eNktsdu56A4U6NEkFQqk4tVTT4TYja/hwgXmm6w
+J+w0WwZd445Bxj8PmaEr6Z/NSMYbCsi8pRelKWmlIMwD2YhtY/1xXD37zpOgN8oQ
+ryTKZR2gljbPxdfhKS7YerLp2wKBgQD/gJt3Ds69j1gMDLnnPctjmhsPRXh7PQ0e
+E9lqgFkx/vNuCuyRs6ymic2rBZmkdlpjsTJFmz1bwOzIvSRoH6kp0Mfyo6why5kr
+upDf7zz+hlvaFewme8aDeV3ex9Wvt73D66nwAy5ABOgn+66vZJeo0Iq/tnCwK3a/
+evTL9BOzPwKBgEUi7AnziEc3Bl4Lttnqa08INZcPgs9grzmv6dVUF6J0Y8qhxFAd
+1Pw1w5raVfpSMU/QrGzSFKC+iFECLgKVCHOFYwPEgQWNRKLP4BjkcMAgiP63QTU7
+ZS2oHsnJp7Ly6YKPK5Pg5O3JVSU4t+91i7TDc+EfRwTuZQ/KjSrS5u4XAoGBAP06
+v9reSDVELuWyb0Yqzrxm7k7ScbjjJ28aCTAvCTguEaKNHS7DP2jHx5mrMT35N1j7
+NHIcjFG2AnhqTf0M9CJHlQR9B4tvON5ISHJJsNAq5jpd4/G4V2XTEiBNOxKvL1tQ
+5NrGrD4zHs0R+25GarGcDwg3j7RrP4REHv9NZ4ENAoGAY7Nuz6xKu2XUwuZtJP7O
+kjsoDS7bjP95ddrtsRq5vcVjJ04avnjsr+Se9WDA//t7+eSeHjm5eXD7u0NtdqZo
+WtSm8pmWySOPXMn9QQmdzKHg1NOxer//f1KySVunX1vftTStjsZH7dRCtBEePcqg
+z5Av6MmEFDojtwTqvEZuhBM=
+-----END PRIVATE KEY-----"""
+
+_private_key = serialization.load_pem_private_key(
+    BAMBU_PRIVATE_KEY_PEM.encode(), password=None
+)
+
+
+def sign_command(command: dict) -> dict:
+    """Sign an MQTT command with the Bambu Connect X.509 private key.
+
+    Wraps the command with a header containing an RSA-SHA256 signature.
+    The cloud broker validates this signature for critical operations
+    (print start, pause, resume, stop).
+    """
+    message_bytes = json.dumps(command).encode("utf-8")
+
+    signature = _private_key.sign(
+        message_bytes,
+        padding.PKCS1v15(),
+        hashes.SHA256(),
+    )
+    signature_b64 = base64.b64encode(signature).decode("ascii")
+
+    return {
+        **command,
+        "header": {
+            "sign_ver": "v1.0",
+            "sign_alg": "RSA_SHA256",
+            "sign_string": signature_b64,
+            "cert_id": BAMBU_CERT_ID,
+            "payload_len": len(message_bytes),
+        },
+    }
+
 
 class BambuCloudMQTT:
     """Minimal MQTT client for Bambu Cloud printer commands."""
@@ -333,8 +413,9 @@ class BambuCloudMQTT:
         return str(self._seq)
 
     def _publish(self, command: dict):
-        """Publish a command and log it."""
-        payload = json.dumps(command)
+        """Sign and publish a command."""
+        signed = sign_command(command)
+        payload = json.dumps(signed)
         log.debug(">> %s", payload)
         self.client.publish(self.request_topic, payload)
 
