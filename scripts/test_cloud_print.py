@@ -192,13 +192,19 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
     filename = file_path.name
 
     # Step 1: Get a signed upload URL
-    resp = requests.get(
-        f"{API_BASE}/v1/iot-service/api/user/upload",
-        headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
-        params={"filename": filename, "size": file_size},
-    )
+    upload_endpoint = f"{API_BASE}/v1/iot-service/api/user/upload"
+    auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
+    params = {"filename": filename, "size": file_size}
+    print(f"  GET {upload_endpoint}")
+    print(f"  params: {params}")
+
+    resp = requests.get(upload_endpoint, headers=auth_headers, params=params)
+    print(f"  Response: {resp.status_code}")
+    if resp.status_code != 200:
+        print(f"  Body: {resp.text[:500]}")
     resp.raise_for_status()
     upload_data = resp.json()
+    print(f"  Upload data keys: {list(upload_data.keys())}")
 
     # Response may have upload_url directly, or a urls array
     upload_url = upload_data.get("upload_url")
