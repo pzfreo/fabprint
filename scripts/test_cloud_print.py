@@ -253,14 +253,21 @@ def cloud_notify_upload(token: str, upload_ticket: str, max_retries: int = 5) ->
     auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     notify_url = f"{API_BASE}/v1/iot-service/api/user/notification"
 
-    # Try multiple PUT body variants — the exact format is proprietary
+    # Try multiple PUT body variants — the exact format is proprietary.
+    # Findings so far:
+    #   "upload": True       → "type mismatch"  (found field, wrong type)
+    #   "upload": "<string>" → "type mismatch"  (found field, wrong type)
+    #   no "upload" field    → "upload is not set"
+    # So "upload" must be an object, array, or integer.
     put_variants = [
-        # Variant 1: "upload" field in body with ticket in query params
-        {"params": {"action": "upload", "ticket": upload_ticket}, "json": {"upload": True}},
-        # Variant 2: all fields in JSON body
-        {"json": {"action": "upload", "ticket": upload_ticket}},
-        # Variant 3: all fields in body with upload as string
-        {"json": {"upload": upload_ticket}},
+        # Variant 1: upload as object with ticket details
+        {"json": {"upload": {"status": "complete", "ticket": upload_ticket}}},
+        # Variant 2: upload as object with just ticket
+        {"json": {"upload": {"ticket": upload_ticket}}},
+        # Variant 3: upload as integer (1 = complete)
+        {"json": {"upload": 1, "ticket": upload_ticket}},
+        # Variant 4: upload as empty object, ticket separate
+        {"json": {"upload": {}, "action": "upload", "ticket": upload_ticket}},
     ]
 
     for i, variant in enumerate(put_variants):
@@ -269,25 +276,21 @@ def cloud_notify_upload(token: str, upload_ticket: str, max_retries: int = 5) ->
         if put_resp.ok:
             break
 
-    # Poll GET for confirmation
-    for attempt in range(max_retries):
+    # Poll GET — only 2 attempts since notification may not be required
+    for attempt in range(2):
         time.sleep(2)
         resp = requests.get(
             notify_url,
             headers=auth_headers,
             params={"action": "upload", "ticket": upload_ticket},
         )
-        print(f"  GET poll {attempt + 1}/{max_retries}: {resp.status_code} — {resp.text[:300]}")
+        print(f"  GET poll {attempt + 1}/2: {resp.status_code} — {resp.text[:300]}")
 
         if resp.ok:
             data = resp.json()
-            status = data.get("status", "")
-            if status and status.lower() not in ("processing", "pending"):
-                return data
-            if not status:
-                return data
+            return data
 
-    print("  Warning: Notification polling did not succeed — continuing anyway")
+    print("  Notification not confirmed — continuing to task creation anyway")
     return {}
 
 
