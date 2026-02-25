@@ -321,6 +321,7 @@ def cloud_create_task(
         "designId": 0,
         "amsDetailMapping": [],
         "mode": "cloud_file",
+        "cover": None,
     }
 
     task_url = f"{API_BASE}/v1/user-service/my/task"
