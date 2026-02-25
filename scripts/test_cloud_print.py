@@ -378,7 +378,7 @@ def cloud_create_task(
     profile_id: str = "0",
     cover_url: str = "",
 ) -> dict:
-    """Create a cloud print task. Returns task info including task_id."""
+    """Create a cloud print task. Returns task info including task_id and subtask_id."""
     # profileId must be an integer, not a string
     try:
         profile_id_int = int(profile_id)
@@ -387,49 +387,39 @@ def cloud_create_task(
 
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     task_url = f"{API_BASE}/v1/user-service/my/task"
-    the_cover = cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png"
 
-    # Binary search: try removing one field at a time to find which VALUE
-    # causes the silent 400. If removing a field gives back a proper error
-    # message ("field X is not set"), that field's value was the problem.
-    variants = {
-        "full": {
-            "deviceId": device_id, "title": filename, "modelId": model_id,
-            "profileId": profile_id_int, "plateIndex": 1, "designId": 0,
-            "cover": the_cover,
-        },
-        "no_designId": {
-            "deviceId": device_id, "title": filename, "modelId": model_id,
-            "profileId": profile_id_int, "plateIndex": 1,
-            "cover": the_cover,
-        },
-        "no_cover": {
-            "deviceId": device_id, "title": filename, "modelId": model_id,
-            "profileId": profile_id_int, "plateIndex": 1, "designId": 0,
-        },
-        "no_plateIndex": {
-            "deviceId": device_id, "title": filename, "modelId": model_id,
-            "profileId": profile_id_int, "designId": 0,
-            "cover": the_cover,
-        },
-        "str_designId": {
-            "deviceId": device_id, "title": filename, "modelId": model_id,
-            "profileId": profile_id_int, "plateIndex": 1, "designId": "0",
-            "cover": the_cover,
-        },
+    payload = {
+        "deviceId": device_id,
+        "title": filename,
+        "modelId": model_id,
+        "profileId": profile_id_int,
+        "plateIndex": 1,
+        "designId": 0,
+        "cover": cover_url,
+        "amsDetailMapping": [],
+        "mode": "cloud_file",
     }
 
-    for name, payload in variants.items():
-        print(f"\n  [{name}] {json.dumps(payload)[:300]}")
-        resp = requests.post(task_url, headers=task_headers, json=payload)
-        status = resp.status_code
-        body = resp.text[:300] if resp.text else "(empty)"
-        print(f"  -> {status}: {body}")
-        if resp.ok:
-            data = resp.json()
-            print(f"  SUCCESS with [{name}]!")
-            print(f"  Task data: {json.dumps(data, indent=2)[:500]}")
-            return data
+    print(f"  POST {task_url}")
+    print(f"  Payload: {json.dumps(payload)[:500]}")
+    resp = requests.post(task_url, headers=task_headers, json=payload)
+    status = resp.status_code
+    body = resp.text[:500] if resp.text else "(empty)"
+    print(f"  -> {status}: {body}")
+
+    if resp.ok:
+        data = resp.json()
+        print(f"  Task created: {json.dumps(data, indent=2)[:500]}")
+        return data
+
+    # If it fails, also try without designId (it may not be needed)
+    print("  Retrying without designId...")
+    payload2 = {k: v for k, v in payload.items() if k != "designId"}
+    resp2 = requests.post(task_url, headers=task_headers, json=payload2)
+    body2 = resp2.text[:500] if resp2.text else "(empty)"
+    print(f"  -> {resp2.status_code}: {body2}")
+    if resp2.ok:
+        return resp2.json()
 
     return {}
 
@@ -683,6 +673,7 @@ class BambuCloudMQTT:
         file_url: str,
         filename: str,
         task_id: str = "0",
+        subtask_id: str = "0",
         project_id: str = "0",
         profile_id: str = "0",
         plate_index: int = 1,
@@ -691,6 +682,7 @@ class BambuCloudMQTT:
         flow_cali: bool = True,
         vibration_cali: bool = True,
         timelapse: bool = False,
+        md5: str = "",
     ):
         """Send project_file command to start a print."""
         cmd = {
@@ -701,11 +693,11 @@ class BambuCloudMQTT:
                 "project_id": project_id,
                 "profile_id": profile_id,
                 "task_id": task_id,
-                "subtask_id": "0",
+                "subtask_id": subtask_id,
                 "subtask_name": filename,
                 "file": "",
                 "url": file_url,
-                "md5": "",
+                "md5": md5,
                 "timelapse": timelapse,
                 "bed_type": "auto",
                 "bed_levelling": bed_levelling,
@@ -718,6 +710,7 @@ class BambuCloudMQTT:
         }
         print(f"  >> start_print: {filename}")
         print(f"  >> url: {file_url[:100]}...")
+        print(f"  >> task_id={task_id}, subtask_id={subtask_id}")
         self._publish(cmd)
 
     def pause_print(self):
@@ -878,7 +871,9 @@ def main():
     filename = "unknown.3mf"
     model_id = "0"
     profile_id = "0"
+    project_id = "0"
     cover_url = ""
+    download_md5 = ""
 
     if args.file and not args.no_upload and not file_url:
         file_path = Path(args.file)
@@ -927,51 +922,106 @@ def main():
             print(f"\n[3c] No upload_ticket — skipping notification")
             time.sleep(3)
 
-        # Step 3d: Fetch project details for download URL and cover
-        print(f"\n[3d] Fetching project details...")
+        # Step 3d: Poll project details until profiles are populated
+        # The server needs time to process the 3MF after upload.
+        # We poll until profiles[0].url is available (the download URL).
+        print(f"\n[3d] Polling project details (waiting for server processing)...")
         auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {auth['access_token']}"}
-        proj_resp = requests.get(
-            f"{API_BASE}/v1/iot-service/api/user/project/{project_id}",
-            headers=auth_headers,
-        )
-        print(f"  Project details: {proj_resp.status_code}")
         cover_url = ""
         download_url = ""
-        if proj_resp.ok:
+        download_md5 = ""
+        profile_id_from_server = ""
+
+        for poll in range(15):  # up to ~30 seconds
+            proj_resp = requests.get(
+                f"{API_BASE}/v1/iot-service/api/user/project/{project_id}",
+                headers=auth_headers,
+            )
+            if not proj_resp.ok:
+                print(f"  Poll {poll+1}: HTTP {proj_resp.status_code}")
+                time.sleep(2)
+                continue
+
             proj_detail = proj_resp.json()
-
-            # Check for download_url (the URL the printer should use)
-            download_url = proj_detail.get("download_url") or ""
-            download_md5 = proj_detail.get("download_md5") or ""
-            if download_url:
-                print(f"  download_url: {download_url[:120]}...")
-            if download_md5:
-                print(f"  download_md5: {download_md5}")
-
             profiles = proj_detail.get("profiles", []) or []
-            for prof in profiles:
-                # Check profile-level download URL
-                prof_url = prof.get("url") or prof.get("download_url") or ""
+
+            if profiles:
+                prof = profiles[0]
+                prof_url = prof.get("url") or ""
+                prof_md5 = prof.get("md5") or ""
+                prof_id = prof.get("profile_id") or ""
+
                 if prof_url:
-                    print(f"  Profile download URL: {prof_url[:120]}...")
-                    if not download_url:
-                        download_url = prof_url
+                    download_url = prof_url
+                    download_md5 = prof_md5
+                    if prof_id:
+                        profile_id_from_server = str(prof_id)
+                    print(f"  Poll {poll+1}: Profile ready!")
+                    print(f"  profile_id: {profile_id_from_server}")
+                    print(f"  url: {download_url[:120]}...")
+                    if download_md5:
+                        print(f"  md5: {download_md5}")
 
-                context = prof.get("context", {}) or {}
-                # Derive cover from config
-                configs = context.get("configs", []) or []
-                for cfg in configs:
-                    cfg_url = cfg.get("url", "")
-                    cfg_name = cfg.get("name", "")
-                    if cfg_url and cfg_name == "plate_1.json":
-                        cover_url = cfg_url.replace("plate_1.json", "plate_1.png")
-                        print(f"  Derived cover: {cover_url[:120]}...")
-                        break
+                    # Extract cover from plates[0].thumbnail.url
+                    context = prof.get("context", {}) or {}
+                    plates = context.get("plates", []) or []
+                    if plates:
+                        thumb = plates[0].get("thumbnail", {}) or {}
+                        thumb_url = thumb.get("url") or ""
+                        if thumb_url:
+                            cover_url = thumb_url
+                            print(f"  cover: {cover_url[:120]}...")
 
-        # If we got a download_url from the project, use that for MQTT
-        # (this is the or-cloud-model-prod URL the printer can access)
+                    # If no thumbnail in plates, try deriving from configs
+                    if not cover_url:
+                        configs = context.get("configs", []) or []
+                        for cfg in configs:
+                            cfg_url = cfg.get("url", "")
+                            cfg_name = cfg.get("name", "")
+                            if cfg_url and "plate_1" in cfg_name:
+                                cover_url = cfg_url.rsplit(".", 1)[0] + ".png"
+                                print(f"  cover (derived): {cover_url[:120]}...")
+                                break
+
+                    break
+                else:
+                    print(f"  Poll {poll+1}: Profile exists but url not ready yet...")
+            else:
+                print(f"  Poll {poll+1}: No profiles yet...")
+
+            time.sleep(2)
+
+        # Update profile_id if server gave us one
+        if profile_id_from_server:
+            profile_id = profile_id_from_server
+
+        # Also try the profile details endpoint directly
+        if not download_url and profile_id != "0" and model_id != "0":
+            print(f"\n  Trying profile endpoint: profile_id={profile_id}, model_id={model_id}")
+            prof_resp = requests.get(
+                f"{API_BASE}/v1/iot-service/api/user/profile/{profile_id}",
+                headers=auth_headers,
+                params={"model_id": model_id},
+            )
+            print(f"  Profile endpoint: {prof_resp.status_code}")
+            if prof_resp.ok:
+                prof_data = prof_resp.json()
+                download_url = prof_data.get("url") or ""
+                download_md5 = prof_data.get("md5") or ""
+                if download_url:
+                    print(f"  url: {download_url[:120]}...")
+
+                context = prof_data.get("context", {}) or {}
+                plates = context.get("plates", []) or []
+                if plates and not cover_url:
+                    thumb = plates[0].get("thumbnail", {}) or {}
+                    cover_url = thumb.get("url") or ""
+                    if cover_url:
+                        print(f"  cover: {cover_url[:120]}...")
+
+        # Use the profile download URL for MQTT (not the S3 upload URL)
         if download_url:
-            print(f"  Using download_url for print: {download_url[:120]}...")
+            print(f"  Using profile download_url for print: {download_url[:120]}...")
             file_url = download_url
 
     elif file_url:
@@ -995,38 +1045,47 @@ def main():
             return
 
         if file_url:
-            # --- Step 5: Start print via MQTT ---
-            # Skip task creation (still returning silent 400) and try
-            # MQTT-only with real project_id and profile_id.
-            # The printer may just need the correct IDs to authorize
-            # downloading from cloud storage.
-            print(f"\n[5] Starting print via MQTT (project_id={project_id}, profile_id={profile_id})")
-            print(f"  url: {file_url[:120]}...")
-            mqttc.start_print(
-                file_url=file_url,
-                filename=filename,
-                task_id="0",
-                project_id=project_id,
-                profile_id=profile_id,
-                use_ams=args.use_ams,
-            )
+            # --- Step 5: Create task (must happen BEFORE MQTT) ---
+            task_id = "0"
+            subtask_id = "0"
 
-            # Wait and check status
-            print("  Waiting for response (10s)...")
-            time.sleep(10)
-
-            # Also try task creation in background (don't block on it)
             if cover_url:
-                print(f"\n[5.5] Also trying task creation...")
+                print(f"\n[5] Creating cloud print task...")
                 task_data = cloud_create_task(
                     auth["access_token"], device_id, filename, model_id, profile_id, cover_url
                 )
                 if task_data.get("id"):
-                    print(f"  Task created! id={task_data['id']}")
+                    task_id = str(task_data["id"])
+                    subtask_id = str(task_data.get("subtask_id", "0"))
+                    print(f"  task_id={task_id}, subtask_id={subtask_id}")
+                else:
+                    print("  Task creation failed — trying MQTT with task_id=0")
+            else:
+                print(f"\n[5] No cover URL — skipping task creation, using task_id=0")
+
+            # --- Step 6: Start print via MQTT ---
+            print(f"\n[6] Starting print via MQTT")
+            print(f"  project_id={project_id}, profile_id={profile_id}")
+            print(f"  task_id={task_id}, subtask_id={subtask_id}")
+            print(f"  url: {file_url[:120]}...")
+            mqttc.start_print(
+                file_url=file_url,
+                filename=filename,
+                task_id=task_id,
+                subtask_id=subtask_id,
+                project_id=project_id,
+                profile_id=profile_id,
+                use_ams=args.use_ams,
+                md5=download_md5,
+            )
 
             # Wait for response
-            print("  Waiting for response (10s)...")
-            time.sleep(10)
+            print("  Waiting for response (15s)...")
+            time.sleep(15)
+
+            # Request status to see if print started
+            mqttc.request_status()
+            time.sleep(5)
 
             if args.interactive:
                 interactive_loop(mqttc)
