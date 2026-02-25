@@ -208,7 +208,7 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
         print(f"  Body: {resp.text[:500]}")
     resp.raise_for_status()
     upload_data = resp.json()
-    print(f"  Upload data keys: {list(upload_data.keys())}")
+    print(f"  Upload response: {json.dumps(upload_data, indent=2)[:1000]}")
 
     # Response may have upload_url directly, or a urls array
     upload_url = upload_data.get("upload_url")
@@ -241,7 +241,10 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
         )
 
     print(f"  Uploaded {filename} ({file_size} bytes)")
-    return upload_url.split("?")[0]  # Return URL without query params
+
+    # Return the full URL including query params — the printer needs the
+    # S3 signed URL parameters to download the file from cloud storage
+    return upload_url
 
 
 # ---------------------------------------------------------------------------
