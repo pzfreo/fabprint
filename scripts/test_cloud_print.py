@@ -192,26 +192,43 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
     filename = file_path.name
 
     # Step 1: Get a signed upload URL
-    resp = requests.put(
-        f"{API_BASE}/v1/storage/sign",
+    resp = requests.get(
+        f"{API_BASE}/v1/iot-service/api/user/upload",
         headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
-        json={"fileName": filename, "fileSize": file_size, "type": "application/octet-stream"},
+        params={"filename": filename, "size": file_size},
     )
     resp.raise_for_status()
     upload_data = resp.json()
 
-    upload_url = upload_data.get("url")
+    # Response may have upload_url directly, or a urls array
+    upload_url = upload_data.get("upload_url")
+    size_url = None
+
+    if not upload_url:
+        urls = upload_data.get("urls", [])
+        for entry in urls:
+            if entry.get("type") == "filename":
+                upload_url = entry.get("url")
+            elif entry.get("type") == "size":
+                size_url = entry.get("url")
+
     if not upload_url:
         raise RuntimeError(f"No upload URL returned: {upload_data}")
 
-    # Step 2: PUT the file to S3
-    with open(file_path, "rb") as f:
-        put_resp = requests.put(
-            upload_url,
-            data=f,
-            headers={"Content-Type": "application/octet-stream"},
-        )
+    # Step 2: PUT the file to S3 (empty headers — signed URLs can fail
+    # if extra headers are included that weren't part of the signature)
+    file_content = file_path.read_bytes()
+    put_resp = requests.put(upload_url, data=file_content, headers={}, timeout=300)
     put_resp.raise_for_status()
+
+    # Step 3: Upload size metadata if a size URL was provided
+    if size_url:
+        requests.put(
+            size_url,
+            data=str(file_size).encode(),
+            headers={"Content-Type": "text/plain"},
+            timeout=30,
+        )
 
     print(f"  Uploaded {filename} ({file_size} bytes)")
     return upload_url.split("?")[0]  # Return URL without query params
