@@ -362,10 +362,9 @@ def cloud_upload_cover(token: str, file_path: Path, plate_index: int = 1) -> str
 
     put_resp = requests.put(thumb_upload_url, data=thumbnail_data, headers={}, timeout=60)
     if put_resp.ok:
-        # Return the URL without query params (permanent S3 path)
-        cover_url = thumb_upload_url.split("?")[0]
-        print(f"  Uploaded thumbnail: {cover_url}")
-        return cover_url
+        # Return full signed URL — the server may need query params for access
+        print(f"  Uploaded thumbnail: {thumb_upload_url[:120]}...")
+        return thumb_upload_url
 
     print(f"  Thumbnail upload failed: {put_resp.status_code}")
     return ""
@@ -402,9 +401,20 @@ def cloud_create_task(
 
     print(f"  Task payload: {json.dumps(payload)[:500]}")
     resp = requests.post(task_url, headers=task_headers, json=payload)
-    print(f"  Response: {resp.status_code}")
-    if resp.text:
-        print(f"  Body: {resp.text[:500]}")
+    print(f"  Response: {resp.status_code} (content-length: {resp.headers.get('Content-Length', '?')})")
+    print(f"  Body: '{resp.text[:500]}'")
+
+    if not resp.ok:
+        # The cover URL may be invalid — try without it as a test
+        payload_no_cover = {**payload, "cover": "https://public-cdn.bblmw.com/default.png"}
+        print(f"  Retrying with placeholder cover...")
+        resp2 = requests.post(task_url, headers=task_headers, json=payload_no_cover)
+        print(f"  Response: {resp2.status_code} (content-length: {resp2.headers.get('Content-Length', '?')})")
+        print(f"  Body: '{resp2.text[:500]}'")
+        if resp2.ok:
+            data = resp2.json()
+            print(f"  Task data: {json.dumps(data, indent=2)[:500]}")
+            return data
 
     if resp.ok:
         data = resp.json()
