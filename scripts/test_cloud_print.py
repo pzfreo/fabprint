@@ -247,18 +247,30 @@ def cloud_create_project(token: str, filename: str) -> dict:
 def cloud_notify_upload(token: str, upload_ticket: str, max_retries: int = 10) -> dict:
     """Notify Bambu's server that the S3 upload is complete and poll for confirmation.
 
-    The notification endpoint confirms the upload was processed. It may need
-    to be polled multiple times while the server processes the file.
+    The flow is:
+    1. PUT to notification endpoint to register the upload completion
+    2. GET to poll until the server confirms processing is done
     """
     auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
+    notify_url = f"{API_BASE}/v1/iot-service/api/user/notification"
 
+    # Step 1: PUT to register the upload completion (creates the action key)
+    put_resp = requests.put(
+        notify_url,
+        headers=auth_headers,
+        params={"action": "upload", "ticket": upload_ticket},
+    )
+    print(f"  PUT notification: {put_resp.status_code}")
+    print(f"  Body: {put_resp.text[:500]}")
+
+    # Step 2: Poll GET until processing is confirmed
     for attempt in range(max_retries):
         resp = requests.get(
-            f"{API_BASE}/v1/iot-service/api/user/notification",
+            notify_url,
             headers=auth_headers,
             params={"action": "upload", "ticket": upload_ticket},
         )
-        print(f"  Notification poll {attempt + 1}/{max_retries}: {resp.status_code}")
+        print(f"  GET notification poll {attempt + 1}/{max_retries}: {resp.status_code}")
         print(f"  Body: {resp.text[:500]}")
 
         if resp.ok:
@@ -267,7 +279,7 @@ def cloud_notify_upload(token: str, upload_ticket: str, max_retries: int = 10) -
             status = data.get("status", "")
             if status and status.lower() not in ("processing", "pending"):
                 return data
-            # Even if no explicit status, a 200 response may mean success
+            # A 200 with no explicit status likely means success
             if not status:
                 return data
 
@@ -278,15 +290,25 @@ def cloud_notify_upload(token: str, upload_ticket: str, max_retries: int = 10) -
     return {}
 
 
-def cloud_create_task(token: str, device_id: str, filename: str, model_id: str, profile_id: str = "0") -> dict:
+def cloud_create_task(
+    token: str,
+    device_id: str,
+    filename: str,
+    model_id: str,
+    profile_id: str = "0",
+    file_url: str = "",
+) -> dict:
     """Create a cloud print task. Returns task info including task_id."""
     payload = {
         "deviceId": device_id,
         "title": filename,
         "modelId": model_id,
         "profileId": profile_id,
+        "cover": "",
     }
-    print(f"  Task payload: {json.dumps(payload)}")
+    if file_url:
+        payload["url"] = file_url
+    print(f"  Task payload: {json.dumps(payload)[:500]}")
     resp = requests.post(
         f"{API_BASE}/v1/user-service/my/task",
         headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
@@ -820,7 +842,7 @@ def main():
             # --- Step 4.5: Create cloud task ---
             print(f"\n[4.5] Creating cloud task (modelId={model_id})...")
             task_data = cloud_create_task(
-                auth["access_token"], device_id, filename, model_id, profile_id
+                auth["access_token"], device_id, filename, model_id, profile_id, file_url
             )
             task_id = str(task_data.get("id", "0"))
 
