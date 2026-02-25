@@ -386,55 +386,50 @@ def cloud_create_task(
         profile_id_int = 0
 
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
+    task_url = f"{API_BASE}/v1/user-service/my/task"
+    the_cover = cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png"
 
-    payload = {
-        "deviceId": device_id,
-        "title": filename,
-        "modelId": model_id,
-        "profileId": profile_id_int,
-        "plateIndex": 1,
-        "designId": 0,
-        "cover": cover_url if cover_url else "https://public-cdn.bblmw.com/default_cover.png",
+    # Binary search: try removing one field at a time to find which VALUE
+    # causes the silent 400. If removing a field gives back a proper error
+    # message ("field X is not set"), that field's value was the problem.
+    variants = {
+        "full": {
+            "deviceId": device_id, "title": filename, "modelId": model_id,
+            "profileId": profile_id_int, "plateIndex": 1, "designId": 0,
+            "cover": the_cover,
+        },
+        "no_designId": {
+            "deviceId": device_id, "title": filename, "modelId": model_id,
+            "profileId": profile_id_int, "plateIndex": 1,
+            "cover": the_cover,
+        },
+        "no_cover": {
+            "deviceId": device_id, "title": filename, "modelId": model_id,
+            "profileId": profile_id_int, "plateIndex": 1, "designId": 0,
+        },
+        "no_plateIndex": {
+            "deviceId": device_id, "title": filename, "modelId": model_id,
+            "profileId": profile_id_int, "designId": 0,
+            "cover": the_cover,
+        },
+        "str_designId": {
+            "deviceId": device_id, "title": filename, "modelId": model_id,
+            "profileId": profile_id_int, "plateIndex": 1, "designId": "0",
+            "cover": the_cover,
+        },
     }
 
-    # Try both singular and plural endpoints
-    for endpoint in [
-        f"{API_BASE}/v1/user-service/my/task",
-        f"{API_BASE}/v1/user-service/my/tasks",
-    ]:
-        print(f"  POST {endpoint.split('.com')[1]}")
-        print(f"  Payload: {json.dumps(payload)[:400]}")
-        resp = requests.post(endpoint, headers=task_headers, json=payload)
-        print(f"  Response: {resp.status_code}")
-        if resp.text:
-            print(f"  Body: {resp.text[:500]}")
+    for name, payload in variants.items():
+        print(f"\n  [{name}] {json.dumps(payload)[:300]}")
+        resp = requests.post(task_url, headers=task_headers, json=payload)
+        status = resp.status_code
+        body = resp.text[:300] if resp.text else "(empty)"
+        print(f"  -> {status}: {body}")
         if resp.ok:
             data = resp.json()
+            print(f"  SUCCESS with [{name}]!")
             print(f"  Task data: {json.dumps(data, indent=2)[:500]}")
             return data
-        # If we get a non-400 error on the first endpoint, try the next
-        # If we get a proper error message, stop
-        if resp.status_code != 400 or resp.text:
-            continue
-
-    # Last resort: try with minimal headers (no slicer headers, just auth + content-type)
-    print("\n  Trying with minimal headers...")
-    minimal_headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    resp = requests.post(
-        f"{API_BASE}/v1/user-service/my/task",
-        headers=minimal_headers,
-        json=payload,
-    )
-    print(f"  Response: {resp.status_code}")
-    if resp.text:
-        print(f"  Body: {resp.text[:500]}")
-    if resp.ok:
-        data = resp.json()
-        print(f"  Task data: {json.dumps(data, indent=2)[:500]}")
-        return data
 
     return {}
 
