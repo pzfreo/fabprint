@@ -300,11 +300,16 @@ def cloud_create_task(
     file_url: str = "",
 ) -> dict:
     """Create a cloud print task. Returns task info including task_id."""
+    # profileId must be an integer, not a string
+    try:
+        profile_id_int = int(profile_id)
+    except (ValueError, TypeError):
+        profile_id_int = 0
     payload = {
         "deviceId": device_id,
         "title": filename,
         "modelId": model_id,
-        "profileId": profile_id,
+        "profileId": profile_id_int,
         "cover": "",
     }
     if file_url:
