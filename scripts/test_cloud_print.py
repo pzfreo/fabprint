@@ -379,6 +379,8 @@ def cloud_create_task(
     cover_url: str = "",
 ) -> dict:
     """Create a cloud print task. Returns task info including task_id and subtask_id."""
+    from urllib.parse import urlparse, urlunparse
+
     # profileId must be an integer, not a string
     try:
         profile_id_int = int(profile_id)
@@ -388,38 +390,66 @@ def cloud_create_task(
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     task_url = f"{API_BASE}/v1/user-service/my/task"
 
-    payload = {
+    # Try multiple cover URL formats — the signed URL with query params
+    # might not be accepted. Also try the base URL without query params.
+    cover_variants = []
+    if cover_url:
+        cover_variants.append(("signed", cover_url))
+        # Strip query params (AWS signature)
+        parsed = urlparse(cover_url)
+        bare_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+        if bare_url != cover_url:
+            cover_variants.append(("bare", bare_url))
+
+    if not cover_variants:
+        cover_variants.append(("empty", ""))
+
+    for cover_label, cover_val in cover_variants:
+        payload = {
+            "deviceId": device_id,
+            "title": filename,
+            "modelId": model_id,
+            "profileId": profile_id_int,
+            "plateIndex": 1,
+            "designId": 0,
+            "cover": cover_val,
+            "amsDetailMapping": [],
+            "mode": "cloud_file",
+        }
+
+        print(f"\n  [{cover_label}] POST {task_url}")
+        print(f"  cover: {cover_val[:150]}...")
+        resp = requests.post(task_url, headers=task_headers, json=payload)
+        status = resp.status_code
+        body = resp.text[:500] if resp.text else "(empty)"
+        print(f"  -> {status}: {body}")
+        if status != 200:
+            # Print response headers for debugging
+            interesting = {k: v for k, v in resp.headers.items()
+                          if k.lower() in ("content-type", "x-request-id", "x-error", "x-bbl-error")}
+            if interesting:
+                print(f"  headers: {interesting}")
+
+        if resp.ok:
+            data = resp.json()
+            print(f"  Task created: {json.dumps(data, indent=2)[:500]}")
+            return data
+
+    # Last resort: try without cover, designId, mode, amsDetailMapping
+    # to see what error we get (helps diagnose which field is wrong)
+    print("\n  [minimal] Trying minimal payload...")
+    minimal = {
         "deviceId": device_id,
         "title": filename,
         "modelId": model_id,
         "profileId": profile_id_int,
         "plateIndex": 1,
-        "designId": 0,
-        "cover": cover_url,
-        "amsDetailMapping": [],
-        "mode": "cloud_file",
     }
-
-    print(f"  POST {task_url}")
-    print(f"  Payload: {json.dumps(payload)[:500]}")
-    resp = requests.post(task_url, headers=task_headers, json=payload)
-    status = resp.status_code
+    resp = requests.post(task_url, headers=task_headers, json=minimal)
     body = resp.text[:500] if resp.text else "(empty)"
-    print(f"  -> {status}: {body}")
-
+    print(f"  -> {resp.status_code}: {body}")
     if resp.ok:
-        data = resp.json()
-        print(f"  Task created: {json.dumps(data, indent=2)[:500]}")
-        return data
-
-    # If it fails, also try without designId (it may not be needed)
-    print("  Retrying without designId...")
-    payload2 = {k: v for k, v in payload.items() if k != "designId"}
-    resp2 = requests.post(task_url, headers=task_headers, json=payload2)
-    body2 = resp2.text[:500] if resp2.text else "(empty)"
-    print(f"  -> {resp2.status_code}: {body2}")
-    if resp2.ok:
-        return resp2.json()
+        return resp.json()
 
     return {}
 
