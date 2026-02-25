@@ -399,22 +399,28 @@ def cloud_create_task(
     task_url = f"{API_BASE}/v1/user-service/my/task"
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
 
+    # First, fetch existing tasks to see what a real task looks like
+    print("  Fetching existing tasks for reference...")
+    tasks_resp = requests.get(task_url, headers=task_headers)
+    if tasks_resp.ok:
+        tasks_data = tasks_resp.json()
+        if isinstance(tasks_data, list) and tasks_data:
+            print(f"  Example task: {json.dumps(tasks_data[0], indent=2)[:800]}")
+        elif isinstance(tasks_data, dict):
+            hits = tasks_data.get("hits", tasks_data.get("tasks", []))
+            if hits:
+                print(f"  Example task: {json.dumps(hits[0], indent=2)[:800]}")
+            else:
+                print(f"  Tasks response: {json.dumps(tasks_data)[:500]}")
+        else:
+            print(f"  Tasks response: {tasks_resp.text[:500]}")
+    else:
+        print(f"  Tasks GET: {tasks_resp.status_code} — {tasks_resp.text[:300]}")
+
     print(f"  Task payload: {json.dumps(payload)[:500]}")
     resp = requests.post(task_url, headers=task_headers, json=payload)
     print(f"  Response: {resp.status_code} (content-length: {resp.headers.get('Content-Length', '?')})")
     print(f"  Body: '{resp.text[:500]}'")
-
-    if not resp.ok:
-        # The cover URL may be invalid — try without it as a test
-        payload_no_cover = {**payload, "cover": "https://public-cdn.bblmw.com/default.png"}
-        print(f"  Retrying with placeholder cover...")
-        resp2 = requests.post(task_url, headers=task_headers, json=payload_no_cover)
-        print(f"  Response: {resp2.status_code} (content-length: {resp2.headers.get('Content-Length', '?')})")
-        print(f"  Body: '{resp2.text[:500]}'")
-        if resp2.ok:
-            data = resp2.json()
-            print(f"  Task data: {json.dumps(data, indent=2)[:500]}")
-            return data
 
     if resp.ok:
         data = resp.json()
