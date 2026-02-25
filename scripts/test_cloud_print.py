@@ -312,26 +312,25 @@ def cloud_create_task(
         profile_id_int = int(profile_id)
     except (ValueError, TypeError):
         profile_id_int = 0
-    # Try without url first (server knows file location from project),
-    # then with url if that fails
-    payload_base = {
+    payload = {
         "deviceId": device_id,
         "title": filename,
         "modelId": model_id,
         "profileId": profile_id_int,
         "plateIndex": 1,
-        "cover": "",
+        "designId": 0,
+        "amsDetailMapping": [],
+        "mode": "cloud_file",
     }
 
     task_url = f"{API_BASE}/v1/user-service/my/task"
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
 
-    print(f"  Task payload: {json.dumps(payload_base)[:500]}")
-    resp = requests.post(task_url, headers=task_headers, json=payload_base)
+    print(f"  Task payload: {json.dumps(payload)[:500]}")
+    resp = requests.post(task_url, headers=task_headers, json=payload)
     print(f"  Response: {resp.status_code}")
-    print(f"  Headers: {dict(resp.headers)}")
-    print(f"  Text: '{resp.text[:500]}'")
-    print(f"  Content: {resp.content[:500]}")
+    if resp.text:
+        print(f"  Body: {resp.text[:500]}")
 
     if resp.ok:
         data = resp.json()
