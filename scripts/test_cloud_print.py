@@ -244,47 +244,51 @@ def cloud_create_project(token: str, filename: str) -> dict:
     return {}
 
 
-def cloud_notify_upload(token: str, upload_ticket: str, max_retries: int = 5) -> dict:
-    """Notify Bambu's server that the S3 upload is complete and poll for confirmation.
-
-    Tries multiple PUT body formats since the exact format is undocumented,
-    then polls GET for confirmation.
-    """
+def cloud_notify_upload(token: str, upload_ticket: str, filename: str = "") -> dict:
+    """Notify Bambu's server that the S3 upload is complete and poll for confirmation."""
     auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     notify_url = f"{API_BASE}/v1/iot-service/api/user/notification"
 
-    # Try multiple PUT body variants — the exact format is proprietary.
-    # Findings so far:
-    #   "upload": True       → "type mismatch"  (found field, wrong type)
-    #   "upload": "<string>" → "type mismatch"  (found field, wrong type)
-    #   no "upload" field    → "upload is not set"
-    # So "upload" must be an object, array, or integer.
-    put_variants = [
-        # Variant 1: upload as object with ticket details
-        {"json": {"upload": {"status": "complete", "ticket": upload_ticket}}},
-        # Variant 2: upload as object with just ticket
-        {"json": {"upload": {"ticket": upload_ticket}}},
-        # Variant 3: upload as integer (1 = complete)
-        {"json": {"upload": 1, "ticket": upload_ticket}},
-        # Variant 4: upload as empty object, ticket separate
-        {"json": {"upload": {}, "action": "upload", "ticket": upload_ticket}},
-    ]
+    # The "upload" field is a struct requiring at minimum:
+    #   - origin_file_name (required)
+    #   - ticket (required — variant 4 showed "upload.ticket is not set")
+    # We try with all known fields, then progressively add more if needed.
+    upload_struct = {
+        "ticket": upload_ticket,
+        "origin_file_name": filename,
+    }
 
-    for i, variant in enumerate(put_variants):
-        put_resp = requests.put(notify_url, headers=auth_headers, **variant)
-        print(f"  PUT variant {i + 1}: {put_resp.status_code} — {put_resp.text[:300]}")
-        if put_resp.ok:
-            break
+    put_resp = requests.put(
+        notify_url,
+        headers=auth_headers,
+        json={"upload": upload_struct},
+    )
+    print(f"  PUT notification: {put_resp.status_code} — {put_resp.text[:500]}")
 
-    # Poll GET — only 2 attempts since notification may not be required
-    for attempt in range(2):
+    if not put_resp.ok:
+        # If that didn't work, try adding more fields
+        upload_struct_v2 = {
+            "ticket": upload_ticket,
+            "origin_file_name": filename,
+            "status": "complete",
+            "file_size": 0,
+        }
+        put_resp2 = requests.put(
+            notify_url,
+            headers=auth_headers,
+            json={"upload": upload_struct_v2},
+        )
+        print(f"  PUT v2: {put_resp2.status_code} — {put_resp2.text[:500]}")
+
+    # Poll GET for confirmation
+    for attempt in range(3):
         time.sleep(2)
         resp = requests.get(
             notify_url,
             headers=auth_headers,
             params={"action": "upload", "ticket": upload_ticket},
         )
-        print(f"  GET poll {attempt + 1}/2: {resp.status_code} — {resp.text[:300]}")
+        print(f"  GET poll {attempt + 1}/3: {resp.status_code} — {resp.text[:300]}")
 
         if resp.ok:
             data = resp.json()
@@ -313,6 +317,7 @@ def cloud_create_task(
         "title": filename,
         "modelId": model_id,
         "profileId": profile_id_int,
+        "plateIndex": 1,
         "cover": "",
     }
     if file_url:
@@ -816,7 +821,7 @@ def main():
         # Step 3c: Notify server that upload is complete
         if upload_ticket:
             print(f"\n[3c] Notifying server of upload completion (ticket={upload_ticket})...")
-            notify_data = cloud_notify_upload(auth["access_token"], upload_ticket)
+            notify_data = cloud_notify_upload(auth["access_token"], upload_ticket, filename)
             # The notification response may contain updated model_id
             if notify_data.get("model_id"):
                 model_id = str(notify_data["model_id"])
