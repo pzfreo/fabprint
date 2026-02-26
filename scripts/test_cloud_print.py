@@ -430,78 +430,87 @@ def cloud_create_task(
     if not cover_variants:
         cover_variants.append(("empty", ""))
 
-    # Build list of payloads to try — vary the cover AND other fields
+    # Build list of payloads to try
     attempts = []
 
-    # For each cover variant, try with and without extra fields
-    for cover_label, cover_val in cover_variants:
-        # Standard payload (matches documented task object)
-        attempts.append((f"{cover_label}", {
-            "deviceId": device_id,
-            "title": filename,
-            "modelId": model_id,
-            "profileId": profile_id_int,
-            "plateIndex": 1,
-            "designId": 0,
-            "cover": cover_val,
-            "amsDetailMapping": [],
-            "mode": "cloud_file",
-        }))
+    # Use dualstack cover URL if available, otherwise first variant
+    primary_cover = cover_variants[0][1] if cover_variants else ""
 
-    # Also try first cover variant with profileId as string
-    if cover_variants:
-        _, first_cover = cover_variants[0]
-        attempts.append(("str-profileId", {
-            "deviceId": device_id,
-            "title": filename,
-            "modelId": model_id,
-            "profileId": str(profile_id_int),
-            "plateIndex": 1,
-            "designId": 0,
-            "cover": first_cover,
-            "amsDetailMapping": [],
-            "mode": "cloud_file",
-        }))
+    # Attempt 1: Match reference task format exactly (with bedType, jobType)
+    attempts.append(("full-match", {
+        "deviceId": device_id,
+        "title": filename,
+        "modelId": model_id,
+        "profileId": profile_id_int,
+        "plateIndex": 1,
+        "designId": 0,
+        "cover": primary_cover,
+        "amsDetailMapping": [],
+        "mode": "cloud_file",
+        "bedType": "auto",
+        "jobType": 1,
+    }))
 
-        # Try without designId and without mode
-        attempts.append(("no-designId-no-mode", {
-            "deviceId": device_id,
-            "title": filename,
-            "modelId": model_id,
-            "profileId": profile_id_int,
-            "plateIndex": 1,
-            "cover": first_cover,
-        }))
+    # Attempt 2: Same but with bedType=textured_plate (matches reference)
+    attempts.append(("textured-plate", {
+        "deviceId": device_id,
+        "title": filename,
+        "modelId": model_id,
+        "profileId": profile_id_int,
+        "plateIndex": 1,
+        "designId": 0,
+        "cover": primary_cover,
+        "amsDetailMapping": [],
+        "mode": "cloud_file",
+        "bedType": "textured_plate",
+        "jobType": 1,
+    }))
 
-        # Try with minimal headers (no slicer headers)
-        attempts.append(("minimal-headers", {
-            "deviceId": device_id,
-            "title": filename,
-            "modelId": model_id,
-            "profileId": profile_id_int,
-            "plateIndex": 1,
-            "designId": 0,
-            "cover": first_cover,
-        }))
+    # Attempt 3: Minimal — just required fields + dualstack cover
+    attempts.append(("minimal-plus-cover", {
+        "deviceId": device_id,
+        "title": filename,
+        "modelId": model_id,
+        "profileId": profile_id_int,
+        "plateIndex": 1,
+        "cover": primary_cover,
+    }))
+
+    # Attempt 4: Try with bare dualstack URL (no query params)
+    if len(cover_variants) > 3:
+        bare_cover = cover_variants[3][1]  # dualstack-bare
+    else:
+        parsed_pc = urlparse(primary_cover)
+        bare_cover = urlunparse((parsed_pc.scheme, parsed_pc.netloc, parsed_pc.path, "", "", ""))
+    attempts.append(("dualstack-bare-full", {
+        "deviceId": device_id,
+        "title": filename,
+        "modelId": model_id,
+        "profileId": profile_id_int,
+        "plateIndex": 1,
+        "designId": 0,
+        "cover": bare_cover,
+        "amsDetailMapping": [],
+        "mode": "cloud_file",
+        "bedType": "auto",
+        "jobType": 1,
+    }))
 
     for attempt_label, payload in attempts:
         print(f"\n  [{attempt_label}] POST {task_url}")
-        cover_preview = payload.get("cover", "")[:120]
-        print(f"  cover: {cover_preview}...")
+        cover_preview = payload.get("cover", "")[:150]
+        print(f"  cover: {cover_preview}")
+        # Print full payload for debugging (mask long URLs)
+        debug_payload = {k: (v[:80] + "..." if isinstance(v, str) and len(v) > 80 else v)
+                        for k, v in payload.items()}
+        print(f"  payload: {json.dumps(debug_payload)}")
 
-        # Use minimal headers for the "minimal-headers" attempt
-        if attempt_label == "minimal-headers":
-            hdrs = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            }
-        else:
-            hdrs = task_headers
-
-        resp = requests.post(task_url, headers=hdrs, json=payload)
+        resp = requests.post(task_url, headers=task_headers, json=payload)
         status = resp.status_code
         body = resp.text[:500] if resp.text else "(empty)"
+        # Print ALL response headers for debugging
         print(f"  -> {status}: {body}")
+        print(f"  resp headers: {dict(resp.headers)}")
 
         if resp.ok:
             data = resp.json()
