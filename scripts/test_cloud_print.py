@@ -715,6 +715,11 @@ class BambuCloudMQTT:
                 cmd = p.get("command", "")
                 result = p.get("result", "")
                 reason = p.get("reason", "")
+
+                # Always show project_file responses (even without result)
+                if cmd == "project_file":
+                    print(f"  << project_file response: {json.dumps(p)[:500]}")
+
                 if result:
                     status = f"result={result}"
                     if reason:
@@ -800,13 +805,15 @@ class BambuCloudMQTT:
                 "flow_cali": flow_cali,
                 "vibration_cali": vibration_cali,
                 "layer_inspect": False,
-                "ams_mapping": "",
+                "ams_mapping": [0],
                 "use_ams": use_ams,
             }
         }
         print(f"  >> start_print: {filename}")
-        print(f"  >> url: {file_url[:100]}...")
+        print(f"  >> url: {file_url[:120]}...")
+        print(f"  >> project_id={project_id}, profile_id={profile_id}")
         print(f"  >> task_id={task_id}, subtask_id={subtask_id}")
+        print(f"  >> md5={md5}")
         self._publish(cmd)
 
     def pause_print(self):
@@ -1170,28 +1177,15 @@ def main():
             return
 
         if file_url:
-            # --- Step 5: Create task (must happen BEFORE MQTT) ---
+            # --- Step 5: Skip task creation, go straight to MQTT ---
+            # Research shows multiple implementations work with task_id=0.
+            # Task creation keeps failing with silent 400 — skip it.
             task_id = "0"
             subtask_id = "0"
 
-            if cover_url:
-                print(f"\n[5] Creating cloud print task...")
-                task_data = cloud_create_task(
-                    auth["access_token"], device_id, filename, model_id, profile_id, cover_url
-                )
-                if task_data.get("id"):
-                    task_id = str(task_data["id"])
-                    subtask_id = str(task_data.get("subtask_id", "0"))
-                    print(f"  task_id={task_id}, subtask_id={subtask_id}")
-                else:
-                    print("  Task creation failed — trying MQTT with task_id=0")
-            else:
-                print(f"\n[5] No cover URL — skipping task creation, using task_id=0")
-
-            # --- Step 6: Start print via MQTT ---
-            print(f"\n[6] Starting print via MQTT")
+            # --- Step 5a: Try MQTT with signed URL ---
+            print(f"\n[5] Starting print via MQTT (signed URL)")
             print(f"  project_id={project_id}, profile_id={profile_id}")
-            print(f"  task_id={task_id}, subtask_id={subtask_id}")
             print(f"  url: {file_url[:120]}...")
             mqttc.start_print(
                 file_url=file_url,
@@ -1205,12 +1199,35 @@ def main():
             )
 
             # Wait for response
-            print("  Waiting for response (15s)...")
-            time.sleep(15)
+            print("  Waiting for response (10s)...")
+            time.sleep(10)
 
-            # Request status to see if print started
+            # Check status
             mqttc.request_status()
             time.sleep(5)
+
+            # --- Step 5b: Try with bare URL (no query params) ---
+            # The printer might authenticate to S3 using its own credentials
+            from urllib.parse import urlparse, urlunparse
+            parsed_url = urlparse(file_url)
+            bare_file_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", "", ""))
+            if bare_file_url != file_url:
+                print(f"\n[5b] Retrying MQTT with bare URL (no AWS signature)")
+                print(f"  url: {bare_file_url[:120]}...")
+                mqttc.start_print(
+                    file_url=bare_file_url,
+                    filename=filename,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
+                    project_id=project_id,
+                    profile_id=profile_id,
+                    use_ams=args.use_ams,
+                    md5=download_md5,
+                )
+                print("  Waiting for response (10s)...")
+                time.sleep(10)
+                mqttc.request_status()
+                time.sleep(5)
 
             if args.interactive:
                 interactive_loop(mqttc)
