@@ -1036,6 +1036,9 @@ def main():
             print(f"  Profile endpoint: {prof_resp.status_code}")
             if prof_resp.ok:
                 prof_data = prof_resp.json()
+                # Dump full response for debugging
+                print(f"  Full profile response:\n{json.dumps(prof_data, indent=2)[:3000]}")
+
                 download_url = prof_data.get("url") or ""
                 download_md5 = prof_data.get("md5") or ""
                 if download_url:
@@ -1048,6 +1051,36 @@ def main():
                     cover_url = thumb.get("url") or ""
                     if cover_url:
                         print(f"  cover: {cover_url[:120]}...")
+
+        # Fetch existing tasks to see what cover URL format works
+        print(f"\n  Checking existing tasks for cover URL format...")
+        tasks_resp = requests.get(
+            f"{API_BASE}/v1/user-service/my/tasks",
+            headers=auth_headers,
+        )
+        if tasks_resp.ok:
+            tasks_data = tasks_resp.json()
+            hits = tasks_data.get("hits", []) or []
+            if hits:
+                # Show the first task's cover URL as reference
+                ref_task = hits[0]
+                ref_cover = ref_task.get("cover", "")
+                ref_mode = ref_task.get("mode", "")
+                ref_status = ref_task.get("status", "")
+                print(f"  Reference task: mode={ref_mode}, status={ref_status}")
+                print(f"  Reference cover: {ref_cover[:200]}")
+                # Show all unique cover URL patterns
+                cover_patterns = set()
+                for t in hits[:5]:
+                    tc = t.get("cover", "")
+                    if tc:
+                        from urllib.parse import urlparse
+                        p = urlparse(tc)
+                        cover_patterns.add(f"{p.scheme}://{p.netloc}")
+                if cover_patterns:
+                    print(f"  Cover URL domains: {cover_patterns}")
+            else:
+                print(f"  No existing tasks found")
 
         # Use the profile download URL for MQTT (not the S3 upload URL)
         if download_url:
