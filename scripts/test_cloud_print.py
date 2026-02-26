@@ -49,6 +49,10 @@ from pathlib import Path
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
+import ftplib
+import re
+import subprocess
+
 import paho.mqtt.client as mqtt
 import requests
 
@@ -402,7 +406,6 @@ def cloud_create_task(
         parsed = urlparse(cover_url)
         rewritten = cover_url
         # Match: https://s3.{region}.amazonaws.com/{bucket}/{key}
-        import re
         path_style = re.match(
             r"https://s3\.([^.]+)\.amazonaws\.com/([^/]+)(/.*)",
             cover_url,
@@ -459,7 +462,6 @@ def cloud_create_task(
         return data
 
     # If requests failed, try with curl to rule out Python HTTP issues
-    import subprocess
     print(f"\n  Retrying with curl...")
     payload_json = json.dumps(payload)
     curl_cmd = [
@@ -805,6 +807,327 @@ class BambuCloudMQTT:
 
 
 # ---------------------------------------------------------------------------
+# LAN Mode (FTPS + Local MQTT)
+#
+# Uses implicit FTPS (port 990) to upload .3mf to the printer's SD card,
+# then sends a project_file MQTT command over the local broker to start
+# the print. This is the proven approach used by all successful third-party
+# tools (Home Assistant integration, bambu-ftp-and-print, bambu-mcp, etc.)
+#
+# Requirements:
+#   - Printer IP address (BAMBU_PRINTER_IP or --printer-ip)
+#   - LAN access code (BAMBU_ACCESS_CODE or --access-code)
+#   - Printer serial number (BAMBU_SERIAL or --serial)
+#   - Developer Mode or LAN Mode enabled on the printer
+# ---------------------------------------------------------------------------
+
+
+class ImplicitFTPS(ftplib.FTP_TLS):
+    """FTP_TLS subclass that uses implicit TLS (port 990).
+
+    Standard FTP_TLS does explicit TLS (AUTH TLS after connect).
+    Bambu printers use implicit TLS where the connection starts encrypted.
+    Based on the pybambu/Home Assistant integration approach.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def connect(self, host="", port=0, timeout=-999, source_address=None):
+        """Connect with implicit TLS — wrap socket in SSL before FTP handshake."""
+        if host:
+            self.host = host
+        if port:
+            self.port = port
+        if timeout != -999:
+            self.timeout = timeout
+        if source_address is not None:
+            self.source_address = source_address
+
+        import socket
+        self.sock = socket.create_connection(
+            (self.host, self.port), self.timeout, self.source_address
+        )
+        self.af = self.sock.family
+        # Wrap in SSL immediately (implicit TLS)
+        self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
+        self.file = self.sock.makefile("r", encoding=self.encoding)
+        self.welcome = self.getresp()
+        return self.welcome
+
+
+def lan_upload_file(ip: str, access_code: str, file_path: Path) -> str:
+    """Upload a .3mf file to the printer via implicit FTPS (port 990).
+
+    Returns the remote filename on the printer's SD card.
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE  # Printer uses self-signed cert
+
+    ftp = ImplicitFTPS(context=ctx)
+    ftp.connect(host=ip, port=990, timeout=30)
+    ftp.login(user="bblp", passwd=access_code)
+
+    # Enable data connection protection
+    ftp.prot_p()
+
+    remote_filename = file_path.name
+    print(f"  Uploading {remote_filename} ({file_path.stat().st_size} bytes)...")
+
+    with open(file_path, "rb") as f:
+        ftp.storbinary(f"STOR {remote_filename}", f)
+
+    print(f"  Upload complete: {remote_filename}")
+    ftp.quit()
+    return remote_filename
+
+
+class BambuLanMQTT:
+    """MQTT client for local Bambu printer control."""
+
+    def __init__(self, ip: str, access_code: str, serial: str):
+        self.ip = ip
+        self.access_code = access_code
+        self.serial = serial
+        self._seq = 0
+        self._connected = threading.Event()
+        self._responses: list[dict] = []
+
+        self.client = mqtt.Client(
+            mqtt.CallbackAPIVersion.VERSION2,
+            client_id=f"fabprint-lan-{serial[:8]}",
+        )
+        self.client.username_pw_set("bblp", access_code)
+
+        # TLS with no cert verification (printer uses self-signed cert)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        self.client.tls_set_context(ctx)
+
+        self.client.on_connect = self._on_connect
+        self.client.on_message = self._on_message
+        self.client.on_disconnect = self._on_disconnect
+
+    @property
+    def request_topic(self) -> str:
+        return f"device/{self.serial}/request"
+
+    @property
+    def report_topic(self) -> str:
+        return f"device/{self.serial}/report"
+
+    def _on_connect(self, client, userdata, flags, rc, properties=None):
+        if rc == 0:
+            print(f"  MQTT connected to {self.ip}")
+            client.subscribe(self.report_topic)
+            self._connected.set()
+        else:
+            print(f"  MQTT connection failed: rc={rc}")
+
+    def _on_message(self, client, userdata, msg):
+        try:
+            payload = json.loads(msg.payload)
+            self._responses.append(payload)
+
+            if "print" in payload:
+                p = payload["print"]
+                cmd = p.get("command", "")
+                result = p.get("result", "")
+                reason = p.get("reason", "")
+
+                if cmd == "project_file":
+                    print(f"  << project_file response: {json.dumps(p)[:500]}")
+
+                if result:
+                    status = f"result={result}"
+                    if reason:
+                        status += f" reason={reason}"
+                    print(f"  << {cmd}: {status}")
+
+                mc_percent = p.get("mc_percent")
+                gcode_state = p.get("gcode_state")
+                if gcode_state:
+                    extra = f" ({mc_percent}%)" if mc_percent is not None else ""
+                    print(f"  << state: {gcode_state}{extra}")
+        except json.JSONDecodeError:
+            pass
+
+    def _on_disconnect(self, client, userdata, flags, rc, properties=None):
+        self._connected.clear()
+        if rc != 0:
+            print(f"  MQTT disconnected unexpectedly: rc={rc}")
+
+    def connect(self, timeout: float = 10.0):
+        print(f"  Connecting MQTT to {self.ip}:8883...")
+        self.client.connect(self.ip, 8883, keepalive=60)
+        self.client.loop_start()
+        if not self._connected.wait(timeout):
+            raise TimeoutError("MQTT connection timed out")
+
+    def disconnect(self):
+        self.client.loop_stop()
+        self.client.disconnect()
+        print("  MQTT disconnected")
+
+    def _next_seq(self) -> str:
+        self._seq += 1
+        return str(self._seq)
+
+    def _publish(self, command: dict):
+        """Publish a command (no signing needed for LAN mode)."""
+        payload = json.dumps(command)
+        log.debug(">> %s", payload)
+        self.client.publish(self.request_topic, payload)
+
+    def start_print(
+        self,
+        filename: str,
+        plate_index: int = 1,
+        use_ams: bool = False,
+        bed_levelling: bool = True,
+        flow_cali: bool = True,
+        vibration_cali: bool = True,
+        timelapse: bool = False,
+    ):
+        """Send project_file to start a print from the printer's SD card."""
+        cmd = {
+            "print": {
+                "sequence_id": self._next_seq(),
+                "command": "project_file",
+                "param": f"Metadata/plate_{plate_index}.gcode",
+                "project_id": "0",
+                "profile_id": "0",
+                "task_id": "0",
+                "subtask_id": "0",
+                "subtask_name": filename,
+                "file": "",
+                "url": f"ftp://{filename}",
+                "md5": "",
+                "timelapse": timelapse,
+                "bed_type": "auto",
+                "bed_levelling": bed_levelling,
+                "flow_cali": flow_cali,
+                "vibration_cali": vibration_cali,
+                "layer_inspect": True,
+                "ams_mapping": [0],
+                "use_ams": use_ams,
+            }
+        }
+        print(f"  >> start_print: {filename}")
+        print(f"  >> url: ftp://{filename}")
+        self._publish(cmd)
+
+    def pause_print(self):
+        cmd = {"print": {"sequence_id": self._next_seq(), "command": "pause", "param": ""}}
+        print("  >> pause")
+        self._publish(cmd)
+
+    def resume_print(self):
+        cmd = {"print": {"sequence_id": self._next_seq(), "command": "resume", "param": ""}}
+        print("  >> resume")
+        self._publish(cmd)
+
+    def stop_print(self):
+        cmd = {"print": {"sequence_id": self._next_seq(), "command": "stop", "param": ""}}
+        print("  >> stop")
+        self._publish(cmd)
+
+    def request_status(self):
+        cmd = {"pushing": {"sequence_id": self._next_seq(), "command": "pushall", "version": 1, "push_target": 1}}
+        print("  >> pushall (request status)")
+        self._publish(cmd)
+
+
+def lan_main(args):
+    """LAN mode: FTPS upload + local MQTT print trigger."""
+    printer_ip = args.printer_ip or os.environ.get("BAMBU_PRINTER_IP")
+    access_code = args.access_code or os.environ.get("BAMBU_ACCESS_CODE")
+    serial = args.serial or os.environ.get("BAMBU_SERIAL")
+
+    if not printer_ip or not access_code or not serial:
+        print("Error: LAN mode requires --printer-ip, --access-code, --serial")
+        print("  (or set BAMBU_PRINTER_IP, BAMBU_ACCESS_CODE, BAMBU_SERIAL env vars)")
+        sys.exit(1)
+
+    print(f"\n=== LAN Mode ===")
+    print(f"  Printer: {printer_ip}")
+    print(f"  Serial: {serial}")
+
+    if args.status_only:
+        print(f"\n[1] Connecting MQTT to printer...")
+        mqttc = BambuLanMQTT(printer_ip, access_code, serial)
+        try:
+            mqttc.connect()
+            print(f"\n[2] Requesting status...")
+            mqttc.request_status()
+            time.sleep(5)
+        finally:
+            mqttc.disconnect()
+        return
+
+    if not args.file:
+        print("Error: Specify a .3mf file to print")
+        sys.exit(1)
+
+    file_path = Path(args.file)
+    if not file_path.exists():
+        print(f"Error: File not found: {file_path}")
+        sys.exit(1)
+
+    # Step 1: Upload via FTPS
+    print(f"\n[1] Uploading {file_path.name} via FTPS...")
+    remote_filename = lan_upload_file(printer_ip, access_code, file_path)
+
+    # Step 2: Connect local MQTT and start print
+    print(f"\n[2] Connecting local MQTT...")
+    mqttc = BambuLanMQTT(printer_ip, access_code, serial)
+    try:
+        mqttc.connect()
+
+        print(f"\n[3] Starting print via local MQTT...")
+        mqttc.start_print(
+            filename=remote_filename,
+            use_ams=args.use_ams,
+        )
+
+        print("  Waiting for response (10s)...")
+        time.sleep(10)
+
+        mqttc.request_status()
+        time.sleep(5)
+
+        if args.interactive:
+            print("\n--- Interactive mode ---")
+            print("Commands: [p]ause  [r]esume  [s]top  [t]atus  [q]uit\n")
+            while True:
+                try:
+                    cmd = input("> ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    break
+                if cmd in ("p", "pause"):
+                    mqttc.pause_print()
+                elif cmd in ("r", "resume"):
+                    mqttc.resume_print()
+                elif cmd in ("s", "stop"):
+                    mqttc.stop_print()
+                elif cmd in ("t", "status"):
+                    mqttc.request_status()
+                elif cmd in ("q", "quit"):
+                    break
+                else:
+                    print("Unknown command. Use p/r/s/t/q")
+                time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n  Interrupted")
+    finally:
+        mqttc.disconnect()
+
+    print("\nDone.")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -890,6 +1213,23 @@ def main():
         help="Enable AMS filament system",
     )
     parser.add_argument(
+        "--lan",
+        action="store_true",
+        help="Use LAN mode (FTPS upload + local MQTT) instead of cloud",
+    )
+    parser.add_argument(
+        "--printer-ip",
+        help="Printer IP for LAN mode (or set BAMBU_PRINTER_IP env var)",
+    )
+    parser.add_argument(
+        "--access-code",
+        help="Printer access code for LAN mode (or set BAMBU_ACCESS_CODE env var)",
+    )
+    parser.add_argument(
+        "--serial",
+        help="Printer serial for LAN mode (or set BAMBU_SERIAL env var)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging",
@@ -900,6 +1240,11 @@ def main():
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    # --- LAN mode ---
+    if args.lan:
+        lan_main(args)
+        return
 
     # --- Credentials ---
     email = os.environ.get("BAMBU_EMAIL")
@@ -1109,32 +1454,88 @@ def main():
             print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
 
         # Attempt 2: POST /v1/iot-service/api/user/print
-        # (coelacant1/Bambu-Lab-Cloud-API uses this endpoint)
+        # Per coelacant1/Bambu-Lab-Cloud-API API_DEVICES.md, this endpoint
+        # takes device_id, file_id, file_name, file_url (snake_case keys).
+        # Try multiple payload variants to find what works.
         if task_id == "0":
             print(f"\n  [2] POST /v1/iot-service/api/user/print")
-            print_payload = {
-                "deviceId": device_id,
-                "modelId": model_id,
-                "profileId": int(profile_id) if profile_id.isdigit() else 0,
-                "plateIndex": 1,
+            print_url = f"{API_BASE}/v1/iot-service/api/user/print"
+
+            # Build the download URL for file_url (prefer profile download URL)
+            print_file_url = ""
+            if download_url:
+                print_file_url = download_url
+            elif file_url:
+                print_file_url = file_url
+
+            # Variant 2a: snake_case keys (per API docs)
+            print(f"\n  [2a] snake_case keys (device_id, file_id, file_name, file_url)")
+            payload_2a = {
+                "device_id": device_id,
+                "file_id": model_id,
+                "file_name": filename,
+                "file_url": print_file_url,
+                "settings": {},
             }
-            print(f"  payload: {json.dumps(print_payload)}")
-            resp = requests.post(
-                f"{API_BASE}/v1/iot-service/api/user/print",
-                headers=auth_headers,
-                json=print_payload,
-            )
+            print(f"  payload: {json.dumps(payload_2a)[:500]}")
+            resp = requests.post(print_url, headers=auth_headers, json=payload_2a)
             body = resp.text[:500] if resp.text else "(empty)"
             print(f"  -> {resp.status_code}: {body}")
+            for hdr in ["X-Request-Id", "X-Trace-Id"]:
+                if resp.headers.get(hdr):
+                    print(f"  {hdr}: {resp.headers[hdr]}")
             if resp.ok:
                 data = resp.json()
-                if data.get("id") or data.get("task_id"):
-                    task_id = str(data.get("id") or data.get("task_id"))
-                    subtask_id = str(data.get("subtask_id", "0"))
-                    print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
+                job_id = data.get("data", {}).get("job_id") or data.get("job_id") or data.get("id")
+                if job_id:
+                    task_id = str(job_id)
+                    print(f"  SUCCESS! job_id/task_id={task_id}")
+
+            # Variant 2b: camelCase keys (in case API uses camelCase internally)
+            if task_id == "0":
+                print(f"\n  [2b] camelCase keys (deviceId, fileId, fileName, fileUrl)")
+                payload_2b = {
+                    "deviceId": device_id,
+                    "fileId": model_id,
+                    "fileName": filename,
+                    "fileUrl": print_file_url,
+                }
+                print(f"  payload: {json.dumps(payload_2b)[:500]}")
+                resp = requests.post(print_url, headers=auth_headers, json=payload_2b)
+                body = resp.text[:500] if resp.text else "(empty)"
+                print(f"  -> {resp.status_code}: {body}")
+                if resp.ok:
+                    data = resp.json()
+                    job_id = data.get("data", {}).get("job_id") or data.get("job_id") or data.get("id")
+                    if job_id:
+                        task_id = str(job_id)
+                        print(f"  SUCCESS! job_id/task_id={task_id}")
+
+            # Variant 2c: with model/profile IDs and plate info
+            if task_id == "0":
+                print(f"\n  [2c] with modelId, profileId, plateIndex")
+                payload_2c = {
+                    "device_id": device_id,
+                    "file_id": model_id,
+                    "file_name": filename,
+                    "file_url": print_file_url,
+                    "model_id": model_id,
+                    "profile_id": int(profile_id) if profile_id.isdigit() else 0,
+                    "project_id": project_id,
+                    "plate_index": 1,
+                }
+                print(f"  payload: {json.dumps(payload_2c)[:500]}")
+                resp = requests.post(print_url, headers=auth_headers, json=payload_2c)
+                body = resp.text[:500] if resp.text else "(empty)"
+                print(f"  -> {resp.status_code}: {body}")
+                if resp.ok:
+                    data = resp.json()
+                    job_id = data.get("data", {}).get("job_id") or data.get("job_id") or data.get("id")
+                    if job_id:
+                        task_id = str(job_id)
+                        print(f"  SUCCESS! job_id/task_id={task_id}")
 
         # Attempt 3: GET /v1/iot-service/api/user/print (read print status)
-        # Maybe seeing this endpoint gives us info
         print(f"\n  [3] GET /v1/iot-service/api/user/print")
         resp = requests.get(
             f"{API_BASE}/v1/iot-service/api/user/print",
@@ -1144,10 +1545,19 @@ def main():
         body = resp.text[:1000] if resp.text else "(empty)"
         print(f"  -> {resp.status_code}: {body}")
 
+        # Attempt 4: GET print status filtered by device
+        print(f"\n  [4] GET /v1/iot-service/api/user/print?device_id={device_id}")
+        resp = requests.get(
+            f"{API_BASE}/v1/iot-service/api/user/print",
+            headers=auth_headers,
+            params={"device_id": device_id},
+        )
+        body = resp.text[:1000] if resp.text else "(empty)"
+        print(f"  -> {resp.status_code}: {body}")
+
         # Use the profile download URL for MQTT (not the S3 upload URL)
         # Also rewrite to dualstack virtual-hosted format if it's path-style
         if download_url:
-            import re
             m = re.match(
                 r"https://s3\.([^.]+)\.amazonaws\.com/([^/]+)(/.*)",
                 download_url,
