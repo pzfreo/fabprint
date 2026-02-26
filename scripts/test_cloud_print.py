@@ -1090,46 +1090,59 @@ def main():
                     if cover_url:
                         print(f"  cover: {cover_url[:120]}...")
 
-        # Step 3e: Try task creation with multiple cover URL sources
-        print(f"\n[3e] Trying task creation...")
+        # Step 3e: Try to trigger cloud print via multiple endpoints
+        # Task creation with /v1/user-service/my/task always returns 400.
+        # Try alternative endpoints that might trigger the server-side print.
+        print(f"\n[3e] Trying to trigger cloud print...")
 
-        # Source 1: Upload cover separately via generic endpoint
-        uploaded_cover_url = cloud_upload_cover(auth["access_token"], file_path)
-        if uploaded_cover_url:
-            print(f"  Uploaded cover: {uploaded_cover_url[:120]}...")
+        # Use profile cover URL for task creation attempts
+        task_cover = cover_url if cover_url else ""
 
-        # Source 2: Get cover URL from an existing task (known to work)
-        ref_cover_url = ""
-        tasks_resp = requests.get(
-            f"{API_BASE}/v1/user-service/my/tasks",
-            headers=auth_headers,
+        # Attempt 1: POST /v1/user-service/my/task (standard)
+        print(f"\n  [1] POST /v1/user-service/my/task")
+        task_data = cloud_create_task(
+            auth["access_token"], device_id, filename, model_id, profile_id, task_cover
         )
-        if tasks_resp.ok:
-            hits = tasks_resp.json().get("hits", []) or []
-            if hits:
-                ref_cover_url = hits[0].get("cover", "")
-                if ref_cover_url:
-                    print(f"  Reference cover from existing task: {ref_cover_url[:120]}...")
+        if task_data.get("id"):
+            task_id = str(task_data["id"])
+            subtask_id = str(task_data.get("subtask_id", "0"))
+            print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
 
-        # Try task creation with each cover URL source
-        cover_sources = []
-        if uploaded_cover_url:
-            cover_sources.append(("uploaded", uploaded_cover_url))
-        if ref_cover_url:
-            cover_sources.append(("ref-task", ref_cover_url))
-        if cover_url:
-            cover_sources.append(("profile", cover_url))
-
-        for src_label, src_cover in cover_sources:
-            print(f"\n  Task creation with [{src_label}] cover...")
-            task_data = cloud_create_task(
-                auth["access_token"], device_id, filename, model_id, profile_id, src_cover
+        # Attempt 2: POST /v1/iot-service/api/user/print
+        # (coelacant1/Bambu-Lab-Cloud-API uses this endpoint)
+        if task_id == "0":
+            print(f"\n  [2] POST /v1/iot-service/api/user/print")
+            print_payload = {
+                "deviceId": device_id,
+                "modelId": model_id,
+                "profileId": int(profile_id) if profile_id.isdigit() else 0,
+                "plateIndex": 1,
+            }
+            print(f"  payload: {json.dumps(print_payload)}")
+            resp = requests.post(
+                f"{API_BASE}/v1/iot-service/api/user/print",
+                headers=auth_headers,
+                json=print_payload,
             )
-            if task_data.get("id"):
-                task_id = str(task_data["id"])
-                subtask_id = str(task_data.get("subtask_id", "0"))
-                print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
-                break
+            body = resp.text[:500] if resp.text else "(empty)"
+            print(f"  -> {resp.status_code}: {body}")
+            if resp.ok:
+                data = resp.json()
+                if data.get("id") or data.get("task_id"):
+                    task_id = str(data.get("id") or data.get("task_id"))
+                    subtask_id = str(data.get("subtask_id", "0"))
+                    print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
+
+        # Attempt 3: GET /v1/iot-service/api/user/print (read print status)
+        # Maybe seeing this endpoint gives us info
+        print(f"\n  [3] GET /v1/iot-service/api/user/print")
+        resp = requests.get(
+            f"{API_BASE}/v1/iot-service/api/user/print",
+            headers=auth_headers,
+            params={"force": "true"},
+        )
+        body = resp.text[:1000] if resp.text else "(empty)"
+        print(f"  -> {resp.status_code}: {body}")
 
         # Use the profile download URL for MQTT (not the S3 upload URL)
         # Also rewrite to dualstack virtual-hosted format if it's path-style
