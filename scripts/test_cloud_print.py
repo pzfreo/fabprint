@@ -458,6 +458,28 @@ def cloud_create_task(
         print(f"  Task created: {json.dumps(data, indent=2)[:500]}")
         return data
 
+    # If requests failed, try with curl to rule out Python HTTP issues
+    import subprocess
+    print(f"\n  Retrying with curl...")
+    payload_json = json.dumps(payload)
+    curl_cmd = [
+        "curl", "-s", "-w", "\n%{http_code}", "-X", "POST", task_url,
+        "-H", f"Authorization: Bearer {token}",
+        "-H", "Content-Type: application/json",
+        "-H", "Accept: application/json",
+        "-d", payload_json,
+    ]
+    try:
+        result = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=15)
+        lines = result.stdout.strip().rsplit("\n", 1)
+        curl_body = lines[0] if len(lines) > 1 else ""
+        curl_status = lines[-1]
+        print(f"  curl -> {curl_status}: {curl_body[:500] if curl_body else '(empty)'}")
+        if curl_status == "200" and curl_body:
+            return json.loads(curl_body)
+    except Exception as e:
+        print(f"  curl error: {e}")
+
     return {}
 
 
@@ -1168,19 +1190,18 @@ def main():
             mqttc.request_status()
             time.sleep(5)
 
-            # --- Step 5b: Try with bare URL (no query params) ---
-            # The printer might authenticate to S3 using its own credentials
-            from urllib.parse import urlparse, urlunparse
-            parsed_url = urlparse(file_url)
-            bare_file_url = urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, "", "", ""))
-            if bare_file_url != file_url:
-                print(f"\n[5b] Retrying MQTT with bare URL (no AWS signature)")
-                print(f"  url: {bare_file_url[:120]}...")
+            # --- Step 5b: Try with a fake task_id ---
+            # The printer might need ANY non-zero task_id to authorize
+            # cloud file downloads, even if it's not a real task.
+            if task_id == "0":
+                import random
+                fake_task_id = str(random.randint(100000000, 999999999))
+                print(f"\n[5b] Retrying MQTT with fake task_id={fake_task_id}")
                 mqttc.start_print(
-                    file_url=bare_file_url,
+                    file_url=file_url,
                     filename=filename,
-                    task_id=task_id,
-                    subtask_id=subtask_id,
+                    task_id=fake_task_id,
+                    subtask_id=fake_task_id,
                     project_id=project_id,
                     profile_id=profile_id,
                     use_ams=args.use_ams,
