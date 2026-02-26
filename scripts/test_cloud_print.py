@@ -977,6 +977,8 @@ def main():
     project_id = "0"
     cover_url = ""
     download_md5 = ""
+    task_id = "0"
+    subtask_id = "0"
 
     if args.file and not args.no_upload and not file_url:
         file_path = Path(args.file)
@@ -1125,21 +1127,24 @@ def main():
                     if cover_url:
                         print(f"  cover: {cover_url[:120]}...")
 
-        # Fetch existing tasks to see full task object structure
-        print(f"\n  Checking existing tasks...")
-        tasks_resp = requests.get(
-            f"{API_BASE}/v1/user-service/my/tasks",
-            headers=auth_headers,
-        )
-        if tasks_resp.ok:
-            tasks_data = tasks_resp.json()
-            hits = tasks_data.get("hits", []) or []
-            if hits:
-                # Dump the FULL first task object to see every field
-                ref_task = hits[0]
-                print(f"  Full reference task:\n{json.dumps(ref_task, indent=2)[:2000]}")
-            else:
-                print(f"  No existing tasks found")
+        # Step 3e: Upload cover image separately and try task creation
+        # The profile endpoint gives V2-signed URLs, but existing tasks
+        # use V4-signed URLs with a different access key. Upload the
+        # thumbnail via the generic upload endpoint to get a URL the
+        # task endpoint might accept.
+        print(f"\n[3e] Uploading cover image separately...")
+        uploaded_cover_url = cloud_upload_cover(auth["access_token"], file_path)
+        if uploaded_cover_url:
+            print(f"  Uploaded cover: {uploaded_cover_url[:120]}...")
+            # Try task creation with the separately-uploaded cover
+            print(f"\n  Trying task creation with uploaded cover...")
+            task_data = cloud_create_task(
+                auth["access_token"], device_id, filename, model_id, profile_id, uploaded_cover_url
+            )
+            if task_data.get("id"):
+                task_id = str(task_data["id"])
+                subtask_id = str(task_data.get("subtask_id", "0"))
+                print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
 
         # Use the profile download URL for MQTT (not the S3 upload URL)
         # Also rewrite to dualstack virtual-hosted format if it's path-style
@@ -1177,12 +1182,6 @@ def main():
             return
 
         if file_url:
-            # --- Step 5: Skip task creation, go straight to MQTT ---
-            # Research shows multiple implementations work with task_id=0.
-            # Task creation keeps failing with silent 400 — skip it.
-            task_id = "0"
-            subtask_id = "0"
-
             # --- Step 5a: Try MQTT with signed URL ---
             print(f"\n[5] Starting print via MQTT (signed URL)")
             print(f"  project_id={project_id}, profile_id={profile_id}")
