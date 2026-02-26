@@ -430,14 +430,10 @@ def cloud_create_task(
     if not cover_variants:
         cover_variants.append(("empty", ""))
 
-    # Build list of payloads to try
-    attempts = []
-
-    # Use dualstack cover URL if available, otherwise first variant
+    # Use the first (best) cover variant
     primary_cover = cover_variants[0][1] if cover_variants else ""
 
-    # Attempt 1: Match reference task format exactly (with bedType, jobType)
-    attempts.append(("full-match", {
+    payload = {
         "deviceId": device_id,
         "title": filename,
         "modelId": model_id,
@@ -449,73 +445,18 @@ def cloud_create_task(
         "mode": "cloud_file",
         "bedType": "auto",
         "jobType": 1,
-    }))
+    }
 
-    # Attempt 2: Same but with bedType=textured_plate (matches reference)
-    attempts.append(("textured-plate", {
-        "deviceId": device_id,
-        "title": filename,
-        "modelId": model_id,
-        "profileId": profile_id_int,
-        "plateIndex": 1,
-        "designId": 0,
-        "cover": primary_cover,
-        "amsDetailMapping": [],
-        "mode": "cloud_file",
-        "bedType": "textured_plate",
-        "jobType": 1,
-    }))
+    print(f"  POST {task_url}")
+    print(f"  cover: {primary_cover[:150]}")
+    resp = requests.post(task_url, headers=task_headers, json=payload)
+    body = resp.text[:500] if resp.text else "(empty)"
+    print(f"  -> {resp.status_code}: {body}")
 
-    # Attempt 3: Minimal — just required fields + dualstack cover
-    attempts.append(("minimal-plus-cover", {
-        "deviceId": device_id,
-        "title": filename,
-        "modelId": model_id,
-        "profileId": profile_id_int,
-        "plateIndex": 1,
-        "cover": primary_cover,
-    }))
-
-    # Attempt 4: Try with bare dualstack URL (no query params)
-    if len(cover_variants) > 3:
-        bare_cover = cover_variants[3][1]  # dualstack-bare
-    else:
-        parsed_pc = urlparse(primary_cover)
-        bare_cover = urlunparse((parsed_pc.scheme, parsed_pc.netloc, parsed_pc.path, "", "", ""))
-    attempts.append(("dualstack-bare-full", {
-        "deviceId": device_id,
-        "title": filename,
-        "modelId": model_id,
-        "profileId": profile_id_int,
-        "plateIndex": 1,
-        "designId": 0,
-        "cover": bare_cover,
-        "amsDetailMapping": [],
-        "mode": "cloud_file",
-        "bedType": "auto",
-        "jobType": 1,
-    }))
-
-    for attempt_label, payload in attempts:
-        print(f"\n  [{attempt_label}] POST {task_url}")
-        cover_preview = payload.get("cover", "")[:150]
-        print(f"  cover: {cover_preview}")
-        # Print full payload for debugging (mask long URLs)
-        debug_payload = {k: (v[:80] + "..." if isinstance(v, str) and len(v) > 80 else v)
-                        for k, v in payload.items()}
-        print(f"  payload: {json.dumps(debug_payload)}")
-
-        resp = requests.post(task_url, headers=task_headers, json=payload)
-        status = resp.status_code
-        body = resp.text[:500] if resp.text else "(empty)"
-        # Print ALL response headers for debugging
-        print(f"  -> {status}: {body}")
-        print(f"  resp headers: {dict(resp.headers)}")
-
-        if resp.ok:
-            data = resp.json()
-            print(f"  Task created: {json.dumps(data, indent=2)[:500]}")
-            return data
+    if resp.ok:
+        data = resp.json()
+        print(f"  Task created: {json.dumps(data, indent=2)[:500]}")
+        return data
 
     return {}
 
@@ -1127,24 +1068,46 @@ def main():
                     if cover_url:
                         print(f"  cover: {cover_url[:120]}...")
 
-        # Step 3e: Upload cover image separately and try task creation
-        # The profile endpoint gives V2-signed URLs, but existing tasks
-        # use V4-signed URLs with a different access key. Upload the
-        # thumbnail via the generic upload endpoint to get a URL the
-        # task endpoint might accept.
-        print(f"\n[3e] Uploading cover image separately...")
+        # Step 3e: Try task creation with multiple cover URL sources
+        print(f"\n[3e] Trying task creation...")
+
+        # Source 1: Upload cover separately via generic endpoint
         uploaded_cover_url = cloud_upload_cover(auth["access_token"], file_path)
         if uploaded_cover_url:
             print(f"  Uploaded cover: {uploaded_cover_url[:120]}...")
-            # Try task creation with the separately-uploaded cover
-            print(f"\n  Trying task creation with uploaded cover...")
+
+        # Source 2: Get cover URL from an existing task (known to work)
+        ref_cover_url = ""
+        tasks_resp = requests.get(
+            f"{API_BASE}/v1/user-service/my/tasks",
+            headers=auth_headers,
+        )
+        if tasks_resp.ok:
+            hits = tasks_resp.json().get("hits", []) or []
+            if hits:
+                ref_cover_url = hits[0].get("cover", "")
+                if ref_cover_url:
+                    print(f"  Reference cover from existing task: {ref_cover_url[:120]}...")
+
+        # Try task creation with each cover URL source
+        cover_sources = []
+        if uploaded_cover_url:
+            cover_sources.append(("uploaded", uploaded_cover_url))
+        if ref_cover_url:
+            cover_sources.append(("ref-task", ref_cover_url))
+        if cover_url:
+            cover_sources.append(("profile", cover_url))
+
+        for src_label, src_cover in cover_sources:
+            print(f"\n  Task creation with [{src_label}] cover...")
             task_data = cloud_create_task(
-                auth["access_token"], device_id, filename, model_id, profile_id, uploaded_cover_url
+                auth["access_token"], device_id, filename, model_id, profile_id, src_cover
             )
             if task_data.get("id"):
                 task_id = str(task_data["id"])
                 subtask_id = str(task_data.get("subtask_id", "0"))
                 print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
+                break
 
         # Use the profile download URL for MQTT (not the S3 upload URL)
         # Also rewrite to dualstack virtual-hosted format if it's path-style
