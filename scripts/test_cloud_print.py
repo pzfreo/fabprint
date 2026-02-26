@@ -430,8 +430,13 @@ def cloud_create_task(
     if not cover_variants:
         cover_variants.append(("empty", ""))
 
+    # Build list of payloads to try — vary the cover AND other fields
+    attempts = []
+
+    # For each cover variant, try with and without extra fields
     for cover_label, cover_val in cover_variants:
-        payload = {
+        # Standard payload (matches documented task object)
+        attempts.append((f"{cover_label}", {
             "deviceId": device_id,
             "title": filename,
             "modelId": model_id,
@@ -441,41 +446,67 @@ def cloud_create_task(
             "cover": cover_val,
             "amsDetailMapping": [],
             "mode": "cloud_file",
-        }
+        }))
 
-        print(f"\n  [{cover_label}] POST {task_url}")
-        print(f"  cover: {cover_val[:150]}...")
-        resp = requests.post(task_url, headers=task_headers, json=payload)
+    # Also try first cover variant with profileId as string
+    if cover_variants:
+        _, first_cover = cover_variants[0]
+        attempts.append(("str-profileId", {
+            "deviceId": device_id,
+            "title": filename,
+            "modelId": model_id,
+            "profileId": str(profile_id_int),
+            "plateIndex": 1,
+            "designId": 0,
+            "cover": first_cover,
+            "amsDetailMapping": [],
+            "mode": "cloud_file",
+        }))
+
+        # Try without designId and without mode
+        attempts.append(("no-designId-no-mode", {
+            "deviceId": device_id,
+            "title": filename,
+            "modelId": model_id,
+            "profileId": profile_id_int,
+            "plateIndex": 1,
+            "cover": first_cover,
+        }))
+
+        # Try with minimal headers (no slicer headers)
+        attempts.append(("minimal-headers", {
+            "deviceId": device_id,
+            "title": filename,
+            "modelId": model_id,
+            "profileId": profile_id_int,
+            "plateIndex": 1,
+            "designId": 0,
+            "cover": first_cover,
+        }))
+
+    for attempt_label, payload in attempts:
+        print(f"\n  [{attempt_label}] POST {task_url}")
+        cover_preview = payload.get("cover", "")[:120]
+        print(f"  cover: {cover_preview}...")
+
+        # Use minimal headers for the "minimal-headers" attempt
+        if attempt_label == "minimal-headers":
+            hdrs = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+        else:
+            hdrs = task_headers
+
+        resp = requests.post(task_url, headers=hdrs, json=payload)
         status = resp.status_code
         body = resp.text[:500] if resp.text else "(empty)"
         print(f"  -> {status}: {body}")
-        if status != 200:
-            # Print response headers for debugging
-            interesting = {k: v for k, v in resp.headers.items()
-                          if k.lower() in ("content-type", "x-request-id", "x-error", "x-bbl-error")}
-            if interesting:
-                print(f"  headers: {interesting}")
 
         if resp.ok:
             data = resp.json()
             print(f"  Task created: {json.dumps(data, indent=2)[:500]}")
             return data
-
-    # Last resort: try without cover, designId, mode, amsDetailMapping
-    # to see what error we get (helps diagnose which field is wrong)
-    print("\n  [minimal] Trying minimal payload...")
-    minimal = {
-        "deviceId": device_id,
-        "title": filename,
-        "modelId": model_id,
-        "profileId": profile_id_int,
-        "plateIndex": 1,
-    }
-    resp = requests.post(task_url, headers=task_headers, json=minimal)
-    body = resp.text[:500] if resp.text else "(empty)"
-    print(f"  -> {resp.status_code}: {body}")
-    if resp.ok:
-        return resp.json()
 
     return {}
 
@@ -1078,8 +1109,8 @@ def main():
                     if cover_url:
                         print(f"  cover: {cover_url[:120]}...")
 
-        # Fetch existing tasks to see what cover URL format works
-        print(f"\n  Checking existing tasks for cover URL format...")
+        # Fetch existing tasks to see full task object structure
+        print(f"\n  Checking existing tasks...")
         tasks_resp = requests.get(
             f"{API_BASE}/v1/user-service/my/tasks",
             headers=auth_headers,
@@ -1088,28 +1119,24 @@ def main():
             tasks_data = tasks_resp.json()
             hits = tasks_data.get("hits", []) or []
             if hits:
-                # Show the first task's cover URL as reference
+                # Dump the FULL first task object to see every field
                 ref_task = hits[0]
-                ref_cover = ref_task.get("cover", "")
-                ref_mode = ref_task.get("mode", "")
-                ref_status = ref_task.get("status", "")
-                print(f"  Reference task: mode={ref_mode}, status={ref_status}")
-                print(f"  Reference cover: {ref_cover[:200]}")
-                # Show all unique cover URL patterns
-                cover_patterns = set()
-                for t in hits[:5]:
-                    tc = t.get("cover", "")
-                    if tc:
-                        from urllib.parse import urlparse
-                        p = urlparse(tc)
-                        cover_patterns.add(f"{p.scheme}://{p.netloc}")
-                if cover_patterns:
-                    print(f"  Cover URL domains: {cover_patterns}")
+                print(f"  Full reference task:\n{json.dumps(ref_task, indent=2)[:2000]}")
             else:
                 print(f"  No existing tasks found")
 
         # Use the profile download URL for MQTT (not the S3 upload URL)
+        # Also rewrite to dualstack virtual-hosted format if it's path-style
         if download_url:
+            import re
+            m = re.match(
+                r"https://s3\.([^.]+)\.amazonaws\.com/([^/]+)(/.*)",
+                download_url,
+            )
+            if m:
+                region, bucket, key_params = m.group(1), m.group(2), m.group(3)
+                download_url = f"https://{bucket}.s3.dualstack.{region}.amazonaws.com{key_params}"
+                print(f"  Rewrote to dualstack: {download_url[:120]}...")
             print(f"  Using profile download_url for print: {download_url[:120]}...")
             file_url = download_url
 
