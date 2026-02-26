@@ -390,16 +390,42 @@ def cloud_create_task(
     task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     task_url = f"{API_BASE}/v1/user-service/my/task"
 
-    # Try multiple cover URL formats — the signed URL with query params
-    # might not be accepted. Also try the base URL without query params.
+    # Try multiple cover URL formats.
+    # Existing successful tasks use virtual-hosted S3 URL style:
+    #   https://or-cloud-model-prod.s3.dualstack.us-west-2.amazonaws.com/private/...
+    # But the profile endpoint returns path-style:
+    #   https://s3.us-west-2.amazonaws.com/or-cloud-model-prod/private/...
+    # Convert to the virtual-hosted format that the task endpoint expects.
     cover_variants = []
     if cover_url:
+        # Convert path-style S3 URL to virtual-hosted dualstack format
+        parsed = urlparse(cover_url)
+        rewritten = cover_url
+        # Match: https://s3.{region}.amazonaws.com/{bucket}/{key}
+        import re
+        path_style = re.match(
+            r"https://s3\.([^.]+)\.amazonaws\.com/([^/]+)(/.*)",
+            cover_url,
+        )
+        if path_style:
+            region = path_style.group(1)
+            bucket = path_style.group(2)
+            key_and_params = path_style.group(3)
+            # Reconstruct as virtual-hosted dualstack
+            rewritten = f"https://{bucket}.s3.dualstack.{region}.amazonaws.com{key_and_params}"
+            cover_variants.append(("dualstack", rewritten))
+
+        # Also try the original signed URL and bare URL
         cover_variants.append(("signed", cover_url))
-        # Strip query params (AWS signature)
         parsed = urlparse(cover_url)
         bare_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
         if bare_url != cover_url:
             cover_variants.append(("bare", bare_url))
+        # Also try dualstack bare
+        if path_style:
+            parsed_rw = urlparse(rewritten)
+            bare_rw = urlunparse((parsed_rw.scheme, parsed_rw.netloc, parsed_rw.path, "", "", ""))
+            cover_variants.append(("dualstack-bare", bare_rw))
 
     if not cover_variants:
         cover_variants.append(("empty", ""))
