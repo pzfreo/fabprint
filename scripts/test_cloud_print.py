@@ -140,13 +140,10 @@ def cloud_login(email: str, password: str) -> dict:
     if not token:
         raise RuntimeError(f"Login failed: {data}")
 
-    print(f"  Login successful (token: {token[:20]}...)")
-
     # Save token for reuse
     token_file = Path.home() / ".bambu_cloud_token"
     token_file.write_text(json.dumps({"token": token, "email": email}))
     token_file.chmod(0o600)
-    print(f"  Token saved to {token_file}")
 
     return _get_user_info(token)
 
@@ -158,9 +155,7 @@ def cloud_login_with_cache(email: str, password: str) -> dict:
         try:
             cached = json.loads(token_file.read_text())
             if cached.get("email") == email and cached.get("token"):
-                print("  Trying cached token...")
                 info = _get_user_info(cached["token"])
-                print(f"  Cached token valid (user {info['user_id']})")
                 return info
         except Exception:
             pass  # Token expired or invalid, fall through to fresh login
@@ -203,49 +198,24 @@ def cloud_create_project(token: str, filename: str) -> dict:
     """
     auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
 
-    # Try creating a new project
     resp = requests.post(
         f"{API_BASE}/v1/iot-service/api/user/project",
         headers=auth_headers,
         json={"name": filename},
     )
-    print(f"  Create project response: {resp.status_code}")
-    print(f"  Body: {resp.text[:1000]}")
+    if resp.ok:
+        return resp.json()
 
+    # Fallback: use most recent existing project
+    resp = requests.get(f"{API_BASE}/v1/iot-service/api/user/project", headers=auth_headers)
     if resp.ok:
         data = resp.json()
-        project_id = data.get("project_id", "")
-        model_id = data.get("model_id", "")
-        upload_ticket = data.get("upload_ticket", "")
-        print(f"  project_id={project_id}, model_id={model_id}, upload_ticket={upload_ticket}")
-        return data
-
-    # If POST isn't supported, try listing existing projects
-    print("  Falling back to project listing...")
-    resp = requests.get(
-        f"{API_BASE}/v1/iot-service/api/user/project",
-        headers=auth_headers,
-    )
-    print(f"  List projects response: {resp.status_code}")
-    print(f"  Body: {resp.text[:1000]}")
-    if resp.ok:
-        data = resp.json()
-        projects = data.get("projects", [])
-        if isinstance(data, list):
-            projects = data
+        projects = data.get("projects", data if isinstance(data, list) else [])
         if projects:
-            # Use the most recent project
             proj = projects[-1]
-            project_id = proj.get("project_id", "")
-            print(f"  Using existing project: {project_id}")
-            # Fetch full project details for upload_ticket
-            detail_resp = requests.get(
-                f"{API_BASE}/v1/iot-service/api/user/project/{project_id}",
-                headers=auth_headers,
-            )
-            if detail_resp.ok:
-                return detail_resp.json()
-            return proj
+            pid = proj.get("project_id", "")
+            detail = requests.get(f"{API_BASE}/v1/iot-service/api/user/project/{pid}", headers=auth_headers)
+            return detail.json() if detail.ok else proj
     return {}
 
 
@@ -268,22 +238,19 @@ def cloud_notify_upload(token: str, upload_ticket: str, filename: str = "") -> d
         headers=auth_headers,
         json={"upload": upload_struct},
     )
-    print(f"  PUT notification: {put_resp.status_code} — {put_resp.text[:500]}")
 
     if not put_resp.ok:
-        # If that didn't work, try adding more fields
         upload_struct_v2 = {
             "ticket": upload_ticket,
             "origin_file_name": filename,
             "status": "complete",
             "file_size": 0,
         }
-        put_resp2 = requests.put(
+        put_resp = requests.put(
             notify_url,
             headers=auth_headers,
             json={"upload": upload_struct_v2},
         )
-        print(f"  PUT v2: {put_resp2.status_code} — {put_resp2.text[:500]}")
 
     # Poll GET for confirmation
     for attempt in range(3):
@@ -293,13 +260,8 @@ def cloud_notify_upload(token: str, upload_ticket: str, filename: str = "") -> d
             headers=auth_headers,
             params={"action": "upload", "ticket": upload_ticket},
         )
-        print(f"  GET poll {attempt + 1}/3: {resp.status_code} — {resp.text[:300]}")
-
         if resp.ok:
-            data = resp.json()
-            return data
-
-    print("  Notification not confirmed — continuing to task creation anyway")
+            return resp.json()
     return {}
 
 
@@ -515,20 +477,13 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
     file_size = file_path.stat().st_size
     filename = file_path.name
 
-    # Get a signed upload URL
     upload_endpoint = f"{API_BASE}/v1/iot-service/api/user/upload"
     auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
     params = {"filename": filename, "size": file_size}
-    print(f"  GET {upload_endpoint}")
-    print(f"  params: {params}")
 
     resp = requests.get(upload_endpoint, headers=auth_headers, params=params)
-    print(f"  Response: {resp.status_code}")
-    if resp.status_code != 200:
-        print(f"  Body: {resp.text[:500]}")
     resp.raise_for_status()
     upload_data = resp.json()
-    print(f"  Upload response: {json.dumps(upload_data, indent=2)[:1000]}")
 
     # Response has a urls array with filename and size entries
     upload_url = upload_data.get("upload_url")
@@ -560,9 +515,6 @@ def cloud_upload_file(token: str, file_path: Path) -> str:
             timeout=30,
         )
 
-    print(f"  Uploaded {filename} ({file_size} bytes)")
-
-    # Return the full URL including query params
     return upload_url
 
 
@@ -681,7 +633,6 @@ class BambuCloudMQTT:
 
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         if rc == 0:
-            print(f"  MQTT connected to {MQTT_BROKER}")
             client.subscribe(self.report_topic)
             self._connected.set()
         else:
@@ -731,7 +682,6 @@ class BambuCloudMQTT:
 
     def connect(self, timeout: float = 10.0):
         """Connect to the cloud MQTT broker."""
-        print(f"  Connecting MQTT to {MQTT_BROKER}:{MQTT_PORT}...")
         self.client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
         self.client.loop_start()
         if not self._connected.wait(timeout):
@@ -740,7 +690,6 @@ class BambuCloudMQTT:
     def disconnect(self):
         self.client.loop_stop()
         self.client.disconnect()
-        print("  MQTT disconnected")
 
     def _next_seq(self) -> str:
         self._seq += 1
@@ -795,11 +744,7 @@ class BambuCloudMQTT:
                 "use_ams": use_ams,
             }
         }
-        print(f"  >> start_print: {filename}")
-        print(f"  >> url: {file_url[:120]}...")
-        print(f"  >> project_id={project_id}, profile_id={profile_id}")
-        print(f"  >> task_id={task_id}, subtask_id={subtask_id}")
-        print(f"  >> md5={md5}")
+        print(f"  >> project_file: task={task_id} url={file_url[:80]}...")
         self._publish(cmd)
 
     def pause_print(self):
@@ -823,7 +768,6 @@ class BambuCloudMQTT:
     def request_status(self):
         """Request full printer status (pushall)."""
         cmd = {"pushing": {"sequence_id": self._next_seq(), "command": "pushall", "version": 1, "push_target": 1}}
-        print("  >> pushall (request status)")
         self._publish(cmd)
 
 
@@ -1275,28 +1219,22 @@ def main():
         sys.exit(1)
 
     # --- Step 1: Login ---
-    print("\n[1] Logging in...")
+    print("[1] Logging in...", end=" ")
     auth = cloud_login_with_cache(email, password)
-    print(f"  Logged in as user {auth['user_id']}")
+    print(f"OK (user {auth['user_id']})")
 
     # --- Step 2: List devices ---
-    print("\n[2] Fetching devices...")
+    print("[2] Fetching devices...", end=" ")
     devices = cloud_get_devices(auth["access_token"])
     if not devices:
-        print("  No printers found on this account!")
+        print("FAIL — no printers found!")
         sys.exit(1)
-
-    for d in devices:
-        name = d.get("name", "unnamed")
-        dev_id = d.get("dev_id", "?")
-        online = "online" if d.get("online") else "offline"
-        model = d.get("dev_product_name", d.get("dev_model_name", "?"))
-        print(f"  {name} ({model}) — {dev_id} [{online}]")
 
     device = select_device(devices)
     device_id = device["dev_id"]
     device_name = device.get("name", device_id)
-    print(f"  Selected: {device_name}")
+    online = "online" if device.get("online") else "offline"
+    print(f"{device_name} ({device_id}) [{online}]")
 
     # --- Step 3: Create project + Upload file ---
     file_url = args.file_url
@@ -1317,7 +1255,7 @@ def main():
         filename = file_path.name
 
         # Step 3a: Create a project to get model_id and upload_ticket
-        print(f"\n[3a] Creating cloud project for {filename}...")
+        print(f"[3a] Creating project...", end=" ")
         project_data = cloud_create_project(auth["access_token"], filename)
         model_id = str(project_data.get("model_id", "0"))
         upload_ticket = project_data.get("upload_ticket", "")
@@ -1325,136 +1263,84 @@ def main():
         project_upload_url = project_data.get("upload_url", "")
         if project_data.get("profile_id"):
             profile_id = str(project_data["profile_id"])
-        print(f"  model_id={model_id}, project_id={project_id}, profile_id={profile_id}")
-        print(f"  ticket={upload_ticket}")
-        if project_upload_url:
-            print(f"  project upload_url: {project_upload_url[:120]}...")
+        print(f"project={project_id} model={model_id} profile={profile_id}")
 
         # Step 3b: Upload file to S3
-        # Use the project's upload_url if available (uploads to models/ path),
-        # otherwise fall back to the generic upload endpoint (filename/ path)
+        print(f"[3b] Uploading {filename}...", end=" ")
         if project_upload_url:
-            print(f"\n[3b] Uploading {filename} to project S3 URL...")
             file_content = file_path.read_bytes()
             put_resp = requests.put(project_upload_url, data=file_content, headers={}, timeout=300)
             put_resp.raise_for_status()
             file_url = project_upload_url
-            print(f"  Uploaded {filename} ({len(file_content)} bytes) to project URL")
+            print(f"OK ({len(file_content)} bytes)")
         else:
-            print(f"\n[3b] Uploading {filename} to S3 (generic)...")
             file_url = cloud_upload_file(auth["access_token"], file_path)
-        print(f"  URL: {file_url[:120]}...")
+            print("OK")
 
         # Step 3c: Notify server that upload is complete
+        print(f"[3c] Upload notification...", end=" ")
         if upload_ticket:
-            print(f"\n[3c] Notifying server of upload completion (ticket={upload_ticket})...")
             notify_data = cloud_notify_upload(auth["access_token"], upload_ticket, filename)
             if notify_data.get("model_id"):
                 model_id = str(notify_data["model_id"])
-                print(f"  Updated model_id from notification: {model_id}")
+            print("OK")
         else:
-            print(f"\n[3c] No upload_ticket — skipping notification")
+            print("skipped (no ticket)")
             time.sleep(3)
 
-        # Step 3d: Poll project details until profiles are populated
-        # The server needs time to process the 3MF after upload.
-        # We poll until profiles[0].url is available (the download URL).
-        print(f"\n[3d] Polling project details (waiting for server processing)...")
+        # Step 3d: Poll project details / fetch profile
+        print(f"[3d] Waiting for server processing...", end=" ", flush=True)
         auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {auth['access_token']}"}
         cover_url = ""
         download_url = ""
         download_md5 = ""
         profile_id_from_server = ""
 
-        for poll in range(15):  # up to ~30 seconds
+        for poll in range(15):
             proj_resp = requests.get(
                 f"{API_BASE}/v1/iot-service/api/user/project/{project_id}",
                 headers=auth_headers,
             )
-            if not proj_resp.ok:
-                print(f"  Poll {poll+1}: HTTP {proj_resp.status_code}")
-                time.sleep(2)
-                continue
-
-            proj_detail = proj_resp.json()
-            profiles = proj_detail.get("profiles", []) or []
-
-            if profiles:
-                prof = profiles[0]
-                prof_url = prof.get("url") or ""
-                prof_md5 = prof.get("md5") or ""
-                prof_id = prof.get("profile_id") or ""
-
-                if prof_url:
-                    download_url = prof_url
-                    download_md5 = prof_md5
-                    if prof_id:
-                        profile_id_from_server = str(prof_id)
-                    print(f"  Poll {poll+1}: Profile ready!")
-                    print(f"  profile_id: {profile_id_from_server}")
-                    print(f"  url: {download_url[:120]}...")
-                    if download_md5:
-                        print(f"  md5: {download_md5}")
-
-                    # Extract cover from plates[0].thumbnail.url
-                    context = prof.get("context", {}) or {}
-                    plates = context.get("plates", []) or []
-                    if plates:
-                        thumb = plates[0].get("thumbnail", {}) or {}
-                        thumb_url = thumb.get("url") or ""
-                        if thumb_url:
-                            cover_url = thumb_url
-                            print(f"  cover: {cover_url[:120]}...")
-
-                    # If no thumbnail in plates, try deriving from configs
-                    if not cover_url:
-                        configs = context.get("configs", []) or []
-                        for cfg in configs:
-                            cfg_url = cfg.get("url", "")
-                            cfg_name = cfg.get("name", "")
-                            if cfg_url and "plate_1" in cfg_name:
-                                cover_url = cfg_url.rsplit(".", 1)[0] + ".png"
-                                print(f"  cover (derived): {cover_url[:120]}...")
-                                break
-
-                    break
-                else:
-                    print(f"  Poll {poll+1}: Profile exists but url not ready yet...")
-            else:
-                print(f"  Poll {poll+1}: No profiles yet...")
-
+            if proj_resp.ok:
+                profiles = proj_resp.json().get("profiles", []) or []
+                if profiles:
+                    prof = profiles[0]
+                    if prof.get("url"):
+                        download_url = prof["url"]
+                        download_md5 = prof.get("md5", "")
+                        if prof.get("profile_id"):
+                            profile_id_from_server = str(prof["profile_id"])
+                        context = prof.get("context", {}) or {}
+                        plates = context.get("plates", []) or []
+                        if plates:
+                            cover_url = (plates[0].get("thumbnail", {}) or {}).get("url", "")
+                        break
+            print(".", end="", flush=True)
             time.sleep(2)
 
-        # Update profile_id if server gave us one
         if profile_id_from_server:
             profile_id = profile_id_from_server
 
-        # Also try the profile details endpoint directly
+        # Fallback: profile endpoint directly
         if not download_url and profile_id != "0" and model_id != "0":
-            print(f"\n  Trying profile endpoint: profile_id={profile_id}, model_id={model_id}")
             prof_resp = requests.get(
                 f"{API_BASE}/v1/iot-service/api/user/profile/{profile_id}",
                 headers=auth_headers,
                 params={"model_id": model_id},
             )
-            print(f"  Profile endpoint: {prof_resp.status_code}")
             if prof_resp.ok:
                 prof_data = prof_resp.json()
-                # Dump full response for debugging
-                print(f"  Full profile response:\n{json.dumps(prof_data, indent=2)[:3000]}")
-
                 download_url = prof_data.get("url") or ""
                 download_md5 = prof_data.get("md5") or ""
-                if download_url:
-                    print(f"  url: {download_url[:120]}...")
-
                 context = prof_data.get("context", {}) or {}
                 plates = context.get("plates", []) or []
                 if plates and not cover_url:
-                    thumb = plates[0].get("thumbnail", {}) or {}
-                    cover_url = thumb.get("url") or ""
-                    if cover_url:
-                        print(f"  cover: {cover_url[:120]}...")
+                    cover_url = (plates[0].get("thumbnail", {}) or {}).get("url", "")
+
+        if download_url:
+            print(f" OK (profile={profile_id}, md5={download_md5[:12]}...)")
+        else:
+            print(f" no download URL found")
 
         # Step 3e: PATCH project (discovered from BambuStudio error codes)
         # The proprietary bambu_networking library PATCHes the project after
@@ -1531,110 +1417,44 @@ def main():
             subtask_id = str(task_data.get("subtask_id", "0"))
             print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
 
-        # Attempt 2: POST /v1/iot-service/api/user/print
-        # Per coelacant1/Bambu-Lab-Cloud-API API_DEVICES.md, this endpoint
-        # takes device_id, file_id, file_name, file_url (snake_case keys).
-        # Try multiple payload variants to find what works.
+        # Attempt 2: POST /v1/iot-service/api/user/print (known 405 — kept for retry)
         if task_id == "0":
-            print(f"\n  [2] POST /v1/iot-service/api/user/print")
             print_url = f"{API_BASE}/v1/iot-service/api/user/print"
+            print_file_url = download_url or file_url or ""
 
-            # Build the download URL for file_url (prefer profile download URL)
-            print_file_url = ""
-            if download_url:
-                print_file_url = download_url
-            elif file_url:
-                print_file_url = file_url
-
-            # Variant 2a: snake_case keys (per API docs)
-            print(f"\n  [2a] snake_case keys (device_id, file_id, file_name, file_url)")
-            payload_2a = {
-                "device_id": device_id,
-                "file_id": model_id,
-                "file_name": filename,
-                "file_url": print_file_url,
-                "settings": {},
-            }
-            print(f"  payload: {json.dumps(payload_2a)[:500]}")
-            resp = requests.post(print_url, headers=auth_headers, json=payload_2a)
-            body = resp.text[:500] if resp.text else "(empty)"
-            print(f"  -> {resp.status_code}: {body}")
-            for hdr in ["X-Request-Id", "X-Trace-Id"]:
-                if resp.headers.get(hdr):
-                    print(f"  {hdr}: {resp.headers[hdr]}")
-            if resp.ok:
-                data = resp.json()
-                job_id = data.get("data", {}).get("job_id") or data.get("job_id") or data.get("id")
-                if job_id:
-                    task_id = str(job_id)
-                    print(f"  SUCCESS! job_id/task_id={task_id}")
-
-            # Variant 2b: camelCase keys (in case API uses camelCase internally)
-            if task_id == "0":
-                print(f"\n  [2b] camelCase keys (deviceId, fileId, fileName, fileUrl)")
-                payload_2b = {
-                    "deviceId": device_id,
-                    "fileId": model_id,
-                    "fileName": filename,
-                    "fileUrl": print_file_url,
-                }
-                print(f"  payload: {json.dumps(payload_2b)[:500]}")
-                resp = requests.post(print_url, headers=auth_headers, json=payload_2b)
-                body = resp.text[:500] if resp.text else "(empty)"
-                print(f"  -> {resp.status_code}: {body}")
+            for variant_label, payload in [
+                ("snake_case", {"device_id": device_id, "file_id": model_id,
+                                "file_name": filename, "file_url": print_file_url, "settings": {}}),
+                ("camelCase", {"deviceId": device_id, "fileId": model_id,
+                               "fileName": filename, "fileUrl": print_file_url}),
+                ("full", {"device_id": device_id, "file_id": model_id, "file_name": filename,
+                          "file_url": print_file_url, "model_id": model_id,
+                          "profile_id": int(profile_id) if profile_id.isdigit() else 0,
+                          "project_id": project_id, "plate_index": 1}),
+            ]:
+                if task_id != "0":
+                    break
+                resp = requests.post(print_url, headers=auth_headers, json=payload)
                 if resp.ok:
                     data = resp.json()
                     job_id = data.get("data", {}).get("job_id") or data.get("job_id") or data.get("id")
                     if job_id:
                         task_id = str(job_id)
-                        print(f"  SUCCESS! job_id/task_id={task_id}")
+                        print(f"  POST /user/print ({variant_label}): SUCCESS! task_id={task_id}")
+            else:
+                print(f"  POST /user/print: {resp.status_code} (all 3 variants)")
 
-            # Variant 2c: with model/profile IDs and plate info
-            if task_id == "0":
-                print(f"\n  [2c] with modelId, profileId, plateIndex")
-                payload_2c = {
-                    "device_id": device_id,
-                    "file_id": model_id,
-                    "file_name": filename,
-                    "file_url": print_file_url,
-                    "model_id": model_id,
-                    "profile_id": int(profile_id) if profile_id.isdigit() else 0,
-                    "project_id": project_id,
-                    "plate_index": 1,
-                }
-                print(f"  payload: {json.dumps(payload_2c)[:500]}")
-                resp = requests.post(print_url, headers=auth_headers, json=payload_2c)
-                body = resp.text[:500] if resp.text else "(empty)"
-                print(f"  -> {resp.status_code}: {body}")
-                if resp.ok:
-                    data = resp.json()
-                    job_id = data.get("data", {}).get("job_id") or data.get("job_id") or data.get("id")
-                    if job_id:
-                        task_id = str(job_id)
-                        print(f"  SUCCESS! job_id/task_id={task_id}")
-
-        # Attempt 3: GET /v1/iot-service/api/user/print (read print status)
-        print(f"\n  [3] GET /v1/iot-service/api/user/print")
-        resp = requests.get(
-            f"{API_BASE}/v1/iot-service/api/user/print",
-            headers=auth_headers,
-            params={"force": "true"},
-        )
-        body = resp.text[:1000] if resp.text else "(empty)"
-        print(f"  -> {resp.status_code}: {body}")
-
-        # Attempt 4: GET print status filtered by device
-        print(f"\n  [4] GET /v1/iot-service/api/user/print?device_id={device_id}")
+        # GET /user/print — check device status
         resp = requests.get(
             f"{API_BASE}/v1/iot-service/api/user/print",
             headers=auth_headers,
             params={"device_id": device_id},
         )
-        body = resp.text[:1000] if resp.text else "(empty)"
-        print(f"  -> {resp.status_code}: {body}")
+        if resp.ok:
+            print(f"  GET /user/print: {resp.status_code} (device info OK)")
 
         # Use the profile download URL for MQTT (not the S3 upload URL)
-        # Also rewrite to dualstack virtual-hosted format if it's path-style
+        # Rewrite to dualstack virtual-hosted format if it's path-style
         if download_url:
             m = re.match(
                 r"https://s3\.([^.]+)\.amazonaws\.com/([^/]+)(/.*)",
@@ -1643,8 +1463,6 @@ def main():
             if m:
                 region, bucket, key_params = m.group(1), m.group(2), m.group(3)
                 download_url = f"https://{bucket}.s3.dualstack.{region}.amazonaws.com{key_params}"
-                print(f"  Rewrote to dualstack: {download_url[:120]}...")
-            print(f"  Using profile download_url for print: {download_url[:120]}...")
             file_url = download_url
 
     elif file_url:
@@ -1654,24 +1472,20 @@ def main():
         print("\n[3] No file specified — skipping upload")
 
     # --- Step 4: Connect MQTT ---
-    print(f"\n[4] Connecting MQTT...")
+    print(f"[4] MQTT...", end=" ")
     mqttc = BambuCloudMQTT(auth["user_id"], auth["access_token"], device_id)
     try:
         mqttc.connect()
+        print("connected")
 
         if args.status_only:
-            print("\n[5] Requesting printer status...")
             mqttc.request_status()
-            print("  Waiting for status (5s)...")
             time.sleep(5)
-            print("\n  Done.")
             return
 
         if file_url:
-            # --- Step 5a: Try MQTT with signed URL ---
-            print(f"\n[5] Starting print via MQTT (signed URL)")
-            print(f"  project_id={project_id}, profile_id={profile_id}")
-            print(f"  url: {file_url[:120]}...")
+            # --- Step 5: MQTT project_file commands ---
+            print(f"[5] MQTT project_file (task={task_id}, project={project_id}, profile={profile_id})")
             mqttc.start_print(
                 file_url=file_url,
                 filename=filename,
@@ -1682,22 +1496,15 @@ def main():
                 use_ams=args.use_ams,
                 md5=download_md5,
             )
-
-            # Wait for response
-            print("  Waiting for response (10s)...")
             time.sleep(10)
-
-            # Check status
             mqttc.request_status()
             time.sleep(5)
 
-            # --- Step 5b: Try with a fake task_id ---
-            # The printer might need ANY non-zero task_id to authorize
-            # cloud file downloads, even if it's not a real task.
+            # Retry with fake task_id if real one wasn't obtained
             if task_id == "0":
                 import random
                 fake_task_id = str(random.randint(100000000, 999999999))
-                print(f"\n[5b] Retrying MQTT with fake task_id={fake_task_id}")
+                print(f"[5b] MQTT retry (fake task_id={fake_task_id})")
                 mqttc.start_print(
                     file_url=file_url,
                     filename=filename,
@@ -1708,7 +1515,6 @@ def main():
                     use_ams=args.use_ams,
                     md5=download_md5,
                 )
-                print("  Waiting for response (10s)...")
                 time.sleep(10)
                 mqttc.request_status()
                 time.sleep(5)
@@ -1716,7 +1522,7 @@ def main():
             if args.interactive:
                 interactive_loop(mqttc)
         else:
-            print("\n[5] No file to print. Use --status-only to check printer status.")
+            print("[5] No file to print.")
 
     except KeyboardInterrupt:
         print("\n  Interrupted")
