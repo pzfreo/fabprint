@@ -1302,7 +1302,8 @@ def main():
                 headers=auth_headers,
             )
             if proj_resp.ok:
-                profiles = proj_resp.json().get("profiles", []) or []
+                proj_json = proj_resp.json()
+                profiles = proj_json.get("profiles", []) or []
                 if profiles:
                     prof = profiles[0]
                     if prof.get("url"):
@@ -1313,7 +1314,10 @@ def main():
                         context = prof.get("context", {}) or {}
                         plates = context.get("plates", []) or []
                         if plates:
-                            cover_url = (plates[0].get("thumbnail", {}) or {}).get("url", "")
+                            thumb = plates[0].get("thumbnail", {}) or {}
+                            cover_url = thumb.get("url", "")
+                        # Log the project structure for debugging
+                        log.debug("Project detail: %s", json.dumps(proj_json, indent=2)[:3000])
                         break
             print(".", end="", flush=True)
             time.sleep(2)
@@ -1347,12 +1351,14 @@ def main():
         # upload notification. This may be required before task creation.
         print(f"\n[3e] PATCH project (update after upload)...")
         patch_payloads = [
-            # Variant 1: minimal — just mark status
+            # Variant 1: profile_id as string (API requires string, not int)
+            {"name": filename, "profile_id": profile_id},
+            # Variant 2: minimal status
             {"name": filename, "status": "uploaded"},
-            # Variant 2: with profile info
-            {"name": filename, "profile_id": int(profile_id) if profile_id.isdigit() else 0},
             # Variant 3: with model_id
             {"model_id": model_id, "name": filename},
+            # Variant 4: profile_id + model_id
+            {"name": filename, "profile_id": profile_id, "model_id": model_id},
         ]
         for i, patch_payload in enumerate(patch_payloads):
             resp = requests.patch(
@@ -1400,15 +1406,21 @@ def main():
             except Exception as e:
                 print(f"  Error parsing files: {e}")
 
-        # Step 3h: Try to trigger cloud print via multiple endpoints
-        print(f"\n[3h] Trying to trigger cloud print...")
+        # Upload a real cover image from the 3mf if profile cover looks wrong
+        print(f"\n[3h] Preparing cover image...")
+        print(f"  Profile cover_url: {cover_url[:150] if cover_url else '(none)'}")
+        uploaded_cover = ""
+        if not cover_url or cover_url.endswith("/"):
+            print(f"  Cover URL missing or truncated, uploading thumbnail from 3mf...")
+            uploaded_cover = cloud_upload_cover(auth["access_token"], file_path)
+        task_cover = uploaded_cover or cover_url or ""
+        print(f"  Using cover: {task_cover[:150] if task_cover else '(none)'}")
 
-        # Use profile cover URL for task creation attempts
-        task_cover = cover_url if cover_url else ""
+        # Try to trigger cloud print via multiple endpoints
+        print(f"\n[3i] Trying to trigger cloud print...")
 
-        # Attempt 1: POST /v1/user-service/my/task with print_type field
-        # BambuStudio sets params.print_type = "from_normal" for cloud prints
-        print(f"\n  [1] POST /v1/user-service/my/task (with print_type)")
+        # Attempt 1: POST /v1/user-service/my/task
+        print(f"\n  [1] POST /v1/user-service/my/task")
         task_data = cloud_create_task(
             auth["access_token"], device_id, filename, model_id, profile_id, task_cover
         )
