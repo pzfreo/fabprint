@@ -436,51 +436,72 @@ def cloud_create_task(
     # Use the first (best) cover variant
     primary_cover = cover_variants[0][1] if cover_variants else ""
 
-    payload = {
-        "deviceId": device_id,
-        "title": filename,
-        "modelId": model_id,
-        "profileId": profile_id_int,
-        "plateIndex": 1,
-        "designId": 0,
-        "cover": primary_cover,
-        "amsDetailMapping": [],
-        "mode": "cloud_file",
-        "bedType": "auto",
-        "jobType": 1,
-    }
-
-    print(f"  POST {task_url}")
-    print(f"  cover: {primary_cover[:150]}")
-    resp = requests.post(task_url, headers=task_headers, json=payload)
-    body = resp.text[:500] if resp.text else "(empty)"
-    print(f"  -> {resp.status_code}: {body}")
-
-    if resp.ok:
-        data = resp.json()
-        print(f"  Task created: {json.dumps(data, indent=2)[:500]}")
-        return data
-
-    # If requests failed, try with curl to rule out Python HTTP issues
-    print(f"\n  Retrying with curl...")
-    payload_json = json.dumps(payload)
-    curl_cmd = [
-        "curl", "-s", "-w", "\n%{http_code}", "-X", "POST", task_url,
-        "-H", f"Authorization: Bearer {token}",
-        "-H", "Content-Type: application/json",
-        "-H", "Accept: application/json",
-        "-d", payload_json,
+    # Two payload variants: one with extra fields from BambuStudio PrintParams,
+    # one minimal matching the OpenBambuAPI docs.
+    payloads = [
+        # Variant A: Full payload with fields from BambuStudio PrintParams
+        # (print_type, connection_type, bed_type, ams_mapping, etc.)
+        {
+            "deviceId": device_id,
+            "title": filename,
+            "modelId": model_id,
+            "profileId": profile_id_int,
+            "plateIndex": 1,
+            "designId": 0,
+            "cover": primary_cover,
+            "amsDetailMapping": [],
+            "mode": "cloud_file",
+            "bedType": "auto",
+            "jobType": 1,
+            # Fields from BambuStudio PrintParams that we weren't sending before
+            "printType": "from_normal",
+            "connectionType": "cloud",
+            "taskBedLeveling": True,
+            "taskFlowCali": True,
+            "taskVibrationCali": True,
+            "taskLayerInspect": False,
+            "taskRecordTimelapse": False,
+            "taskUseAms": False,
+            "taskBedType": "auto",
+        },
+        # Variant B: Minimal — just what OpenBambuAPI docs say
+        {
+            "modelId": model_id,
+            "title": filename,
+            "deviceId": device_id,
+            "profileId": profile_id_int,
+        },
+        # Variant C: snake_case variant (some Bambu APIs use snake_case)
+        {
+            "device_id": device_id,
+            "title": filename,
+            "model_id": model_id,
+            "profile_id": profile_id_int,
+            "plate_index": 1,
+            "design_id": 0,
+            "cover": primary_cover,
+            "print_type": "from_normal",
+            "connection_type": "cloud",
+        },
     ]
-    try:
-        result = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=15)
-        lines = result.stdout.strip().rsplit("\n", 1)
-        curl_body = lines[0] if len(lines) > 1 else ""
-        curl_status = lines[-1]
-        print(f"  curl -> {curl_status}: {curl_body[:500] if curl_body else '(empty)'}")
-        if curl_status == "200" and curl_body:
-            return json.loads(curl_body)
-    except Exception as e:
-        print(f"  curl error: {e}")
+
+    for i, payload in enumerate(payloads):
+        label = ["full+PrintParams", "minimal", "snake_case"][i]
+        print(f"  POST {task_url} (variant {label})")
+        print(f"  cover: {primary_cover[:100]}")
+        print(f"  payload keys: {list(payload.keys())}")
+        resp = requests.post(task_url, headers=task_headers, json=payload)
+        body = resp.text[:500] if resp.text else "(empty)"
+        print(f"  -> {resp.status_code}: {body}")
+        # Show response headers for debugging
+        for hdr in ["X-Request-Id", "X-Trace-Id"]:
+            if resp.headers.get(hdr):
+                print(f"  {hdr}: {resp.headers[hdr]}")
+
+        if resp.ok:
+            data = resp.json()
+            print(f"  Task created: {json.dumps(data, indent=2)[:500]}")
+            return data
 
     return {}
 
@@ -1435,16 +1456,73 @@ def main():
                     if cover_url:
                         print(f"  cover: {cover_url[:120]}...")
 
-        # Step 3e: Try to trigger cloud print via multiple endpoints
-        # Task creation with /v1/user-service/my/task always returns 400.
-        # Try alternative endpoints that might trigger the server-side print.
-        print(f"\n[3e] Trying to trigger cloud print...")
+        # Step 3e: PATCH project (discovered from BambuStudio error codes)
+        # The proprietary bambu_networking library PATCHes the project after
+        # upload notification. This may be required before task creation.
+        print(f"\n[3e] PATCH project (update after upload)...")
+        patch_payloads = [
+            # Variant 1: minimal — just mark status
+            {"name": filename, "status": "uploaded"},
+            # Variant 2: with profile info
+            {"name": filename, "profile_id": int(profile_id) if profile_id.isdigit() else 0},
+            # Variant 3: with model_id
+            {"model_id": model_id, "name": filename},
+        ]
+        for i, patch_payload in enumerate(patch_payloads):
+            resp = requests.patch(
+                f"{API_BASE}/v1/iot-service/api/user/project/{project_id}",
+                headers=auth_headers,
+                json=patch_payload,
+            )
+            body = resp.text[:500] if resp.text else "(empty)"
+            print(f"  PATCH variant {i+1}: {resp.status_code} — {body}")
+            if resp.ok:
+                print(f"  PATCH succeeded with variant {i+1}!")
+                break
+
+        # Step 3f: Get my settings (error code -2090 shows this step exists)
+        print(f"\n[3f] GET my/setting...")
+        resp = requests.get(
+            f"{API_BASE}/v1/user-service/my/setting",
+            headers=auth_headers,
+        )
+        body = resp.text[:500] if resp.text else "(empty)"
+        print(f"  -> {resp.status_code}: {body}")
+
+        # Step 3g: List cloud files to get correct file_id
+        # The coelacant1 library shows file_id != model_id
+        print(f"\n[3g] Listing cloud files to get file_id...")
+        file_id = ""
+        # Try files endpoint
+        resp = requests.get(
+            f"{API_BASE}/v1/iot-service/api/user/files",
+            headers=auth_headers,
+        )
+        body = resp.text[:1000] if resp.text else "(empty)"
+        print(f"  GET /user/files: {resp.status_code} — {body}")
+        if resp.ok:
+            try:
+                files_data = resp.json()
+                files_list = files_data if isinstance(files_data, list) else files_data.get("files", [])
+                for f in files_list:
+                    f_name = f.get("name", "") or f.get("file_name", "")
+                    f_id = f.get("file_id", "") or f.get("id", "")
+                    if f_name == filename and f_id:
+                        file_id = str(f_id)
+                        print(f"  Found file_id={file_id} for {filename}")
+                        break
+            except Exception as e:
+                print(f"  Error parsing files: {e}")
+
+        # Step 3h: Try to trigger cloud print via multiple endpoints
+        print(f"\n[3h] Trying to trigger cloud print...")
 
         # Use profile cover URL for task creation attempts
         task_cover = cover_url if cover_url else ""
 
-        # Attempt 1: POST /v1/user-service/my/task (standard)
-        print(f"\n  [1] POST /v1/user-service/my/task")
+        # Attempt 1: POST /v1/user-service/my/task with print_type field
+        # BambuStudio sets params.print_type = "from_normal" for cloud prints
+        print(f"\n  [1] POST /v1/user-service/my/task (with print_type)")
         task_data = cloud_create_task(
             auth["access_token"], device_id, filename, model_id, profile_id, task_cover
         )
