@@ -423,7 +423,7 @@ def cloud_create_task(
             "taskVibrationCali": True,
             "taskLayerInspect": False,
             "taskRecordTimelapse": False,
-            "taskUseAms": False,
+            "taskUseAms": True,
             "taskBedType": "auto",
         },
         # Variant B: Minimal — just what OpenBambuAPI docs say
@@ -713,7 +713,7 @@ class BambuCloudMQTT:
         project_id: str = "0",
         profile_id: str = "0",
         plate_index: int = 1,
-        use_ams: bool = False,
+        use_ams: bool = True,
         bed_levelling: bool = True,
         flow_cali: bool = True,
         vibration_cali: bool = True,
@@ -740,7 +740,7 @@ class BambuCloudMQTT:
                 "flow_cali": flow_cali,
                 "vibration_cali": vibration_cali,
                 "layer_inspect": False,
-                "ams_mapping": [0],
+                "ams_mapping": [0, 1, 2, 3],
                 "use_ams": use_ams,
             }
         }
@@ -950,7 +950,7 @@ class BambuLanMQTT:
         self,
         filename: str,
         plate_index: int = 1,
-        use_ams: bool = False,
+        use_ams: bool = True,
         bed_levelling: bool = True,
         flow_cali: bool = True,
         vibration_cali: bool = True,
@@ -976,7 +976,7 @@ class BambuLanMQTT:
                 "flow_cali": flow_cali,
                 "vibration_cali": vibration_cali,
                 "layer_inspect": True,
-                "ams_mapping": [0],
+                "ams_mapping": [0, 1, 2, 3],
                 "use_ams": use_ams,
             }
         }
