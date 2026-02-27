@@ -398,59 +398,57 @@ def cloud_create_task(
     # Use the first (best) cover variant
     primary_cover = cover_variants[0][1] if cover_variants else ""
 
-    # Two payload variants: one with extra fields from BambuStudio PrintParams,
-    # one minimal matching the OpenBambuAPI docs.
+    # Build payload incrementally — the API tells us one missing field at a time.
+    # Known required fields so far:
+    #   - modelId (camelCase)
+    #   - cover (URL string)
+    #   - plateIndex (int)
+    # Strategy: single payload, keep adding fields until it works.
+    # After each 400, the error message tells us the next missing field.
+    # Discovered field types so far:
+    #   profileId: int (string causes type mismatch)
+    #   designId: string (int 0 causes type mismatch)
+    #   modelId: string
+    #   cover: string (URL)
+    #   plateIndex: int
+    # Try different cover URL formats — the dualstack rewrite might be wrong
+    original_cover = cover_url  # path-style S3 URL from profile
+    bare_cover = ""
+    if original_cover:
+        from urllib.parse import urlparse, urlunparse
+        p = urlparse(original_cover)
+        bare_cover = urlunparse((p.scheme, p.netloc, p.path, "", "", ""))
+
+    # Empty 400 with {modelId, title, deviceId, profileId, cover, plateIndex}.
+    # Systematically add fields to find the missing required one.
+    base = {
+        "modelId": model_id,
+        "title": filename,
+        "deviceId": device_id,
+        "profileId": profile_id_int,
+        "cover": primary_cover,
+        "plateIndex": 1,
+    }
+    # All variants return empty 400 regardless of values — something fundamental
+    # is wrong. Try different approaches:
+    # The empty 400 was caused by designId:0 type mismatch masking other errors.
+    # Remove designId entirely and probe for the next missing required field.
+    # designId is required (empty 400 without it) but int/string both fail.
+    # Try exotic types for designId.
     payloads = [
-        # Variant A: Full payload with fields from BambuStudio PrintParams
-        # (print_type, connection_type, bed_type, ams_mapping, etc.)
-        {
-            "deviceId": device_id,
-            "title": filename,
-            "modelId": model_id,
-            "profileId": profile_id_int,
-            "plateIndex": 1,
-            "designId": 0,
-            "cover": primary_cover,
-            "amsDetailMapping": [],
-            "mode": "cloud_file",
-            "bedType": "auto",
-            "jobType": 1,
-            # Fields from BambuStudio PrintParams that we weren't sending before
-            "printType": "from_normal",
-            "connectionType": "cloud",
-            "taskBedLeveling": True,
-            "taskFlowCali": True,
-            "taskVibrationCali": True,
-            "taskLayerInspect": False,
-            "taskRecordTimelapse": False,
-            "taskUseAms": True,
-            "taskBedType": "auto",
-        },
-        # Variant B: Minimal — just what OpenBambuAPI docs say
-        {
-            "modelId": model_id,
-            "title": filename,
-            "deviceId": device_id,
-            "profileId": profile_id_int,
-        },
-        # Variant C: snake_case variant (some Bambu APIs use snake_case)
-        {
-            "device_id": device_id,
-            "title": filename,
-            "model_id": model_id,
-            "profile_id": profile_id_int,
-            "plate_index": 1,
-            "design_id": 0,
-            "cover": primary_cover,
-            "print_type": "from_normal",
-            "connection_type": "cloud",
-        },
+        # Variant A: designId as boolean false
+        ("designId=false", {**base, "designId": False}),
+        # Variant B: designId as null
+        ("designId=null", {**base, "designId": None}),
+        # Variant C: designId as float
+        ("designId=0.0", {**base, "designId": 0.0}),
+        # Variant D: designId as empty list
+        ("designId=[]", {**base, "designId": []}),
     ]
 
-    for i, payload in enumerate(payloads):
-        label = ["full+PrintParams", "minimal", "snake_case"][i]
-        print(f"  POST {task_url} (variant {label})")
-        print(f"  cover: {primary_cover[:100]}")
+    for i, (label, payload) in enumerate(payloads):
+        print(f"  POST {task_url} ({label})")
+        print(f"  cover: {payload.get('cover', '')[:200]}")
         print(f"  payload keys: {list(payload.keys())}")
         resp = requests.post(task_url, headers=task_headers, json=payload)
         body = resp.text[:500] if resp.text else "(empty)"
