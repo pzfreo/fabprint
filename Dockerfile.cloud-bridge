@@ -1,0 +1,50 @@
+# Cloud print bridge: wraps libbambu_networking.so for headless cloud printing
+#
+# Usage:
+#   docker build -f Dockerfile.cloud-bridge -t fabprint/cloud-bridge .
+#   docker run --rm -v /path/to/file.3mf:/data/file.3mf \
+#     -v ~/.bambu_cloud_token:/data/token.json:ro \
+#     fabprint/cloud-bridge print /data/file.3mf DEVICE_SERIAL /data/token.json
+#
+# Note: x86_64/amd64 only (libbambu_networking.so is x86_64 binary).
+# On Apple Silicon Macs, Docker runs this via Rosetta emulation.
+
+FROM --platform=linux/amd64 ubuntu:24.04
+
+LABEL org.opencontainers.image.description="Bambu Lab cloud print bridge (headless)"
+
+# Build tools + runtime deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        g++ \
+        ca-certificates \
+        curl \
+        libcurl4 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download libbambu_networking.so (slicer plugin v02.05)
+ARG BAMBU_LIB_URL=https://public-cdn.bambulab.com/upgrade/studio/plugins/01.09.06.63/linux/bambu_networking_plugins.zip
+RUN curl -fSL -o /tmp/plugins.zip "$BAMBU_LIB_URL" \
+    && mkdir -p /tmp/bambu_plugin \
+    && cd /tmp/bambu_plugin \
+    && python3 -c "import zipfile; zipfile.ZipFile('/tmp/plugins.zip').extractall('.')" \
+    && rm /tmp/plugins.zip \
+    && ls -la /tmp/bambu_plugin/
+
+# Download slicer TLS certificate (for MQTT to *.bambulab.com)
+RUN mkdir -p /tmp/bambu_agent/cert /tmp/bambu_agent/log /tmp/bambu_agent/config \
+    && curl -fSL -o /tmp/bambu_agent/cert/slicer_base64.cer \
+       "https://raw.githubusercontent.com/bambulab/BambuStudio/master/resources/cert/slicer_base64.cer"
+
+# Compile the bridge
+COPY scripts/bambu_cloud_bridge.cpp /opt/bridge/bambu_cloud_bridge.cpp
+RUN g++ -std=c++17 -O2 \
+        -o /usr/local/bin/bambu_cloud_bridge \
+        /opt/bridge/bambu_cloud_bridge.cpp \
+        -ldl -lpthread \
+    && rm -rf /opt/bridge
+
+# Set library path for the bridge
+ENV BAMBU_LIB_PATH=/tmp/bambu_plugin/libbambu_networking.so
+
+ENTRYPOINT ["bambu_cloud_bridge"]
+CMD ["--help"]

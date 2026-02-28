@@ -466,6 +466,428 @@ def cloud_create_task(
     return {}
 
 
+def cloud_create_task_full(
+    token: str,
+    device_id: str,
+    filename: str,
+    model_id: str,
+    profile_id: str = "0",
+    cover_url: str = "",
+    weight: float = 0.0,
+    cost_time: int = 0,
+) -> dict:
+    """Try creating a task by probing field combinations.
+
+    Strategy: Start with the known-required base fields + designId:0,
+    then add optional fields one at a time to find which combination works
+    (or which field triggers the empty 400).
+    """
+    try:
+        profile_id_int = int(profile_id)
+    except (ValueError, TypeError):
+        profile_id_int = 0
+
+    task_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
+    task_url = f"{API_BASE}/v1/user-service/my/task"
+
+    # Base payload with all confirmed-required fields
+    base = {
+        "modelId": model_id,
+        "title": filename,
+        "deviceId": device_id,
+        "profileId": profile_id_int,
+        "cover": cover_url,
+        "plateIndex": 1,
+        "designId": 0,
+    }
+
+    # First: try base only (designId:0 with just the required fields)
+    # Previously this gave "type mismatch" but that was with fewer fields.
+    # The full payload gave empty 400 — maybe designId:0 IS accepted
+    # but one of the extra fields broke it.
+    print(f"  [probe 1] base + designId:0")
+    resp = requests.post(task_url, headers=task_headers, json=base)
+    body = resp.text[:500] if resp.text else "(empty)"
+    print(f"    -> {resp.status_code}: {body}")
+    if resp.ok:
+        return resp.json()
+
+    # If designId:0 gives type mismatch on the base payload too,
+    # the field itself is the problem. Try without it.
+    if "designId" in body:
+        print(f"  [probe 2] base without designId")
+        base_no_design = {k: v for k, v in base.items() if k != "designId"}
+        resp = requests.post(task_url, headers=task_headers, json=base_no_design)
+        body = resp.text[:500] if resp.text else "(empty)"
+        print(f"    -> {resp.status_code}: {body}")
+        if resp.ok:
+            return resp.json()
+
+    # Add optional fields one at a time to the base
+    # If any addition changes the response, it tells us something
+    optional_fields = [
+        ("mode", "cloud_file"),
+        ("bedType", "auto"),
+        ("weight", weight),
+        ("costTime", cost_time),
+        ("isPrintable", True),
+        ("isPublicProfile", False),
+        ("amsDetailMapping", []),
+        ("status", 0),
+        ("feedbackStatus", 0),
+        ("plateName", ""),
+        ("designTitle", ""),
+        ("instanceId", 0),
+        ("length", 0),
+        ("deviceModel", ""),
+        ("deviceName", ""),
+    ]
+
+    # Try adding ALL optional fields but WITHOUT designId
+    # (since designId:0 causes type mismatch on base)
+    full_no_design = {k: v for k, v in base.items() if k != "designId"}
+    for key, val in optional_fields:
+        full_no_design[key] = val
+
+    print(f"  [probe 3] all fields, no designId")
+    resp = requests.post(task_url, headers=task_headers, json=full_no_design)
+    body = resp.text[:500] if resp.text else "(empty)"
+    print(f"    -> {resp.status_code}: {body}")
+    if resp.ok:
+        return resp.json()
+
+    # Try with designId as different int values
+    # Maybe designId:0 means "no design" but the Go parser has a bug with 0
+    # Try positive integers
+    for design_val in [1, -1]:
+        payload = {**full_no_design, "designId": design_val}
+        print(f"  [probe 4] all fields, designId={design_val}")
+        resp = requests.post(task_url, headers=task_headers, json=payload)
+        body = resp.text[:500] if resp.text else "(empty)"
+        print(f"    -> {resp.status_code}: {body}")
+        if resp.ok:
+            return resp.json()
+
+    # === MEGA PAYLOAD ===
+    # All discovered fields with correct types:
+    # Required: modelId(str), title(str), deviceId(str), profileId(int),
+    #           cover(str), plateIndex(int), designId(int)
+    # Optional confirmed: mode(str), bedType(str), weight(float), costTime(int),
+    #   isPrintable(bool), isPublicProfile(bool), amsDetailMapping(list),
+    #   status(int), feedbackStatus(int), plateName(str), designTitle(str),
+    #   instanceId(int), length(int), deviceModel(str), deviceName(str),
+    #   jobType(int), bedLeveling(bool), useAms(bool), layerInspect(bool),
+    #   timelapse(bool), amsMapping(json-str), nozzleMapping(json-str)
+    mega = {
+        "designId": 0,
+        "designTitle": "",
+        "instanceId": 0,
+        "modelId": model_id,
+        "title": filename,
+        "cover": cover_url,
+        "status": 0,
+        "feedbackStatus": 0,
+        "weight": weight,
+        "length": 0,
+        "costTime": cost_time,
+        "profileId": profile_id_int,
+        "plateIndex": 1,
+        "plateName": "",
+        "deviceId": device_id,
+        "deviceModel": "",
+        "deviceName": "",
+        "amsDetailMapping": [],
+        "mode": "cloud_file",
+        "isPublicProfile": False,
+        "isPrintable": True,
+        "bedType": "auto",
+        "jobType": 0,
+        "bedLeveling": True,
+        "useAms": True,
+        "layerInspect": False,
+        "timelapse": False,
+        "amsMapping": "[]",
+        "nozzleMapping": "[]",
+        "flowCali": True,
+        "vibrationCali": True,
+        "nozzleDiameter": 0.4,
+    }
+    print(f"  [probe 7] MEGA payload (all {len(mega)} fields)")
+    resp = requests.post(task_url, headers=task_headers, json=mega)
+    body = resp.text[:500] if resp.text else "(empty)"
+    print(f"    -> {resp.status_code}: {body}")
+    if resp.ok:
+        return resp.json()
+
+    # Try more field discovery — probe fields from BambuStudio PrintParams
+    more_candidates = [
+        "presetName", "configFilename", "ftpFolder", "ftpFile",
+        "ftpFileMd5", "connectionType", "comments", "originProfileId",
+        "stlDesignId", "originModelId", "printType", "dstFile",
+        "devName", "extraOptions", "subtaskName", "subtaskId",
+        "projectId", "md5", "url", "gcodeFile", "param",
+        "source", "slicerVersion", "taskName", "fileName",
+        "file", "fileUrl", "fileMd5", "gcodeParam",
+        "bedTemper", "nozzleTemper", "autoCalibration",
+        "filamentMapping", "filament", "material", "color",
+        "spoolId", "nozzleType", "printSpeed", "supportEnabled",
+    ]
+    found_fields = []
+    for field_name in more_candidates:
+        payload = {**mega, field_name: "PROBE"}
+        resp = requests.post(task_url, headers=task_headers, json=payload)
+        body = resp.text[:500] if resp.text else "(empty)"
+        if body and body != "(empty)" and field_name in body:
+            found_fields.append(field_name)
+            print(f"  [probe 8] FOUND: {field_name} -> {body}")
+
+    if found_fields:
+        print(f"  New fields found: {found_fields}")
+
+    return {}
+
+
+def cloud_slicer_upload(token: str, file_path: Path) -> dict:
+    """Upload via the slicer/upload endpoint (KITT method).
+
+    This uses a completely different upload path than cloud_create_project():
+      POST /v1/iot-service/api/slicer/upload → {url, osskey, file_url}
+
+    The returned osskey can be used as cloud://{osskey} in MQTT commands,
+    bypassing the need for project creation and task creation entirely.
+    """
+    import hashlib
+
+    file_data = file_path.read_bytes()
+    file_md5 = hashlib.md5(file_data).hexdigest()
+    file_size = len(file_data)
+    filename = file_path.name
+
+    auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
+
+    # Step 1: Get upload URL from slicer endpoint
+    # Try multiple endpoint variations — KITT uses /slicer/upload but it may
+    # have been renamed or moved
+    slicer_endpoints = [
+        "/v1/iot-service/api/slicer/upload",
+        "/v1/iot-service/api/user/slicer/upload",
+        "/v1/cloud/file/upload",
+        "/v1/iot-service/api/user/file/upload",
+    ]
+
+    resp = None
+    for endpoint in slicer_endpoints:
+        print(f"  POST {endpoint} ({filename}, {file_size} bytes, md5={file_md5})")
+        resp = requests.post(
+            f"{API_BASE}{endpoint}",
+            headers=auth_headers,
+            json={
+                "name": filename,
+                "size": file_size,
+                "md5": file_md5,
+            },
+        )
+        body = resp.text[:1000] if resp.text else "(empty)"
+        print(f"  -> {resp.status_code}: {body}")
+        if resp.ok:
+            break
+        if resp.status_code != 404:
+            # Non-404 means the endpoint exists but rejected our request
+            break
+
+    if not resp or not resp.ok:
+        return {"error": f"slicer/upload failed: {resp.status_code if resp else 'no response'}"}
+
+    upload_data = resp.json()
+    upload_url = upload_data.get("url")
+    osskey = upload_data.get("osskey") or upload_data.get("key") or ""
+    file_url = upload_data.get("file_url") or ""
+
+    if not upload_url:
+        print(f"  No upload URL in response: {upload_data}")
+        return {"error": "No upload URL returned"}
+
+    print(f"  osskey: {osskey}")
+    print(f"  file_url: {file_url[:150] if file_url else '(none)'}")
+    print(f"  upload_url: {upload_url[:150]}...")
+
+    # Step 2: PUT file to S3/OSS
+    print(f"  Uploading {file_size} bytes to S3...")
+    put_resp = requests.put(
+        upload_url,
+        data=file_data,
+        headers={"Content-Type": "application/octet-stream"},
+        timeout=300,
+    )
+    if not put_resp.ok:
+        print(f"  Upload failed: {put_resp.status_code} {put_resp.text[:200]}")
+        return {"error": f"S3 upload failed: {put_resp.status_code}"}
+
+    print(f"  Upload OK")
+
+    # Construct the cloud URL for MQTT
+    cloud_url = file_url or (f"cloud://{osskey}" if osskey else "")
+
+    return {
+        "success": True,
+        "file_url": cloud_url,
+        "osskey": osskey,
+        "md5": file_md5,
+        "upload_data": upload_data,  # preserve full response for debugging
+    }
+
+
+def create_config_3mf(source_3mf: Path) -> Path:
+    """Create a config-only 3mf from a full sliced 3mf.
+
+    BambuStudio uploads a separate 'config 3mf' before the main 3mf.
+    It contains only metadata/slice info — no model geometry, gcode, or images.
+    This corresponds to BambuStudio's export_3mf() with:
+      SaveStrategy::SkipModel | SaveStrategy::WithSliceInfo | SaveStrategy::SkipAuxiliary
+
+    Returns path to the temporary config 3mf file.
+    """
+    import tempfile
+
+    config_path = Path(tempfile.mktemp(suffix="_config.3mf"))
+
+    # Files to include in config 3mf (metadata only)
+    include_files = {
+        "[Content_Types].xml",
+        "_rels/.rels",
+        "Metadata/slice_info.config",
+        "Metadata/model_settings.config",
+        "Metadata/project_settings.config",
+        "Metadata/_rels/model_settings.config.rels",
+    }
+    # Also include any plate JSON files
+    include_prefixes = ("Metadata/plate_", )
+    include_suffixes_for_prefix = (".json", )
+
+    with zipfile.ZipFile(source_3mf, "r") as src, \
+         zipfile.ZipFile(config_path, "w", zipfile.ZIP_DEFLATED) as dst:
+        for item in src.infolist():
+            name = item.filename
+            # Include if in explicit list
+            if name in include_files:
+                dst.writestr(item, src.read(name))
+                continue
+            # Include plate JSON files (Metadata/plate_N.json)
+            if any(name.startswith(p) for p in include_prefixes):
+                if any(name.endswith(s) for s in include_suffixes_for_prefix):
+                    dst.writestr(item, src.read(name))
+
+    print(f"  Created config 3mf: {config_path} ({config_path.stat().st_size} bytes)")
+    return config_path
+
+
+def cloud_upload_config_3mf(
+    token: str,
+    source_3mf: Path,
+    project_id: str = "",
+    model_id: str = "",
+    profile_id: str = "",
+) -> str:
+    """Create and upload the config-only 3mf to OSS.
+
+    This is step 3 (-3030) in BambuStudio's cloud print flow:
+    'Upload 3mf config to OSS'. It happens BEFORE the main 3mf upload
+    and BEFORE the upload notification.
+
+    The GET /user/upload endpoint stores metadata (model_id, profile_id)
+    as separate S3 objects, linking this upload to the correct project.
+
+    Returns the config file URL on success, empty string on failure.
+    """
+    import hashlib
+
+    auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {token}"}
+
+    # Create the config 3mf
+    config_path = create_config_3mf(source_3mf)
+
+    try:
+        config_data = config_path.read_bytes()
+        config_size = len(config_data)
+        config_md5 = hashlib.md5(config_data).hexdigest()
+        config_name = f"{source_3mf.stem}_config.3mf"
+
+        # Get presigned upload URLs with project-linking metadata.
+        # The endpoint creates S3 objects for each param, allowing the server
+        # to associate this upload with the project.
+        upload_params = {
+            "filename": config_name,
+            "size": config_size,
+        }
+        if model_id and model_id != "0":
+            upload_params["model_id"] = model_id
+        if profile_id and profile_id != "0":
+            upload_params["profile_id"] = profile_id
+        if project_id and project_id != "0":
+            upload_params["project_id"] = project_id
+        upload_params["md5"] = config_md5
+
+        print(f"  Getting upload URLs for config 3mf ({config_name}, {config_size} bytes)...")
+        print(f"  Params: {upload_params}")
+        resp = requests.get(
+            f"{API_BASE}/v1/iot-service/api/user/upload",
+            headers=auth_headers,
+            params=upload_params,
+        )
+        if not resp.ok:
+            print(f"  Failed to get config upload URL: {resp.status_code} {resp.text[:200]}")
+            return ""
+
+        upload_data = resp.json()
+        print(f"  Upload response keys: {[u.get('type') for u in upload_data.get('urls', [])]}")
+
+        # Extract URLs by type and upload each
+        urls = upload_data.get("urls", [])
+        file_upload_url = None
+        for entry in urls:
+            url_type = entry.get("type", "")
+            url = entry.get("url", "")
+            if not url:
+                continue
+
+            if url_type == "filename":
+                file_upload_url = url
+                # Upload the actual config file
+                print(f"  Uploading config 3mf ({config_size} bytes)...")
+                put_resp = requests.put(url, data=config_data, headers={}, timeout=60)
+                if not put_resp.ok:
+                    print(f"  Config file upload failed: {put_resp.status_code}")
+                    return ""
+                print(f"  Config file uploaded OK")
+            elif url_type == "size":
+                # Upload size metadata
+                requests.put(url, data=str(config_size).encode(),
+                            headers={"Content-Type": "text/plain"}, timeout=30)
+            elif url_type == "md5":
+                # Upload MD5 metadata
+                requests.put(url, data=config_md5.encode(),
+                            headers={"Content-Type": "text/plain"}, timeout=30)
+            elif url_type in ("model_id", "profile_id", "project_id"):
+                # Upload linking metadata
+                value = entry.get("file", upload_params.get(url_type, ""))
+                requests.put(url, data=str(value).encode(),
+                            headers={"Content-Type": "text/plain"}, timeout=30)
+                print(f"  Uploaded {url_type} metadata: {value}")
+
+        if not file_upload_url:
+            print(f"  No file upload URL in response")
+            return ""
+
+        return file_upload_url
+
+    finally:
+        # Clean up temp file
+        try:
+            config_path.unlink()
+        except OSError:
+            pass
+
+
 def cloud_upload_file(token: str, file_path: Path) -> str:
     """Upload a file to Bambu Cloud (S3) and return the file URL.
 
@@ -1244,6 +1666,8 @@ def main():
     download_md5 = ""
     task_id = "0"
     subtask_id = "0"
+    slicer_url = ""
+    slicer_md5 = ""
 
     if args.file and not args.no_upload and not file_url:
         file_path = Path(args.file)
@@ -1255,16 +1679,31 @@ def main():
         # Step 3a: Create a project to get model_id and upload_ticket
         print(f"[3a] Creating project...", end=" ")
         project_data = cloud_create_project(auth["access_token"], filename)
+        # Log full response for debugging
+        print(f"\n  Full response: {json.dumps(project_data)[:800]}")
         model_id = str(project_data.get("model_id", "0"))
         upload_ticket = project_data.get("upload_ticket", "")
         project_id = str(project_data.get("project_id", "0"))
         project_upload_url = project_data.get("upload_url", "")
         if project_data.get("profile_id"):
             profile_id = str(project_data["profile_id"])
-        print(f"project={project_id} model={model_id} profile={profile_id}")
+        print(f"  project={project_id} model={model_id} profile={profile_id}")
 
-        # Step 3b: Upload file to S3
-        print(f"[3b] Uploading {filename}...", end=" ")
+        # Step 3b: Upload config 3mf to OSS (step -3030 in BambuStudio flow)
+        # BambuStudio uploads a separate metadata-only 3mf BEFORE the main file.
+        # This may be required for task creation to succeed.
+        print(f"\n[3b] Uploading config 3mf (metadata-only)...")
+        config_url = cloud_upload_config_3mf(
+            auth["access_token"], file_path,
+            project_id=project_id, model_id=model_id, profile_id=profile_id,
+        )
+        if config_url:
+            print(f"  Config 3mf uploaded: {config_url[:120]}...")
+        else:
+            print(f"  Config 3mf upload failed or skipped")
+
+        # Step 3c: Upload main file to S3
+        print(f"\n[3c] Uploading {filename}...", end=" ")
         if project_upload_url:
             file_content = file_path.read_bytes()
             put_resp = requests.put(project_upload_url, data=file_content, headers={}, timeout=300)
@@ -1275,8 +1714,8 @@ def main():
             file_url = cloud_upload_file(auth["access_token"], file_path)
             print("OK")
 
-        # Step 3c: Notify server that upload is complete
-        print(f"[3c] Upload notification...", end=" ")
+        # Step 3d: Notify server that upload is complete
+        print(f"[3d] Upload notification...", end=" ")
         if upload_ticket:
             notify_data = cloud_notify_upload(auth["access_token"], upload_ticket, filename)
             if notify_data.get("model_id"):
@@ -1286,8 +1725,8 @@ def main():
             print("skipped (no ticket)")
             time.sleep(3)
 
-        # Step 3d: Poll project details / fetch profile
-        print(f"[3d] Waiting for server processing...", end=" ", flush=True)
+        # Step 3e: Poll project details / fetch profile
+        print(f"[3e] Waiting for server processing...", end=" ", flush=True)
         auth_headers = {**SLICER_HEADERS, "Authorization": f"Bearer {auth['access_token']}"}
         cover_url = ""
         download_url = ""
@@ -1344,10 +1783,10 @@ def main():
         else:
             print(f" no download URL found")
 
-        # Step 3e: PATCH project (discovered from BambuStudio error codes)
+        # Step 3f: PATCH project (discovered from BambuStudio error codes)
         # The proprietary bambu_networking library PATCHes the project after
         # upload notification. This may be required before task creation.
-        print(f"\n[3e] PATCH project (update after upload)...")
+        print(f"\n[3f] PATCH project (update after upload)...")
         patch_payloads = [
             # Variant 1: profile_id as string (API requires string, not int)
             {"name": filename, "profile_id": profile_id},
@@ -1370,8 +1809,8 @@ def main():
                 print(f"  PATCH succeeded with variant {i+1}!")
                 break
 
-        # Step 3f: Get my settings (error code -2090 shows this step exists)
-        print(f"\n[3f] GET my/setting...")
+        # Step 3g: Get my settings (error code -2090 shows this step exists)
+        print(f"\n[3g] GET my/setting...")
         resp = requests.get(
             f"{API_BASE}/v1/user-service/my/setting",
             headers=auth_headers,
@@ -1379,9 +1818,9 @@ def main():
         body = resp.text[:500] if resp.text else "(empty)"
         print(f"  -> {resp.status_code}: {body}")
 
-        # Step 3g: List cloud files to get correct file_id
+        # Step 3h: List cloud files to get correct file_id
         # The coelacant1 library shows file_id != model_id
-        print(f"\n[3g] Listing cloud files to get file_id...")
+        print(f"\n[3h] Listing cloud files to get file_id...")
         file_id = ""
         # Try files endpoint
         resp = requests.get(
@@ -1405,7 +1844,7 @@ def main():
                 print(f"  Error parsing files: {e}")
 
         # Upload a real cover image from the 3mf if profile cover looks wrong
-        print(f"\n[3h] Preparing cover image...")
+        print(f"\n[3i] Preparing cover image...")
         print(f"  Profile cover_url: {cover_url[:150] if cover_url else '(none)'}")
         uploaded_cover = ""
         if not cover_url or cover_url.endswith("/"):
@@ -1414,54 +1853,54 @@ def main():
         task_cover = uploaded_cover or cover_url or ""
         print(f"  Using cover: {task_cover[:150] if task_cover else '(none)'}")
 
-        # Try to trigger cloud print via multiple endpoints
-        print(f"\n[3i] Trying to trigger cloud print...")
+        # Extract weight and costTime from project detail for task creation
+        plate_weight = 0.0
+        plate_cost_time = 0
+        if project_id != "0":
+            try:
+                proj_resp2 = requests.get(
+                    f"{API_BASE}/v1/iot-service/api/user/project/{project_id}",
+                    headers=auth_headers,
+                )
+                if proj_resp2.ok:
+                    pj = proj_resp2.json()
+                    for prof in pj.get("profiles", []) or []:
+                        ctx = prof.get("context", {}) or {}
+                        for plate in ctx.get("plates", []) or []:
+                            plate_weight = plate.get("weight", 0.0)
+                            plate_cost_time = plate.get("prediction", 0)
+                            if plate_weight:
+                                break
+                        if plate_weight:
+                            break
+            except Exception:
+                pass
+        print(f"  Plate stats: weight={plate_weight}g, costTime={plate_cost_time}s")
 
-        # Attempt 1: POST /v1/user-service/my/task
-        print(f"\n  [1] POST /v1/user-service/my/task")
-        task_data = cloud_create_task(
-            auth["access_token"], device_id, filename, model_id, profile_id, task_cover
+        # Try to trigger cloud print via multiple endpoints
+        print(f"\n[3j] Trying to trigger cloud print...")
+
+        # Attempt 1: Full task payload with ALL fields from GET /my/tasks
+        print(f"\n  === Attempt 1: Full task payload (all fields) ===")
+        task_data = cloud_create_task_full(
+            auth["access_token"], device_id, filename, model_id, profile_id,
+            task_cover, weight=plate_weight, cost_time=plate_cost_time,
         )
         if task_data.get("id"):
             task_id = str(task_data["id"])
             subtask_id = str(task_data.get("subtask_id", "0"))
             print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
 
-        # Attempt 2: POST /v1/iot-service/api/user/print (known 405 — kept for retry)
+        # Attempt 2: Original task creation (designId variants)
         if task_id == "0":
-            print_url = f"{API_BASE}/v1/iot-service/api/user/print"
-            print_file_url = download_url or file_url or ""
-
-            for variant_label, payload in [
-                ("snake_case", {"device_id": device_id, "file_id": model_id,
-                                "file_name": filename, "file_url": print_file_url, "settings": {}}),
-                ("camelCase", {"deviceId": device_id, "fileId": model_id,
-                               "fileName": filename, "fileUrl": print_file_url}),
-                ("full", {"device_id": device_id, "file_id": model_id, "file_name": filename,
-                          "file_url": print_file_url, "model_id": model_id,
-                          "profile_id": int(profile_id) if profile_id.isdigit() else 0,
-                          "project_id": project_id, "plate_index": 1}),
-            ]:
-                if task_id != "0":
-                    break
-                resp = requests.post(print_url, headers=auth_headers, json=payload)
-                if resp.ok:
-                    data = resp.json()
-                    job_id = data.get("data", {}).get("job_id") or data.get("job_id") or data.get("id")
-                    if job_id:
-                        task_id = str(job_id)
-                        print(f"  POST /user/print ({variant_label}): SUCCESS! task_id={task_id}")
-            else:
-                print(f"  POST /user/print: {resp.status_code} (all 3 variants)")
-
-        # GET /user/print — check device status
-        resp = requests.get(
-            f"{API_BASE}/v1/iot-service/api/user/print",
-            headers=auth_headers,
-            params={"device_id": device_id},
-        )
-        if resp.ok:
-            print(f"  GET /user/print: {resp.status_code} (device info OK)")
+            print(f"\n  === Attempt 2: Original task creation (designId variants) ===")
+            task_data = cloud_create_task(
+                auth["access_token"], device_id, filename, model_id, profile_id, task_cover
+            )
+            if task_data.get("id"):
+                task_id = str(task_data["id"])
+                subtask_id = str(task_data.get("subtask_id", "0"))
+                print(f"  SUCCESS! task_id={task_id}, subtask_id={subtask_id}")
 
         # Use the profile download URL for MQTT (not the S3 upload URL)
         # Rewrite to dualstack virtual-hosted format if it's path-style
@@ -1475,14 +1914,29 @@ def main():
                 download_url = f"https://{bucket}.s3.dualstack.{region}.amazonaws.com{key_params}"
             file_url = download_url
 
+        # Attempt 3: Slicer/upload approach (KITT method)
+        # Uses a completely different upload path that bypasses project/task creation
+        print(f"\n  === Attempt 3: Slicer/upload (KITT method) ===")
+        slicer_result = cloud_slicer_upload(auth["access_token"], file_path)
+        slicer_url = ""
+        slicer_md5 = ""
+        if slicer_result.get("success"):
+            slicer_url = slicer_result["file_url"]
+            slicer_md5 = slicer_result.get("md5", "")
+            print(f"  Slicer upload OK: {slicer_url}")
+        else:
+            print(f"  Slicer upload failed: {slicer_result.get('error', 'unknown')}")
+
     elif file_url:
         filename = Path(file_url).name
         print(f"\n[3] Using existing URL: {file_url}")
     elif not args.status_only:
         print("\n[3] No file specified — skipping upload")
+        slicer_url = ""
+        slicer_md5 = ""
 
     # --- Step 4: Connect MQTT ---
-    print(f"[4] MQTT...", end=" ")
+    print(f"\n[4] MQTT...", end=" ")
     mqttc = BambuCloudMQTT(auth["user_id"], auth["access_token"], device_id)
     try:
         mqttc.connect()
@@ -1493,37 +1947,62 @@ def main():
             time.sleep(5)
             return
 
-        if file_url:
+        if file_url or slicer_url:
             # --- Step 5: MQTT project_file commands ---
-            print(f"[5] MQTT project_file (task={task_id}, project={project_id}, profile={profile_id})")
-            mqttc.start_print(
-                file_url=file_url,
-                filename=filename,
-                task_id=task_id,
-                subtask_id=subtask_id,
-                project_id=project_id,
-                profile_id=profile_id,
-                use_ams=args.use_ams,
-                md5=download_md5,
-            )
-            time.sleep(10)
-            mqttc.request_status()
-            time.sleep(5)
-
-            # Retry with fake task_id if real one wasn't obtained
-            if task_id == "0":
-                import random
-                fake_task_id = str(random.randint(100000000, 999999999))
-                print(f"[5b] MQTT retry (fake task_id={fake_task_id})")
+            # Try 1: Standard project upload URL with task_id from HTTP API
+            if file_url:
+                print(f"\n[5a] MQTT project_file — project upload path")
+                print(f"  task={task_id}, project={project_id}, profile={profile_id}")
+                print(f"  url={file_url[:100]}...")
                 mqttc.start_print(
                     file_url=file_url,
                     filename=filename,
-                    task_id=fake_task_id,
-                    subtask_id=fake_task_id,
+                    task_id=task_id,
+                    subtask_id=subtask_id,
                     project_id=project_id,
                     profile_id=profile_id,
                     use_ams=args.use_ams,
                     md5=download_md5,
+                )
+                time.sleep(10)
+                mqttc.request_status()
+                time.sleep(5)
+
+            # Try 2: Use project_id as task_id (observed in printer status:
+            # successful prints often show task_id == project_id)
+            if file_url and task_id == "0" and project_id != "0":
+                print(f"\n[5b] MQTT project_file — project_id as task_id")
+                print(f"  task={project_id} (=project_id), project={project_id}, profile={profile_id}")
+                mqttc.start_print(
+                    file_url=file_url,
+                    filename=filename,
+                    task_id=project_id,
+                    subtask_id=project_id,
+                    project_id=project_id,
+                    profile_id=profile_id,
+                    use_ams=args.use_ams,
+                    md5=download_md5,
+                )
+                time.sleep(10)
+                mqttc.request_status()
+                time.sleep(5)
+
+            # Try 3: Slicer upload URL with cloud:// scheme (KITT method)
+            if slicer_url:
+                import uuid
+                slicer_task_id = str(uuid.uuid4())
+                print(f"\n[5c] MQTT project_file — slicer/upload path (KITT method)")
+                print(f"  task={slicer_task_id} (uuid4)")
+                print(f"  url={slicer_url}")
+                mqttc.start_print(
+                    file_url=slicer_url,
+                    filename=filename,
+                    task_id=slicer_task_id,
+                    subtask_id="0",
+                    project_id="0",
+                    profile_id="0",
+                    use_ams=args.use_ams,
+                    md5=slicer_md5,
                 )
                 time.sleep(10)
                 mqttc.request_status()

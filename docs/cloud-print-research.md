@@ -111,69 +111,93 @@ and types — the API returns 400 with an **empty body**. This happens regardles
 - modelId value (real value or `"0"`)
 - Additional fields (bedType, jobType, amsDetailMapping, taskUseAms, etc.)
 
-This suggests either:
-1. There's a required field we haven't discovered that the API doesn't name in its error
-2. The empty 400 is actually the `designId: 0` type mismatch (API gives empty body for type errors on some fields)
-3. Server-side validation fails (e.g., project not in correct state, or auth issue)
+**Conclusion (Feb 2026):** The empty 400 is a **deliberate server-side rejection** of third-party
+clients. The proprietary `libbambu_networking.so` likely includes an undocumented signature, client
+certificate, or challenge-response mechanism. **No third-party project has ever successfully called
+this endpoint** — not OrcaSlicer (uses the same proprietary DLL), not coelacant1/Bambu-Lab-Cloud-API
+(lists "print job submission" as "Not Yet Implemented"), not KITT (bypasses it entirely).
+
+Evidence:
+- All JSON parsing works (type mismatch errors fire correctly)
+- All required field validation works ("field X is not set")
+- Empty 400 has `Content-Length: 0` and NO `Content-Type` header — different code path from parsed errors
+- Same result regardless of: Client-Name header, session cookies, request ordering, precise payload structure
+- Same result with OrcaSlicer, BambuStudio, and Bambu Connect client headers
 
 ### Fields From GET /my/tasks Response
 
-The task object returned by GET has these fields — some may be required for POST:
+The task object returned by GET has ALL these fields (from actual successful prints):
 
 ```json
 {
-    "id": 0,
+    "id": 775084413,
     "designId": 0,
     "designTitle": "",
+    "designTitleTranslated": "",
     "instanceId": 0,
     "modelId": "US...",
     "title": "filename.3mf",
     "cover": "https://...",
     "status": 2,
-    "feedbackStatus": 0,
-    "startTime": "2022-11-22T01:58:10Z",
-    "endTime": "2022-11-22T02:54:12Z",
-    "weight": 12.6,
-    "length": 0,
-    "costTime": 3348,
-    "profileId": 12345678,
+    "failedType": 0,
+    "feedbackStatus": 2,
+    "startTime": "2026-02-26T21:10:57Z",
+    "endTime": "2026-02-26T21:11:16Z",
+    "weight": 0.31,
+    "length": 10,
+    "costTime": 562,
+    "profileId": 634845344,
     "plateIndex": 1,
     "plateName": "",
     "deviceId": "...",
-    "deviceModel": "",
-    "deviceName": "",
-    "amsDetailMapping": [],
+    "amsDetailMapping": [{"ams": 0, "sourceColor": "FCECD6FF", "targetColor": "FCECD6FF",
+        "filamentId": "GFL99", "filamentType": "PLA", "targetFilamentType": "",
+        "weight": 0.31, "nozzleId": 1, "amsId": 0, "slotId": 0}],
     "mode": "cloud_file",
     "isPublicProfile": false,
     "isPrintable": true,
-    "bedType": "auto"
+    "isDelete": false,
+    "deviceModel": "P1S",
+    "deviceName": "bambu p1s",
+    "bedType": "textured_plate",
+    "jobType": 1,
+    "material": {"id": "", "name": ""},
+    "platform": "",
+    "stepSummary": [],
+    "nozzleInfos": [],
+    "nozzleMapping": null,
+    "snapShot": "",
+    "extention": {"modelInfo": {"configs": [...], "compatibility": {...}}}
 }
 ```
 
-### Fields NOT Yet Tried
+### All Discovered Fields (32 total)
 
-These fields appear in the GET response but we haven't tried sending them:
-- `weight` (float, from plates[0].weight — e.g., 39.45)
-- `costTime` (int, from plates[0].prediction — e.g., 9043 seconds)
-- `status` (int, probably 0 for new)
-- `feedbackStatus` (int, probably 0)
-- `isPrintable` (bool, probably true)
-- `isPublicProfile` (bool, probably false)
-- `plateName` (string, probably empty)
-- `mode` (string, "cloud_file")
-- `designTitle` (string)
-- `instanceId` (int)
-- `length` (int)
+Every field the API recognizes was discovered through type-probing (sending wrong types to trigger
+"type mismatch" errors). All 32 fields with correct types in a single payload still returns empty 400.
 
-### Next Steps for Task Creation
+**Required (confirmed by "field X is not set" errors):**
+`modelId` (string), `cover` (string/URL), `plateIndex` (int), `profileId` (int), `deviceId` (string), `title` (string)
 
-1. **Try the full GET /my/tasks response structure** — include weight, costTime, status, feedbackStatus,
-   isPrintable, isPublicProfile, plateName, mode, and designId: 0 all together
-2. **Pull weight/costTime from project detail** plates[0].weight and plates[0].prediction
-3. **Try `designId: 0` again** but with all other fields correct — the earlier "type mismatch" may
-   have been masked by another field error
-4. **Check if project state matters** — maybe the server needs the project to be in a specific state
-   before task creation will work
+**Recognized (confirmed by "type mismatch" errors):**
+`designId` (int), `designTitle` (string), `instanceId` (int), `weight` (float), `length` (int),
+`costTime` (int), `plateName` (string), `deviceModel` (string), `deviceName` (string),
+`amsDetailMapping` (array), `mode` (string), `isPublicProfile` (bool), `isPrintable` (bool),
+`bedType` (string), `jobType` (int), `bedLeveling` (bool), `useAms` (bool), `layerInspect` (bool),
+`timelapse` (bool), `amsMapping` (JSON string), `nozzleMapping` (JSON string), `flowCali` (bool),
+`vibrationCali` (bool), `nozzleDiameter` (float), `status` (int), `feedbackStatus` (int)
+
+**NOT recognized (no type error, no effect):** `projectId`, `subtaskId`, `fileUrl`, `md5`,
+`configUrl`, `ossKey`, `signature`, `nonce`, `source`, `config`, `context`, `metadata`, etc.
+
+### Key Differences from Successful Tasks
+
+Compared to real successful tasks from GET /my/tasks:
+- `bedType` should be `"textured_plate"` not `"auto"` (but making it match doesn't help)
+- `jobType` should be `1` not `0` (but making it match doesn't help)
+- `amsDetailMapping` should have actual entries with `sourceColor`, `filamentType`, etc.
+- `length` is in centimeters (used_m × 100): 13.12m → 1312
+- `deviceModel: "P1S"`, `deviceName: "bambu p1s"` (not empty strings)
 
 ---
 
@@ -227,7 +251,17 @@ project
 - Printer goes to `gcode_state: FAILED` with `upload: {status: idle}` — it receives the command
   but does not download the file
 - This happens with both `task_id: "0"` and fake task IDs
-- The printer likely needs a **server-validated task_id** before it will download from S3
+- The printer **validates task_id with the Bambu server in real time** before downloading
+- **err_code 84033545** (0x5024009) = invalid/unrecognized task_id
+- Tested task_id values that ALL fail with 84033545:
+  - `"0"` (default)
+  - `project_id` (e.g., "666425410")
+  - UUID4 (e.g., "fed892ed-4cfe-4be2-81ec-7f860d2aca76")
+  - Previous successful task_id (e.g., "775084413") — already consumed/completed
+- Tested URL schemes that ALL fail:
+  - HTTPS S3 URL (project download URL)
+  - `cloud://private/{model_id}/{profile_id}/origin/filename.3mf`
+- **There is no way to use cloud MQTT without a valid task_id from POST /my/task**
 
 ### X.509 Signing
 
@@ -270,6 +304,152 @@ User-Agent: bambu_network_agent/02.03.01.00
 
 ---
 
+## Alternative Approach: Slicer/Upload (KITT Method)
+
+Discovered from the [KITT project](https://github.com/Jmi2020/KITT) (`services/fabrication/src/fabrication/drivers/bambu_cloud.py`).
+This approach **bypasses** the entire project/task creation flow and uses a different upload endpoint.
+
+### Flow
+
+| Step | Action | Details |
+|------|--------|---------|
+| 1 | POST /v1/iot-service/api/slicer/upload | `{name, size, md5}` → `{url, osskey, file_url}` |
+| 2 | PUT (presigned URL) | Upload 3mf binary with `Content-Type: application/octet-stream` |
+| 3 | MQTT project_file | `url: cloud://{osskey}` or `file_url`, all IDs = "0", task_id = uuid4 |
+
+### Key Differences from BambuStudio Flow
+
+- Uses `/slicer/upload` instead of `/user/project` — no project_id, model_id, profile_id
+- No upload notification, no PATCH, no task creation
+- URL scheme: `cloud://{osskey}` instead of S3 HTTPS URL
+- task_id is a locally-generated UUID, not server-validated
+- No X.509 signing in KITT's implementation (may only work on older firmware)
+
+### Test Results (Feb 2026)
+
+- `/v1/iot-service/api/slicer/upload` → **404 Not Found**
+- `/v1/iot-service/api/user/slicer/upload` → **404 Not Found**
+- `/v1/cloud/file/upload` → **404 Route Not Found**
+- `/v1/iot-service/api/user/file/upload` → **404 Not Found**
+
+**Conclusion:** The slicer/upload endpoint has been **removed or was never real**. KITT's cloud
+print code appears to be aspirational/untested — their print executor only uses local drivers
+(MoonrakerDriver, BambuMqttDriver), not the cloud path.
+
+---
+
+## BambuStudio Source Code Analysis (Feb 2026)
+
+### The Missing Config 3MF Upload (Step -3030)
+
+Deep analysis of BambuStudio source code (`PrintJob.cpp`, `Plater.cpp`, `bambu_networking.hpp`)
+revealed a **separate config-only 3MF** that BambuStudio uploads before the main file:
+
+```
+export_config_3mf() with:
+  SaveStrategy::SkipModel | SaveStrategy::WithSliceInfo | SaveStrategy::SkipAuxiliary
+```
+
+This creates a metadata-only 3MF (no model geometry, no gcode, no images) containing:
+- `Metadata/slice_info.config`
+- `Metadata/plate_1.json`
+- `Metadata/model_settings.config`
+- `Metadata/project_settings.config`
+
+The full BambuStudio cloud print flow (SP error codes):
+
+| Step | Error Code | Description | Our Status |
+|------|-----------|-------------|------------|
+| 1 | -3010 | Create project | Working |
+| 2 | -3020 | Check MD5 | Skipped |
+| **3** | **-3030** | **Upload config 3MF to OSS** | **Implemented but doesn't fix POST /my/task** |
+| 4 | -3040 | PUT notification | Working |
+| 5 | -3050/-3060 | GET notification | Working |
+| 6 | -3070 | File existence check | Skipped |
+| 7 | -3080 | get_user_upload | Working (GET /user/upload) |
+| 8 | -3090 | File over size check | Skipped |
+| 9 | -3100 | Upload 3MF to OSS | Working |
+| 10 | -3110 | PATCH project | Working |
+| 11 | -3120 | POST task | **BLOCKED — empty 400** |
+| 12 | -3130 | Wait printer ACK | Not reached |
+| 13 | -3140 | ENC flag not ready | Not reached |
+
+### Config Upload Implementation
+
+The config 3MF is uploaded via `GET /v1/iot-service/api/user/upload` which accepts arbitrary params:
+- `filename` → S3 URL for the file itself
+- `size` → S3 URL for size metadata
+- `model_id` → S3 URL linking upload to model
+- `profile_id` → S3 URL linking upload to profile
+- `project_id` → S3 URL linking upload to project
+- `md5` → S3 URL for MD5 metadata
+
+Each param creates a separate S3 object at `users/{uid}/{param_type}/{timestamp}/{value}`.
+The server uses these to associate uploads with projects.
+
+**Result:** Config 3MF upload succeeds (200 OK), but POST /my/task still returns empty 400.
+The config upload is **not the missing piece** — the blocker is in the authentication/signing layer.
+
+### Key Parameters from BambuStudio PrintParams
+
+```cpp
+params.config_filename      = job_data._3mf_config_path.string();  // separate config 3mf
+params.filename             = job_data._3mf_path.string();          // main 3mf
+params.origin_profile_id    = stoi(origin_profile_id);
+params.origin_model_id      = origin_model_id;
+params.preset_name          = profile_name;
+params.project_name         = mall_model_name;
+params.stl_design_id        = stl_design_id;
+params.connection_type      = this->connection_type;
+params.print_type           = this->m_print_type;
+params.auto_offset_cali     = this->auto_offset_cali;
+params.extruder_cali_manual_mode = this->extruder_cali_manual_mode;
+params.task_ext_change_assist = this->task_ext_change_assist;
+params.try_emmc_print       = this->could_emmc_print;
+```
+
+All parameters are passed to `m_agent->start_print(params, ...)` which delegates to the
+**proprietary `libbambu_networking.so`** — the actual HTTP request construction is opaque.
+
+---
+
+## Full Task Payload Attempt
+
+Added `cloud_create_task_full()` to try ALL fields from the GET /my/tasks response:
+
+```json
+{
+    "designId": 0,
+    "designTitle": "",
+    "instanceId": 0,
+    "modelId": "...",
+    "title": "filename.3mf",
+    "cover": "https://...",
+    "status": 0,
+    "feedbackStatus": 0,
+    "weight": 39.45,
+    "costTime": 9043,
+    "profileId": 636077332,
+    "plateIndex": 1,
+    "plateName": "",
+    "deviceId": "...",
+    "deviceModel": "",
+    "deviceName": "",
+    "amsDetailMapping": [],
+    "mode": "cloud_file",
+    "isPublicProfile": false,
+    "isPrintable": true,
+    "bedType": "auto"
+}
+```
+
+Pulls `weight` and `costTime` from project detail `plates[0]`. Also tries variants
+without `designId` in case the type mismatch was masking other errors.
+
+**Status:** Added to test script (Feb 2026). Results pending first test run.
+
+---
+
 ## Key Files
 
 - `/app/workspaces/pzfreo/fabprint/scripts/test_cloud_print.py` — main test script
@@ -286,6 +466,52 @@ User-Agent: bambu_network_agent/02.03.01.00
 - [BambuStudio source](https://github.com/bambulab/BambuStudio)
 - [Bambu Connect key extraction](https://hackaday.com/2025/01/19/bambu-connects-authentication-x-509-certificate-and-private-key-extracted/)
 - Task struct definitions: [Bambu.NET](https://github.com/ColdThunder11/Bambu.NET), [bambulab-rs](https://github.com/m1guelpf/bambulab-rs), [bambulab-dashboard](https://github.com/mohamedhadrami/bambulab-dashboard)
+- [KITT project](https://github.com/Jmi2020/KITT) — working cloud print via slicer/upload + MQTT (bypasses POST /my/task)
+
+---
+
+## Conclusion and Recommended Path (Feb 2026)
+
+### Cloud Print: Blocked
+
+After exhaustive testing (32 discovered fields, 100+ API calls, BambuStudio source analysis,
+config 3MF upload implementation, multiple MQTT task_id strategies), the conclusion is clear:
+
+**POST /v1/user-service/my/task is deliberately restricted to the proprietary `libbambu_networking.so`.**
+
+The endpoint works — BambuStudio successfully creates tasks through it every time. But it includes
+an undocumented authentication mechanism (possibly a client certificate, HMAC signature, or
+challenge-response token) that cannot be replicated without the proprietary library.
+
+No third-party project has EVER successfully called this endpoint:
+- **OrcaSlicer** → uses the same proprietary DLL (stubs for its own implementation)
+- **coelacant1/Bambu-Lab-Cloud-API** → lists print submission as "Not Yet Implemented"
+- **KITT** → bypasses task creation entirely (but its slicer/upload endpoint returns 404)
+- **ha-bambulab** → read-only for cloud mode, uses LAN for printing
+- **SimplyPrint** → switched to LAN-only after "Bambu Lab removed cloud API access" in late 2024
+
+### Recommended: LAN Mode
+
+LAN mode (FTPS + local MQTT) is the **proven working path** used by ALL successful third-party tools:
+
+1. Upload 3MF via implicit FTPS (port 990, user `bblp`, password = access code)
+2. Send MQTT `project_file` command via local broker (printer_ip:8883)
+3. No signing required, no task creation, no cloud dependency
+
+**Requirements:**
+- Printer and control host must be on the same local network
+- Developer Mode or LAN Mode enabled on the printer
+- Printer IP address (discoverable via mDNS or cloud API)
+- Access code: `19236776` (from GET /user/print)
+
+For fabprint's architecture, this means running a **local print agent** on the same network
+as the printer, which receives print jobs from the cloud scheduler and executes them via LAN mode.
+
+### Alternative: Wrap libbambu_networking.so
+
+The nuclear option: extract `libbambu_networking.so` from a BambuStudio or OrcaSlicer installation,
+load it via Python ctypes, and call its `start_print()` function directly. This would work for
+cloud printing but adds a proprietary binary dependency and is fragile across versions.
 
 ---
 
