@@ -7,7 +7,11 @@ with the goal of triggering a cloud print from third-party code (not BambuStudio
 
 **Printer:** Bambu Lab P1S, serial `01P00A451601106`, with 4-slot AMS
 **Branch:** `cloud-print-test`
-**Test script:** `scripts/test_cloud_print.py`
+**Working solution:** `scripts/bambu_cloud_bridge.cpp` — C++ bridge to `libbambu_networking.so`
+**Python wrapper:** `src/fabprint/cloud.py`
+**Docker image:** `Dockerfile.cloud-bridge`
+
+**Status: CLOUD PRINT WORKING** — via wrapping the proprietary library (see "Solution" section below).
 
 ---
 
@@ -17,20 +21,23 @@ Reconstructed from BambuStudio source code error codes in `bambu_networking.hpp`
 
 | Step | Error Code | Description | Status |
 |------|-----------|-------------|--------|
-| 1 | -2010 | Create project (POST /v1/iot-service/api/user/project) | Working |
-| 2 | -2110 | Upload 3mf to S3 (PUT signed URL) | Working |
-| 3 | -2030 | Upload 3mf config to OSS | Unknown (may be implicit) |
-| 4 | -2050 | PUT notification (upload complete) | Working |
-| 5 | -2060 | GET notification (poll confirmation) | Working |
-| 6 | -2080 | PATCH project | Working (200) |
-| 7 | -2090 | GET my/setting | Working (200) |
-| 8 | -2140 | get_user_upload | Unknown |
-| 9 | -2120 | POST task (POST /v1/user-service/my/task) | **BLOCKED — returns 400** |
-| 10 | -3130 | Wait for printer ACK via MQTT | Not reached |
+| 1 | -3010 | Create project | Working |
+| 2 | -3020 | Check MD5 | Skipped (library handles) |
+| 3 | -3030 | Upload config 3MF to S3 | Working |
+| 4 | -3040 | PUT notification (upload complete) | Working |
+| 5 | -3050/-3060 | GET notification (poll confirmation) | Working |
+| 6 | -3070 | File existence check | Working |
+| 7 | -3080 | get_user_upload | Working |
+| 8 | -3090 | File over size check | Working |
+| 9 | -3100 | Upload main 3MF to S3 (0%→100%) | Working |
+| 10 | -3110 | PATCH project | Working |
+| 11 | -3120 | POST task (POST /v1/user-service/my/task) | **Working** (was 403, fixed by headers + CA) |
+| 12 | -3130 | Wait for printer ACK via MQTT | Working |
+| 13 | -3140 | Enc flag check | Working (retry with pushall) |
 
-The actual cloud print logic lives in the **proprietary `libbambu_networking.so`** — BambuStudio's
-open-source code only shows wrapper interfaces. The error codes above are the best clues to the
-internal flow.
+All steps are handled internally by `libbambu_networking.so` when called via our C++ bridge.
+The `-3xxx` error codes are from BambuStudio's `start_print()` flow (different numbering from
+the `-2xxx` series used in the older `start_send_gcode_to_sdcard()` flow).
 
 ---
 
@@ -38,28 +45,151 @@ internal flow.
 
 ### Working Endpoints
 
-| Method | Endpoint | Purpose | Notes |
-|--------|----------|---------|-------|
-| POST | /v1/user-service/user/login | Login | Returns accessToken |
-| GET | /v1/design-user-service/my/preference | Get user ID | Returns uid |
-| GET | /v1/iot-service/api/user/bind | List devices | Returns devices array |
-| POST | /v1/iot-service/api/user/project | Create project | Returns project_id, model_id, profile_id, upload_url, upload_ticket |
-| PUT | (signed S3 URL) | Upload 3mf to S3 | Standard S3 PUT |
-| PUT | /v1/iot-service/api/user/notification | Notify upload complete | Needs {upload: {ticket, origin_file_name}} |
-| GET | /v1/iot-service/api/user/notification | Poll upload status | With action=upload&ticket=... |
-| GET | /v1/iot-service/api/user/project/{id} | Get project detail | Returns profiles with context, plates, configs |
-| PATCH | /v1/iot-service/api/user/project/{id} | Update project | Works with {name, profile_id(string)} |
-| GET | /v1/user-service/my/setting | Get user settings | Returns notification preferences |
-| GET | /v1/iot-service/api/user/print | Get device print status | Returns device info + access code |
-| GET | /v1/iot-service/api/user/upload | Get signed upload URL | For thumbnails and files |
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | /v1/user-service/user/login | Login (see Authentication section) |
+| POST | /v1/user-service/user/sendemail/code | Send email verification code |
+| POST | /v1/user-service/user/tfa | Two-factor authentication |
+| GET | /v1/design-user-service/my/preference | Get user ID (uid) |
+| GET | /v1/iot-service/api/user/bind | List bound devices |
+| POST | /v1/iot-service/api/user/project | Create project |
+| GET | /v1/iot-service/api/user/project | List projects |
+| GET | /v1/iot-service/api/user/project/{id} | Get project detail |
+| PATCH | /v1/iot-service/api/user/project/{id} | Update project |
+| GET | /v1/iot-service/api/user/profile/{id} | Get profile detail |
+| GET | /v1/iot-service/api/user/upload | Get signed upload URLs |
+| PUT | (signed S3 URL) | Upload file to S3 |
+| PUT | /v1/iot-service/api/user/notification | Notify upload complete |
+| GET | /v1/iot-service/api/user/notification | Poll upload status |
+| GET | /v1/user-service/my/setting | Get user settings |
+| GET | /v1/iot-service/api/user/print | Get device print status + access code |
+| GET | /v1/user-service/my/tasks | List recent print tasks |
 
-### Blocked Endpoints
+### Endpoint Details
 
-| Method | Endpoint | Response | Notes |
-|--------|----------|----------|-------|
-| **POST** | **/v1/user-service/my/task** | **400** | **The main blocker — see detailed analysis below** |
-| POST | /v1/iot-service/api/user/print | 405 | GET-only endpoint despite docs claiming POST |
-| GET | /v1/iot-service/api/user/files | 404 | Endpoint doesn't exist |
+#### GET /v1/iot-service/api/user/bind (List Devices)
+
+```
+Response: {"devices": [...]}
+
+Device object:
+{
+    "dev_id": "01P00A451601106",
+    "name": "bambu p1s",
+    "online": true,
+    "dev_product_name": "P1S",
+    "dev_model_name": "C12"
+}
+```
+
+#### POST /v1/iot-service/api/user/project (Create Project)
+
+```
+Request: {"name": "filename.3mf"}
+
+Response:
+{
+    "project_id": "666266555",
+    "model_id": "USb7b76c7521e40c",
+    "profile_id": "636077332",
+    "upload_url": "https://s3...",       // Presigned S3 PUT URL
+    "upload_ticket": "abc123..."         // Required for notification step
+}
+```
+
+Fallback: if creation fails, `GET /v1/iot-service/api/user/project` returns
+`{"projects": [...]}`. Use the most recent project's `project_id` to fetch detail.
+
+#### GET /v1/iot-service/api/user/upload (Get Signed Upload URLs)
+
+```
+Query params: ?filename=name.3mf&size=1234567
+              (optional: &model_id=X&profile_id=Y&project_id=Z&md5=abc)
+
+Response:
+{
+    "urls": [
+        {"type": "filename", "url": "https://s3..."},   // PUT file binary here
+        {"type": "size", "url": "https://s3..."},        // PUT file size as text/plain
+        {"type": "md5", "url": "https://s3..."},         // PUT MD5 hash as text/plain
+        {"type": "model_id", "url": "https://s3..."},    // PUT model_id as text/plain
+        {"type": "profile_id", "url": "https://s3..."},  // PUT profile_id as text/plain
+        {"type": "project_id", "url": "https://s3..."}   // PUT project_id as text/plain
+    ]
+}
+```
+
+Each `type` URL receives different content — the `filename` URL gets the binary file,
+all others get text metadata. The metadata URLs link the upload to the correct project.
+
+S3 URLs are at path `users/{uid}/{type}/{timestamp}/{value}`.
+
+**Important:** When PUTting to presigned S3 URLs, send with **empty headers** (`headers={}`).
+Adding extra headers can break the S3 signature validation.
+
+#### PUT /v1/iot-service/api/user/notification (Upload Complete)
+
+```
+# Minimal payload:
+{"upload": {"ticket": "abc123", "origin_file_name": "file.3mf"}}
+
+# Extended payload (fallback):
+{"upload": {"ticket": "abc123", "origin_file_name": "file.3mf",
+            "status": "complete", "file_size": 0}}
+```
+
+#### GET /v1/iot-service/api/user/notification (Poll Upload)
+
+```
+Query params: ?action=upload&ticket=abc123
+Response: (confirmation JSON, varies)
+```
+
+Poll with 2-second intervals, up to 3 attempts.
+
+#### GET /v1/iot-service/api/user/project/{id} (Project Detail)
+
+Requires polling — profile URL may be empty initially while server processes the 3MF.
+Poll up to 15 times with 2-second delays until `profiles[0].url` is populated.
+
+(See "Project Detail Structure" section below for full response format.)
+
+#### GET /v1/iot-service/api/user/profile/{id} (Profile Detail)
+
+```
+Query params: ?model_id=USb7b76c7521e40c
+
+Response:
+{
+    "url": "https://s3.us-west-2.amazonaws.com/...",
+    "md5": "b19be138aaee...",
+    "context": {
+        "plates": [{
+            "thumbnail": {"url": "https://s3..."},
+            ...
+        }]
+    }
+}
+```
+
+Fallback when project detail URL isn't immediately available.
+
+#### PATCH /v1/iot-service/api/user/project/{id} (Update Project)
+
+Multiple payload variants work — try in order:
+
+1. `{"name": "file.3mf", "profile_id": "636077332"}` (profile_id as string)
+2. `{"name": "file.3mf", "status": "uploaded"}`
+3. `{"model_id": "USb7b76c7521e40c", "name": "file.3mf"}`
+4. `{"name": "file.3mf", "profile_id": "636077332", "model_id": "USb7b76c7521e40c"}`
+
+### Previously Blocked Endpoints (now working via library)
+
+| Method | Endpoint | Direct HTTP | Via Library | Notes |
+|--------|----------|-------------|-------------|-------|
+| **POST** | **/v1/user-service/my/task** | **400/403** | **Working** | Requires library's auth mechanism (see below) |
+| POST | /v1/iot-service/api/user/print | 405 | N/A | GET-only endpoint |
+| GET | /v1/iot-service/api/user/files | 404 | N/A | Endpoint doesn't exist |
 
 ---
 
@@ -240,49 +370,338 @@ project
 
 ---
 
-## MQTT Observations
+## MQTT Protocol
 
-### Cloud MQTT (us.mqtt.bambulab.com:8883)
+### Cloud MQTT Broker
 
-- Auth: username `u_{user_id}`, password = access token
-- Commands require X.509 RSA-SHA256 signing with the extracted Bambu Connect private key
-- Topic: `device/{device_id}/request` (publish) and `device/{device_id}/report` (subscribe)
-- The `project_file` command is echoed back by the printer
-- Printer goes to `gcode_state: FAILED` with `upload: {status: idle}` — it receives the command
-  but does not download the file
-- This happens with both `task_id: "0"` and fake task IDs
-- The printer **validates task_id with the Bambu server in real time** before downloading
-- **err_code 84033545** (0x5024009) = invalid/unrecognized task_id
-- Tested task_id values that ALL fail with 84033545:
-  - `"0"` (default)
-  - `project_id` (e.g., "666425410")
-  - UUID4 (e.g., "fed892ed-4cfe-4be2-81ec-7f860d2aca76")
-  - Previous successful task_id (e.g., "775084413") — already consumed/completed
-- Tested URL schemes that ALL fail:
-  - HTTPS S3 URL (project download URL)
-  - `cloud://private/{model_id}/{profile_id}/origin/filename.3mf`
-- **There is no way to use cloud MQTT without a valid task_id from POST /my/task**
+- **Broker:** `us.mqtt.bambulab.com:8883` (TLS required)
+- **Username:** `u_{user_id}` (user_id from `/my/preference`, integer as string)
+- **Password:** Access token (from login)
+- **Client ID:** Any unique string (e.g., `fabprint-test-{device_id[:8]}`)
+- **Keepalive:** 60 seconds
+- **TLS:** `ssl.CERT_REQUIRED`, `ssl.PROTOCOL_TLS`
+- **Publish topic:** `device/{device_id}/request`
+- **Subscribe topic:** `device/{device_id}/report`
+- Commands require X.509 RSA-SHA256 signing (see below)
 
-### X.509 Signing
+### LAN MQTT Broker
 
-Commands are signed with the Bambu Connect private key (publicly extracted Jan 2025):
-- Cert ID: `GLOF3813734089-524a37c80000c6a6a274a47b3281`
-- Algorithm: RSA-SHA256 with PKCS1v15 padding
-- The signature wraps the command JSON in a `header` object
+- **Broker:** `{printer_ip}:8883` (TLS, self-signed cert)
+- **Username:** `bblp` (hardcoded)
+- **Password:** Access code (from GET /user/print, e.g., `19236776`)
+- **Client ID:** Any unique string (e.g., `fabprint-lan-{serial[:8]}`)
+- **Keepalive:** 60 seconds
+- **TLS:** `ssl.CERT_NONE`, `check_hostname = False` (printer uses self-signed cert)
+- **Topics:** Same format as cloud but uses serial instead of dev_id
+- **No signing required** — commands are published as plain JSON
 
-### LAN MQTT (printer_ip:8883)
+### MQTT Commands
 
-- Auth: username `bblp`, password = access code (e.g., `19236776`)
-- No signing required
-- Uses `ftp://filename` URL format after FTPS upload to port 990
-- All IDs set to `"0"` — no task/project/profile needed
-- Implemented but not tested
+#### project_file (Start Print)
+
+**Cloud variant:**
+```json
+{
+  "print": {
+    "sequence_id": "1",
+    "command": "project_file",
+    "param": "Metadata/plate_1.gcode",
+    "project_id": "666425410",
+    "profile_id": "636077332",
+    "task_id": "775084413",
+    "subtask_id": "0",
+    "subtask_name": "filename.3mf",
+    "file": "",
+    "url": "https://bucket.s3.dualstack.us-west-2.amazonaws.com/private/...",
+    "md5": "b19be138aaee...",
+    "timelapse": false,
+    "bed_type": "auto",
+    "bed_levelling": true,
+    "flow_cali": true,
+    "vibration_cali": true,
+    "layer_inspect": false,
+    "ams_mapping": [0, 1, 2, 3],
+    "use_ams": true
+  }
+}
+```
+
+**LAN variant:**
+```json
+{
+  "print": {
+    "sequence_id": "1",
+    "command": "project_file",
+    "param": "Metadata/plate_1.gcode",
+    "project_id": "0",
+    "profile_id": "0",
+    "task_id": "0",
+    "subtask_id": "0",
+    "subtask_name": "filename.3mf",
+    "file": "",
+    "url": "ftp://filename.3mf",
+    "md5": "",
+    "timelapse": false,
+    "bed_type": "auto",
+    "bed_levelling": true,
+    "flow_cali": true,
+    "vibration_cali": true,
+    "layer_inspect": true,
+    "ams_mapping": [0, 1, 2, 3],
+    "use_ams": true
+  }
+}
+```
+
+Key differences: LAN uses `ftp://filename` URL, all IDs set to `"0"`, no signing.
+
+#### pushall (Request Full Status)
+
+```json
+{
+  "pushing": {
+    "sequence_id": "1",
+    "command": "pushall",
+    "version": 1,
+    "push_target": 1
+  }
+}
+```
+
+No signing required even on cloud MQTT.
+
+#### pause / resume / stop
+
+```json
+{"print": {"sequence_id": "1", "command": "pause", "param": ""}}
+{"print": {"sequence_id": "1", "command": "resume", "param": ""}}
+{"print": {"sequence_id": "1", "command": "stop", "param": ""}}
+```
+
+All three require X.509 signing on cloud MQTT.
+
+### MQTT Report Messages (Printer → Client)
+
+Messages on the report topic contain a `print` object with state:
+
+```json
+{
+  "print": {
+    "command": "project_file",
+    "result": "ok",
+    "reason": "",
+    "mc_percent": 45,
+    "gcode_state": "RUNNING",
+    "upload": {
+      "status": "idle",
+      "progress": 0
+    }
+  }
+}
+```
+
+**Key fields:**
+- `gcode_state`: `IDLE`, `RUNNING`, `PAUSED`, `FAILED`, `FINISH`
+- `mc_percent`: Print progress (0-100)
+- `upload.status`: File download progress (`idle`, `downloading`)
+- `result`: Command response (`ok` or error)
+- `reason`: Error description
+
+**Known error code:** `84033545` (0x5024009) = invalid/unrecognized task_id.
+The printer validates task_id with the Bambu server in real time before downloading.
+
+### X.509 Command Signing (Cloud Only)
+
+Commands on cloud MQTT must be signed with the Bambu Connect private key
+(publicly extracted Jan 2025).
+
+**Signing process:**
+1. Serialize the command dict to JSON bytes
+2. Sign with RSA-SHA256 (PKCS1v15 padding) using the private key
+3. Base64-encode the signature
+4. Add a `header` object to the command
+
+**Signed message structure:**
+```json
+{
+  "print": { ... command payload ... },
+  "header": {
+    "sign_ver": "v1.0",
+    "sign_alg": "RSA_SHA256",
+    "sign_string": "base64_encoded_signature",
+    "cert_id": "GLOF3813734089-524a37c80000c6a6a274a47b3281",
+    "payload_len": 456
+  }
+}
+```
+
+- `payload_len` = byte length of the command JSON (without the header)
+- `cert_id` = `GLOF3813734089-524a37c80000c6a6a274a47b3281`
+- Private key: Embedded in every copy of the Bambu Connect app (see `test_cloud_print.py`)
+
+### Cloud MQTT task_id Validation
+
+The printer validates `task_id` with the Bambu server before downloading. All of these fail
+with error 84033545:
+- `"0"` (default)
+- `project_id` (e.g., "666425410")
+- UUID4 (random)
+- Previously consumed task_id
+- `cloud://private/{model_id}/{profile_id}/origin/filename.3mf`
+
+**There is no way to use cloud MQTT without a valid task_id from POST /my/task.**
+This is why the library bridge is necessary — it handles task creation internally.
 
 ---
 
-## HTTP Headers
+## S3 URL Format Conversions
 
-All requests use:
+The API returns S3 URLs in **path-style** format, but MQTT commands may require
+**virtual-hosted dualstack** format. The conversion is critical for cloud printing.
+
+**Path-style (from API):**
+```
+https://s3.us-west-2.amazonaws.com/or-cloud-model-prod/private/user/123/file.3mf?X-Amz-...
+```
+
+**Virtual-hosted dualstack (for MQTT):**
+```
+https://or-cloud-model-prod.s3.dualstack.us-west-2.amazonaws.com/private/user/123/file.3mf?X-Amz-...
+```
+
+**Conversion regex:**
+```python
+match = re.match(r"https://s3\.([^.]+)\.amazonaws\.com/([^/]+)(/.*)", url)
+if match:
+    region, bucket, key_params = match.groups()
+    url = f"https://{bucket}.s3.dualstack.{region}.amazonaws.com{key_params}"
+```
+
+The dualstack format is the most reliable for cloud MQTT `project_file` commands.
+Bare URLs (without query string) and path-style URLs sometimes fail.
+
+---
+
+## FTPS Upload (LAN Mode)
+
+For LAN printing, files are uploaded to the printer via implicit FTPS:
+
+- **Protocol:** Implicit TLS (connection starts encrypted, NOT explicit AUTH TLS)
+- **Port:** 990
+- **Username:** `bblp`
+- **Password:** Access code (from GET /user/print)
+- **TLS:** Self-signed cert, `verify_mode = ssl.CERT_NONE`
+- **Data protection:** Must call `prot_p()` after login
+- **Upload command:** `STOR {filename}` (uploads to printer's SD card root)
+- **No explicit folder path** — files go to the default location
+
+Python implementation requires a custom `FTP_TLS` subclass that wraps the socket in SSL
+before the FTP handshake (standard `FTP_TLS` uses explicit TLS with AUTH TLS after connect).
+
+---
+
+## Config 3MF Upload
+
+BambuStudio uploads a separate **config-only 3MF** before the main file (step -3030).
+This 3MF contains only metadata — no model geometry, gcode, or images.
+
+### Contents
+
+Files to include:
+- `[Content_Types].xml`
+- `_rels/.rels`
+- `Metadata/slice_info.config`
+- `Metadata/model_settings.config`
+- `Metadata/project_settings.config`
+- `Metadata/_rels/model_settings.config.rels`
+- `Metadata/plate_*.json` (all plate JSON files)
+
+Files to exclude: model geometry, gcode, images, auxiliary files.
+
+### Upload Process
+
+Uses the same `GET /user/upload` endpoint as the main file, but with additional
+metadata-linking parameters (`model_id`, `profile_id`, `project_id`).
+
+Each returned URL type receives different content:
+- `filename`: Binary config 3MF data
+- `size`: File size as `text/plain`
+- `md5`: MD5 hash as `text/plain`
+- `model_id`, `profile_id`, `project_id`: ID values as `text/plain`
+
+Corresponds to BambuStudio's `export_config_3mf()` with:
+```
+SaveStrategy::SkipModel | SaveStrategy::WithSliceInfo | SaveStrategy::SkipAuxiliary
+```
+
+---
+
+## Authentication
+
+### Base URL
+
+All API endpoints use: `https://api.bambulab.com`
+
+### Login Flow
+
+Three distinct authentication flows, determined by the server response to the initial login:
+
+**1. Direct Password Login**
+
+```
+POST /v1/user-service/user/login
+Body: {"account": "user@email.com", "password": "...", "apiError": ""}
+Response: {"accessToken": "eyJ..."}
+```
+
+If `accessToken` is present in the response, login is complete.
+
+**2. Email Verification Code Flow**
+
+Triggered when the response contains `"loginType": "verifyCode"` and no `accessToken`:
+
+```
+# Step 1: Request verification code
+POST /v1/user-service/user/sendemail/code
+Body: {"email": "user@email.com", "type": "codeLogin"}
+Response: 200 OK (code sent to email)
+
+# Step 2: Login with code
+POST /v1/user-service/user/login
+Body: {"account": "user@email.com", "code": "123456"}
+Response: {"accessToken": "eyJ..."}
+```
+
+**3. Two-Factor Authentication (2FA)**
+
+Triggered when the response contains `"tfaKey": "..."` and no `accessToken`:
+
+```
+POST /v1/user-service/user/tfa
+Body: {"tfaKey": "...", "tfaCode": "123456"}
+Response: {"accessToken": "eyJ..."}
+```
+
+### Token Caching
+
+- Cached at `~/.bambu_cloud_token` with permissions `0o600`
+- Format: `{"token": "eyJ...", "email": "user@email.com"}`
+- Cache reuse: email must match to avoid using wrong account's token
+- Validation: attempt `GET /my/preference` with cached token; fall back to fresh login on failure
+
+### User ID Resolution
+
+```
+GET /v1/design-user-service/my/preference
+Headers: Authorization: Bearer {access_token}
+Response: {"uid": 1939415276, ...}
+```
+
+- `uid` is an integer, must be converted to string for MQTT: `u_{uid}`
+- Token is used as Bearer auth for all API calls AND as MQTT password
+
+### HTTP Headers for Direct API Calls
+
 ```
 Authorization: Bearer {access_token}
 Content-Type: application/json
@@ -292,15 +711,13 @@ X-BBL-Client-Version: 02.03.01.00
 User-Agent: bambu_network_agent/02.03.01.00
 ```
 
----
+Note: These headers work for REST API calls. For cloud printing via the library bridge,
+different headers are required (see "Required HTTP Headers" in the Solution section).
 
-## Authentication
+### Response Headers (Useful for Debugging)
 
-- Login: POST /v1/user-service/user/login with {account, password}
-- May require email verification code or 2FA
-- Token cached at `~/.bambu_cloud_token` as `{token, email}`
-- Token used as Bearer auth for all API calls and as MQTT password
-- User ID obtained from GET /v1/design-user-service/my/preference
+- `X-Request-Id`: Client request tracking ID
+- `X-Trace-Id`: Server-side trace ID (useful for correlating with 400/403 errors)
 
 ---
 
@@ -362,17 +779,17 @@ The full BambuStudio cloud print flow (SP error codes):
 |------|-----------|-------------|------------|
 | 1 | -3010 | Create project | Working |
 | 2 | -3020 | Check MD5 | Skipped |
-| **3** | **-3030** | **Upload config 3MF to OSS** | **Implemented but doesn't fix POST /my/task** |
+| **3** | **-3030** | **Upload config 3MF to OSS** | **Working** (via library; direct HTTP alone insufficient) |
 | 4 | -3040 | PUT notification | Working |
 | 5 | -3050/-3060 | GET notification | Working |
-| 6 | -3070 | File existence check | Skipped |
+| 6 | -3070 | File existence check | Working (via library) |
 | 7 | -3080 | get_user_upload | Working (GET /user/upload) |
-| 8 | -3090 | File over size check | Skipped |
+| 8 | -3090 | File over size check | Working (via library) |
 | 9 | -3100 | Upload 3MF to OSS | Working |
 | 10 | -3110 | PATCH project | Working |
-| 11 | -3120 | POST task | **BLOCKED — empty 400** |
-| 12 | -3130 | Wait printer ACK | Not reached |
-| 13 | -3140 | ENC flag not ready | Not reached |
+| 11 | -3120 | POST task | **Working** (via library; direct HTTP returns 400/403) |
+| 12 | -3130 | Wait printer ACK | Working |
+| 13 | -3140 | ENC flag not ready | Working (retry with pushall) |
 
 ### Config Upload Implementation
 
@@ -446,7 +863,9 @@ Added `cloud_create_task_full()` to try ALL fields from the GET /my/tasks respon
 Pulls `weight` and `costTime` from project detail `plates[0]`. Also tries variants
 without `designId` in case the type mismatch was masking other errors.
 
-**Status:** Added to test script (Feb 2026). Results pending first test run.
+**Result:** All 32+ fields with correct types still returns empty 400 when called via
+direct HTTP. This confirms the blocker is authentication/signing, not missing fields.
+Solved by using the library bridge instead of direct HTTP.
 
 ---
 
@@ -470,48 +889,241 @@ without `designId` in case the type mismatch was masking other errors.
 
 ---
 
-## Conclusion and Recommended Path (Feb 2026)
+## Solution: C++ Bridge to libbambu_networking.so (WORKING)
 
-### Cloud Print: Blocked
+### Background
 
-After exhaustive testing (32 discovered fields, 100+ API calls, BambuStudio source analysis,
-config 3MF upload implementation, multiple MQTT task_id strategies), the conclusion is clear:
+After exhaustive testing of direct HTTP calls (32 discovered fields, 100+ API calls,
+BambuStudio source analysis, config 3MF upload implementation, multiple MQTT task_id
+strategies), we confirmed that **POST /v1/user-service/my/task cannot be called via
+plain HTTP** — the proprietary `libbambu_networking.so` includes an undocumented
+authentication mechanism (likely HMAC signatures or client certificates embedded in the
+binary).
 
-**POST /v1/user-service/my/task is deliberately restricted to the proprietary `libbambu_networking.so`.**
+The solution: **wrap the proprietary library in a C++ bridge** that loads it via `dlopen()`
+and calls its functions directly. This is the same approach BambuStudio and OrcaSlicer use.
 
-The endpoint works — BambuStudio successfully creates tasks through it every time. But it includes
-an undocumented authentication mechanism (possibly a client certificate, HMAC signature, or
-challenge-response token) that cannot be replicated without the proprietary library.
+### Architecture
 
-No third-party project has EVER successfully called this endpoint:
-- **OrcaSlicer** → uses the same proprietary DLL (stubs for its own implementation)
-- **coelacant1/Bambu-Lab-Cloud-API** → lists print submission as "Not Yet Implemented"
-- **KITT** → bypasses task creation entirely (but its slicer/upload endpoint returns 404)
-- **ha-bambulab** → read-only for cloud mode, uses LAN for printing
-- **SimplyPrint** → switched to LAN-only after "Bambu Lab removed cloud API access" in late 2024
+```
+fabprint pipeline
+    → cloud.py (Python wrapper)
+        → bambu_cloud_bridge (C++ CLI binary)
+            → libbambu_networking.so (proprietary, loaded via dlopen)
+                → Bambu Lab cloud API (HTTP + MQTT)
+                    → Printer
+```
 
-### Recommended: LAN Mode
+For Mac/cross-platform use, the bridge is packaged in a Docker container
+(`Dockerfile.cloud-bridge`, `--platform linux/amd64`) since the library is x86_64 Linux only.
 
-LAN mode (FTPS + local MQTT) is the **proven working path** used by ALL successful third-party tools:
+### The 403 "Internal Blocking" Fix
+
+The initial bridge attempt got through steps 1-10 (project creation, S3 upload, project
+patching) but failed at step 11 (POST /my/task) with HTTP 403 "internal blocking".
+
+**Root cause — two issues:**
+
+1. **Wrong HTTP headers.** The bridge was identifying as `bambu_connect`/`device` instead of
+   `BambuStudio`/`slicer`. Additionally, four required headers were missing:
+   `X-BBL-OS-Type`, `X-BBL-OS-Version`, `X-BBL-Device-ID`, `X-BBL-Language`.
+
+2. **Missing CA certificate bundle.** The library's embedded curl could not verify SSL
+   certificates. Fix: `setenv("CURL_CA_BUNDLE", "/etc/ssl/certs/ca-certificates.crt", 0)`.
+
+### Required HTTP Headers (7 total)
+
+These headers must be set via `set_extra_http_header()` **AFTER** `bambu_network_start()`
+but **BEFORE** `change_user()`:
+
+```
+X-BBL-Client-Type:    slicer
+X-BBL-Client-Name:    BambuStudio
+X-BBL-Client-Version: 02.05.01.52
+X-BBL-OS-Type:        linux
+X-BBL-OS-Version:     6.8.0
+X-BBL-Device-ID:      <unique-id>      (e.g. "fabprint-headless-001")
+X-BBL-Language:       en
+```
+
+**Critical:** Using `bambu_connect` as Client-Name or `device` as Client-Type will cause
+the POST /my/task to return 403. The library probably passes these headers to the API, and
+the server uses them for access control.
+
+### Critical Init Sequence
+
+The order of operations matters. Getting it wrong causes SSL errors, auth failures, or
+MQTT disconnects:
+
+```
+ 1. setenv("CURL_CA_BUNDLE", "/etc/ssl/certs/ca-certificates.crt")  ← before anything
+ 2. bambu_network_create_agent("/tmp/bambu_agent/log")
+ 3. bambu_network_init_log()
+ 4. bambu_network_set_config_dir("/tmp/bambu_agent/config")
+ 5. bambu_network_set_cert_file("/tmp/bambu_agent/cert", "slicer_base64.cer")
+ 6. bambu_network_set_country_code("US")
+ 7. bambu_network_start()
+ 8. bambu_network_set_extra_http_header({...7 headers...})     ← AFTER start()
+ 9. Set all callbacks (server_connected, message, http_error, etc.)
+10. bambu_network_change_user(user_json)                       ← BEFORE connect_server
+11. bambu_network_connect_server()  → wait for server_connected callback rc=0
+12. bambu_network_set_user_selected_machine(device_id)
+13. bambu_network_start_subscribe("device")
+14. sleep(3s)  ← must wait for subscription to establish
+15. bambu_network_send_message(pushall)  → wait ~20s for enc flag
+16. bambu_network_start_print(params, callbacks)
+```
+
+### PrintParams Struct (Key Fields)
+
+```cpp
+params.dev_id           = device_id;
+params.filename         = "/path/to/file.3mf";     // MUST be .3mf (not .gcode.3mf)
+params.config_filename  = "/path/to/config.3mf";   // optional config-only 3MF
+params.plate_index      = 1;
+params.connection_type  = "cloud";
+params.print_type       = "from_normal";
+params.ams_mapping      = "[0,1,2,3]";
+params.task_use_ams     = true;
+params.task_bed_type    = "auto";
+params.use_ssl_for_mqtt = true;
+params.ftp_folder       = "sdcard/";
+// Most other fields can be empty/default
+```
+
+### Library Function Signatures
+
+```cpp
+// Agent lifecycle
+void*  create_agent(string log_dir);
+int    destroy_agent(void* agent);      // WARNING: can hang on MQTT threads
+int    init_log(void* agent);
+int    set_config_dir(void* agent, string dir);
+int    set_cert_file(void* agent, string dir, string filename);
+int    set_country_code(void* agent, string code);
+int    start(void* agent);
+
+// Auth & connection
+int    change_user(void* agent, string user_json);
+bool   is_user_login(void* agent);
+int    connect_server(void* agent);
+bool   is_server_connected(void* agent);
+
+// Device & messaging
+int    set_user_selected_machine(void* agent, string dev_id);
+int    start_subscribe(void* agent, string module);  // "device"
+int    send_message(void* agent, string dev_id, string json, int qos);  // 4 params!
+int    send_message_to_printer(void* agent, string dev_id, string json, int qos, int flag);
+
+// Printing
+int    start_print(void* agent, PrintParams params,
+                   OnUpdateStatusFn, WasCancelledFn, OnWaitFn);
+
+// HTTP headers
+int    set_extra_http_header(void* agent, map<string,string> headers);
+
+// Callbacks (all set via set_on_*_fn)
+typedef function<void(int rc, int reason)>          OnServerConnectedFn;
+typedef function<void(string dev_id, string msg)>   OnMessageFn;
+typedef function<void(unsigned code, string body)>  OnHttpErrorFn;
+typedef function<void(string topic)>                OnPrinterConnectedFn;
+typedef function<void(int online, bool login)>      OnUserLoginFn;
+typedef function<string()>                          GetCountryCodeFn;
+```
+
+### Error Codes
+
+| Code | Constant | Meaning | Solution |
+|------|----------|---------|----------|
+| -3140 | ENC_FLAG_NOT_READY | Encryption flag not available | Send pushall, wait 20s, retry |
+| -3120 | POST_TASK_FAILED | Task creation failed (was 403) | Fix headers + CA bundle |
+| -3070 | FILE_NOT_EXIST | File path wrong | Use .3mf extension, not .gcode.3mf |
+| -3010 | REQUEST_PROJECT_FAILED | SSL cert verification failed | Set CURL_CA_BUNDLE env var |
+| -1 | Generic error | Printer busy / timeout | Printer may be printing already |
+| 0 | Success | Print started | — |
+
+### Known Gotchas
+
+1. **stdout noise:** The library prints `use_count = 4` to stdout from background MQTT
+   threads. Must redirect stdout to `/dev/null` via `dup2()` during library calls, and
+   restore only for JSON output.
+
+2. **Process hanging on exit:** `destroy_agent()` and `dlclose()` hang waiting for MQTT
+   threads to close. Use `_exit()` instead of normal return to force immediate exit.
+
+3. **send_message signatures:** There are two versions — `send_message` (4 params: agent,
+   dev_id, json, qos) and `send_message_to_printer` (5 params: + flag). The legacy 4-param
+   version works for pushall. Using the wrong signature causes crashes or -4 returns.
+
+4. **Pushall timing:** Must wait 3 seconds after `start_subscribe()` before sending pushall,
+   and wait ~20 seconds after pushall for the encryption flag to arrive.
+
+5. **Token JSON format:** The `change_user()` function expects a specific JSON wrapper:
+   ```json
+   {"data":{"token":"...","refresh_token":"...","expires_in":"7200",
+    "refresh_expires_in":"2592000","user":{"uid":"...","name":"...",
+    "account":"...","avatar":"..."}}}
+   ```
+
+6. **Cert file:** `slicer_base64.cer` is a DigiCert wildcard cert for MQTT TLS, downloaded
+   from BambuStudio's GitHub repo. Must be at the path passed to `set_cert_file()`.
+
+7. **Library source:** Download from Bambu CDN:
+   `https://public-cdn.bambulab.com/upgrade/studio/plugins/01.10.02.89/linux_01.10.02.89.zip`
+
+### CLI Tool
+
+The bridge is packaged as a CLI with 4 subcommands:
+
+```
+bambu_cloud_bridge print  <3mf> <device_id> <token_file> [options]
+bambu_cloud_bridge status <device_id> <token_file> [-v]
+bambu_cloud_bridge tasks  <token_file> [--limit N]
+bambu_cloud_bridge cancel <device_id> <token_file> [-v]
+```
+
+All commands produce JSON on stdout, logs go to stderr (`-v` for verbose).
+
+---
+
+## Historical: Direct HTTP Attempts (Failed)
+
+The sections above document the working solution. The sections below are preserved as a
+record of the direct HTTP approach that was ultimately unsuccessful.
+
+### Task Creation Deep Dive (POST /v1/user-service/my/task) — Direct HTTP
+
+Direct HTTP calls to POST /my/task always fail:
+- With correct fields and types: returns empty 400 (no body)
+- The 400 has `Content-Length: 0` and no `Content-Type` — a different code path from
+  field validation errors, indicating server-side rejection of the client identity
+- The library adds undocumented auth (signatures/certificates) that we cannot replicate
+
+No third-party project has ever successfully called this endpoint via direct HTTP:
+- **OrcaSlicer** → uses the same proprietary DLL
+- **coelacant1/Bambu-Lab-Cloud-API** → "Not Yet Implemented"
+- **KITT** → bypasses it entirely (slicer/upload endpoint returns 404 now)
+- **ha-bambulab** → read-only for cloud, uses LAN for printing
+- **SimplyPrint** → switched to LAN-only
+
+---
+
+## Alternative Approaches
+
+### LAN Mode (FTPS + Local MQTT)
+
+Still a viable option for printers on the same network:
 
 1. Upload 3MF via implicit FTPS (port 990, user `bblp`, password = access code)
 2. Send MQTT `project_file` command via local broker (printer_ip:8883)
-3. No signing required, no task creation, no cloud dependency
+3. No signing, no task creation, no cloud dependency
 
-**Requirements:**
-- Printer and control host must be on the same local network
-- Developer Mode or LAN Mode enabled on the printer
-- Printer IP address (discoverable via mDNS or cloud API)
-- Access code: `19236776` (from GET /user/print)
+**Requirements:** Same network, Developer/LAN Mode enabled, printer IP address.
 
-For fabprint's architecture, this means running a **local print agent** on the same network
-as the printer, which receives print jobs from the cloud scheduler and executes them via LAN mode.
+### Cloud Bridge (Current Solution)
 
-### Alternative: Wrap libbambu_networking.so
-
-The nuclear option: extract `libbambu_networking.so` from a BambuStudio or OrcaSlicer installation,
-load it via Python ctypes, and call its `start_print()` function directly. This would work for
-cloud printing but adds a proprietary binary dependency and is fragile across versions.
+Wrap `libbambu_networking.so` via C++ `dlopen()` — this is what we implemented and it works.
+See the "Solution" section above.
 
 ---
 
