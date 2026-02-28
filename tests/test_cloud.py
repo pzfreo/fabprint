@@ -63,7 +63,10 @@ class TestCloudPrint:
 
     def test_success(self, threemf_file, token_file):
         mock_result = MagicMock()
-        mock_result.stdout = '{"result":"success","return_code":0,"print_result":0,"device_id":"DEV123","file":"test.3mf"}'
+        mock_result.stdout = (
+            '{"result":"success","return_code":0,'
+            '"print_result":0,"device_id":"DEV123","file":"test.3mf"}'
+        )
         mock_result.stderr = ""
         mock_result.returncode = 0
 
@@ -87,7 +90,10 @@ class TestCloudPrint:
         config.write_bytes(b"PK\x03\x04config")
 
         mock_result = MagicMock()
-        mock_result.stdout = '{"result":"success","return_code":0,"print_result":0,"device_id":"DEV","file":"t.3mf"}'
+        mock_result.stdout = (
+            '{"result":"success","return_code":0,'
+            '"print_result":0,"device_id":"DEV","file":"t.3mf"}'
+        )
         mock_result.stderr = ""
 
         with patch("fabprint.cloud._run_bridge", return_value=mock_result) as mock_run:
