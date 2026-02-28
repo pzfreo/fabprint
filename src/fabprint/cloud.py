@@ -175,8 +175,7 @@ def cloud_status(
         if result.returncode == 2:
             raise RuntimeError(f"No status received from printer {device_id}")
         raise RuntimeError(
-            f"Bridge returned non-JSON output (exit {result.returncode}): "
-            f"{result.stdout[:200]}"
+            f"Bridge returned non-JSON output (exit {result.returncode}): {result.stdout[:200]}"
         )
 
 
@@ -200,8 +199,7 @@ def cloud_tasks(
         return data.get("hits", [])
     except json.JSONDecodeError:
         raise RuntimeError(
-            f"Bridge returned non-JSON output (exit {result.returncode}): "
-            f"{result.stdout[:200]}"
+            f"Bridge returned non-JSON output (exit {result.returncode}): {result.stdout[:200]}"
         )
 
 
@@ -225,6 +223,5 @@ def cloud_cancel(
         return json.loads(result.stdout.strip())
     except json.JSONDecodeError:
         raise RuntimeError(
-            f"Bridge returned non-JSON output (exit {result.returncode}): "
-            f"{result.stdout[:200]}"
+            f"Bridge returned non-JSON output (exit {result.returncode}): {result.stdout[:200]}"
         )

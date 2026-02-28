@@ -91,8 +91,7 @@ class TestCloudPrint:
 
         mock_result = MagicMock()
         mock_result.stdout = (
-            '{"result":"success","return_code":0,'
-            '"print_result":0,"device_id":"DEV","file":"t.3mf"}'
+            '{"result":"success","return_code":0,"print_result":0,"device_id":"DEV","file":"t.3mf"}'
         )
         mock_result.stderr = ""
 
