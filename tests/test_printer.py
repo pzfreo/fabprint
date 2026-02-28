@@ -71,6 +71,17 @@ def test_send_print_cloud_dispatches_bambu_connect(tmp_path):
         mock_send.assert_called_once_with(gcode, dry_run=True)
 
 
+def test_send_print_cloud_bridge_dispatches(tmp_path):
+    """Test that cloud-bridge mode dispatches to _send_cloud_bridge."""
+    gcode = tmp_path / "test.gcode"
+    gcode.write_text("; test gcode")
+    config = PrinterConfig(mode="cloud-bridge", serial="SN123")
+
+    with patch("fabprint.printer._send_cloud_bridge") as mock_send:
+        send_print(gcode, config, dry_run=True)
+        mock_send.assert_called_once_with(gcode, serial="SN123", dry_run=True)
+
+
 def test_send_print_lan_missing_ip():
     config = PrinterConfig(mode="lan", ip=None, access_code="abc", serial="SN123")
     with pytest.raises(ValueError, match="ip"):

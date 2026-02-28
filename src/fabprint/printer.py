@@ -283,6 +283,64 @@ def _send_bambu_connect(
     print("  Opened in Bambu Connect — confirm and print from there")
 
 
+def _send_cloud_bridge(
+    gcode_path: Path,
+    serial: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    """Send gcode to printer via the bambu_cloud_bridge binary.
+
+    Uses the C++ bridge to libbambu_networking.so for cloud printing.
+    Requires a token file at ~/.bambu_cloud_token or BAMBU_TOKEN_FILE env var.
+    """
+    from fabprint.cloud import cloud_print
+
+    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
+    if token_file_str:
+        token_file = Path(token_file_str)
+    else:
+        token_file = Path.home() / ".bambu_cloud_token"
+
+    if not token_file.exists():
+        raise FileNotFoundError(
+            f"Token file not found: {token_file}. "
+            "Run 'python scripts/bambu_cloud_login.py' first, or set BAMBU_TOKEN_FILE."
+        )
+
+    if not serial:
+        serial = os.environ.get("BAMBU_SERIAL")
+    if not serial:
+        raise ValueError(
+            "cloud-bridge mode requires serial. Set in [printer] config or BAMBU_SERIAL env var."
+        )
+
+    # Use the slicer's .gcode.3mf if available, otherwise wrap the gcode
+    sliced_3mf = gcode_path.parent / "plate_sliced.gcode.3mf"
+    if sliced_3mf.exists():
+        threemf_path = sliced_3mf
+    else:
+        threemf_path = wrap_gcode_3mf(gcode_path)
+
+    print(f"Sending {threemf_path.name} via cloud bridge")
+
+    if dry_run:
+        print(f"  [dry-run] Would upload {threemf_path.name} to printer {serial}")
+        return
+
+    result = cloud_print(
+        threemf_path=threemf_path,
+        device_id=serial,
+        token_file=token_file,
+        project_name=gcode_path.stem,
+    )
+
+    status = result.get("result", "unknown")
+    if status in ("success", "sent"):
+        print(f"  Print job sent to {serial}")
+    else:
+        raise RuntimeError(f"Cloud print failed: {result}")
+
+
 def send_print(
     gcode_path: Path,
     config: PrinterConfig,
@@ -322,5 +380,12 @@ def send_print(
     elif creds["mode"] == "bambu-cloud":
         _send_cloud(
             gcode_path,
+            dry_run=dry_run,
+        )
+
+    elif creds["mode"] == "cloud-bridge":
+        _send_cloud_bridge(
+            gcode_path,
+            serial=creds["serial"],
             dry_run=dry_run,
         )

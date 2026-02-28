@@ -29,3 +29,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --extra dev
       - run: uv run pytest -v
+
+  build-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile cloud bridge
+        run: g++ -std=c++17 -o bambu_cloud_bridge scripts/bambu_cloud_bridge.cpp -ldl -lpthread
+      - name: Verify binary
+        run: ./bambu_cloud_bridge --help
