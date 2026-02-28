@@ -6,6 +6,8 @@
  *   status  Query live printer state via MQTT
  *   tasks   List recent cloud print tasks (REST only)
  *   cancel  Stop the current print on a printer
+ *   send-mqtt Send raw JSON through the library's MQTT connection
+ *   install-cert Register the library's certificate with the printer
  *
  * Build:
  *   g++ -std=c++17 -o bambu_cloud_bridge bambu_cloud_bridge.cpp -ldl -lpthread
@@ -127,6 +129,8 @@ typedef std::string (*fn_get_bambulab_host)(void*);
 typedef int (*fn_send_message_to_printer)(void*, std::string, std::string, int, int);
 typedef int (*fn_send_message)(void*, std::string, std::string, int);
 typedef int (*fn_start_subscribe)(void*, std::string);
+typedef int (*fn_install_device_cert)(void*, std::string, bool);
+typedef int (*fn_update_cert)(void*);
 
 // ---------------------------------------------------------------------------
 // Global state
@@ -173,6 +177,8 @@ static fn_send_message_to_printer fp_send_msg = nullptr;
 static fn_send_message      fp_send_msg_legacy = nullptr;
 static fn_start_subscribe   fp_start_sub = nullptr;
 static fn_get_version       fp_get_version = nullptr;
+static fn_install_device_cert fp_install_cert = nullptr;
+static fn_update_cert       fp_update_cert = nullptr;
 
 static const char* stage_names[] = {
     "Create", "Upload", "Waiting", "Sending",
@@ -264,6 +270,8 @@ static bool load_library() {
     fp_send_msg_legacy = load_fn<fn_send_message>("bambu_network_send_message");
     fp_start_sub       = load_fn<fn_start_subscribe>("bambu_network_start_subscribe");
     fp_get_version     = load_fn<fn_get_version>("bambu_network_get_version");
+    fp_install_cert    = load_fn<fn_install_device_cert>("bambu_network_install_device_cert");
+    fp_update_cert     = load_fn<fn_update_cert>("bambu_network_update_cert");
 
     if (!fp_create_agent || !fp_change_user || !fp_connect_server) {
         fprintf(stderr, "error: essential functions not found in library\n");
@@ -588,6 +596,148 @@ static int cmd_cancel(const std::string& token_json_raw, const std::string& devi
 }
 
 // ---------------------------------------------------------------------------
+// Command: send-mqtt  (send raw JSON through library's MQTT connection)
+// ---------------------------------------------------------------------------
+
+static int cmd_send_mqtt(const std::string& token_json_raw, const std::string& device_id,
+                         const std::string& json_payload, int wait_secs) {
+    int saved_out = dup(STDOUT_FILENO);
+    int devnull_fd = open("/dev/null", O_WRONLY);
+    if (devnull_fd >= 0) { dup2(devnull_fd, STDOUT_FILENO); close(devnull_fd); }
+
+    if (!load_library()) return 1;
+    if (!init_agent(token_json_raw)) { cleanup(); return 1; }
+
+    // Collect ALL MQTT messages for output
+    std::vector<std::string> responses;
+    std::mutex resp_mutex;
+
+    if (fp_set_message_cb) {
+        fp_set_message_cb(g_agent, [&responses, &resp_mutex](std::string dev_id, std::string msg) {
+            if (msg.empty() || msg == "{}") return;
+            vlog("  mqtt[%s]: %s\n", dev_id.c_str(), msg.substr(0, 500).c_str());
+            std::lock_guard<std::mutex> lock(resp_mutex);
+            responses.push_back(msg);
+        });
+    }
+
+    subscribe_and_pushall(device_id, 20);
+
+    fprintf(stderr, "Sending MQTT payload (%zu bytes) to %s\n",
+            json_payload.size(), device_id.c_str());
+
+    // Try multiple send approaches
+    int ret = -1;
+    if (fp_send_msg_legacy) {
+        ret = fp_send_msg_legacy(g_agent, device_id, json_payload, 0);
+        fprintf(stderr, "  send_msg_legacy(qos=0): %d\n", ret);
+    }
+    if (ret != 0 && fp_send_msg_legacy) {
+        ret = fp_send_msg_legacy(g_agent, device_id, json_payload, 1);
+        fprintf(stderr, "  send_msg_legacy(qos=1): %d\n", ret);
+    }
+    if (ret != 0 && fp_send_msg) {
+        ret = fp_send_msg(g_agent, device_id, json_payload, 0, 0);
+        fprintf(stderr, "  send_msg(0,0): %d\n", ret);
+    }
+    if (ret != 0 && fp_send_msg) {
+        ret = fp_send_msg(g_agent, device_id, json_payload, 1, 0);
+        fprintf(stderr, "  send_msg(1,0): %d\n", ret);
+    }
+    if (ret != 0 && fp_send_msg) {
+        ret = fp_send_msg(g_agent, device_id, json_payload, 0, 1);
+        fprintf(stderr, "  send_msg(0,1): %d\n", ret);
+    }
+    fprintf(stderr, "Final send result: %d\n", ret);
+
+    fprintf(stderr, "Waiting %ds for response...\n", wait_secs);
+    std::this_thread::sleep_for(std::chrono::seconds(wait_secs));
+
+    // Restore stdout and output all responses
+    if (saved_out >= 0) { dup2(saved_out, STDOUT_FILENO); close(saved_out); }
+
+    std::lock_guard<std::mutex> lock(resp_mutex);
+    printf("{\"sent\":true,\"device_id\":\"%s\",\"responses\":[", device_id.c_str());
+    for (size_t i = 0; i < responses.size(); i++) {
+        if (i > 0) printf(",");
+        printf("%s", responses[i].c_str());
+    }
+    printf("]}\n");
+
+    fast_exit(0);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Command: install-cert
+// ---------------------------------------------------------------------------
+
+static int cmd_install_cert(const std::string& token_json_raw, const std::string& device_id) {
+    int saved_out = dup(STDOUT_FILENO);
+    int devnull_fd = open("/dev/null", O_WRONLY);
+    if (devnull_fd >= 0) { dup2(devnull_fd, STDOUT_FILENO); close(devnull_fd); }
+
+    if (!load_library()) return 1;
+    if (!init_agent(token_json_raw)) { cleanup(); return 1; }
+
+    // Collect all MQTT messages, especially security-related
+    std::vector<std::string> messages;
+    std::mutex msg_list_mutex;
+
+    if (fp_set_message_cb) {
+        fp_set_message_cb(g_agent, [&messages, &msg_list_mutex](std::string dev_id, std::string msg) {
+            if (msg.empty() || msg == "{}") return;
+            // Log everything for debugging
+            fprintf(stderr, "  mqtt: %s\n", msg.substr(0, 500).c_str());
+            std::lock_guard<std::mutex> lock(msg_list_mutex);
+            messages.push_back(msg);
+        });
+    }
+
+    subscribe_and_pushall(device_id, 10);
+
+    // Try update_cert first
+    if (fp_update_cert) {
+        fprintf(stderr, "Calling update_cert...\n");
+        int ret = fp_update_cert(g_agent);
+        fprintf(stderr, "  update_cert returned: %d\n", ret);
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
+
+    // Install device cert
+    if (fp_install_cert) {
+        fprintf(stderr, "Calling install_device_cert(%s, false)...\n", device_id.c_str());
+        int ret = fp_install_cert(g_agent, device_id, false);
+        fprintf(stderr, "  install_device_cert returned: %d\n", ret);
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    } else {
+        fprintf(stderr, "error: install_device_cert not found in library\n");
+        return 1;
+    }
+
+    // Request cert list from printer to verify
+    std::string cert_req = R"({"security":{"sequence_id":"0","command":"get_app_cert_list"}})";
+    send_mqtt(device_id, cert_req);
+    fprintf(stderr, "Requested app_cert_list, waiting 10s...\n");
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+
+    // Restore stdout and output results
+    if (saved_out >= 0) { dup2(saved_out, STDOUT_FILENO); close(saved_out); }
+
+    std::lock_guard<std::mutex> lock(msg_list_mutex);
+    printf("{\"command\":\"install-cert\",\"device_id\":\"%s\",\"messages\":[",
+           device_id.c_str());
+    for (size_t i = 0; i < messages.size(); i++) {
+        if (i > 0) printf(",");
+        printf("%s", messages[i].c_str());
+    }
+    printf("]}\n");
+
+    fast_exit(0);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Command: print
 // ---------------------------------------------------------------------------
 
@@ -608,11 +758,22 @@ static int cmd_print(const std::string& token_json_raw, const std::string& devic
 
     if (!init_agent(token_json_raw)) { cleanup(); return 1; }
 
-    // Set message callback for verbose logging during print
+    // Set message callback — log ALL messages, and full project_file responses
     if (fp_set_message_cb) {
         fp_set_message_cb(g_agent, [](std::string dev_id, std::string msg) {
             if (msg.empty() || msg == "{}") return;
-            vlog("  mqtt: %s\n", msg.substr(0, 200).c_str());
+            // Log full message for project_file and security responses
+            if (msg.find("project_file") != std::string::npos) {
+                vlog("  PRINT_CMD: %s\n", msg.c_str());
+            } else if (msg.find("app_cert_list") != std::string::npos ||
+                       msg.find("security") != std::string::npos) {
+                vlog("  SECURITY: %s\n", msg.c_str());
+            } else if (msg.find("gcode_state") != std::string::npos &&
+                       msg.find("PREPARE") != std::string::npos) {
+                vlog("  PREPARING: %s\n", msg.substr(0, 500).c_str());
+            } else {
+                vlog("  mqtt: %s\n", msg.substr(0, 200).c_str());
+            }
         });
     }
 
@@ -820,6 +981,45 @@ int main(int argc, char* argv[]) {
         std::string token_json = read_file(token_file);
         if (token_json.empty()) { fprintf(stderr, "error: cannot read %s\n", token_file.c_str()); return 1; }
         return cmd_cancel(token_json, device_id);
+    }
+
+    // --- install-cert ---
+    if (command == "install-cert") {
+        if (argc < 4) {
+            fprintf(stderr, "Usage: %s install-cert <device_id> <token_file> [-v]\n", argv[0]);
+            return 1;
+        }
+        std::string device_id = argv[2];
+        std::string token_file = argv[3];
+        std::string token_json = read_file(token_file);
+        if (token_json.empty()) { fprintf(stderr, "error: cannot read %s\n", token_file.c_str()); return 1; }
+        return cmd_install_cert(token_json, device_id);
+    }
+
+    // --- send-mqtt ---
+    if (command == "send-mqtt") {
+        if (argc < 5) {
+            fprintf(stderr, "Usage: %s send-mqtt <device_id> <token_file> <json_payload> [--wait N] [-v]\n", argv[0]);
+            return 1;
+        }
+        std::string device_id = argv[2];
+        std::string token_file = argv[3];
+        std::string json_payload = argv[4];
+        int wait_secs = 30;
+        for (int i = 5; i < argc; i++) {
+            if (std::string(argv[i]) == "--wait" && i + 1 < argc)
+                wait_secs = atoi(argv[++i]);
+        }
+        std::string token_json = read_file(token_file);
+        if (token_json.empty()) { fprintf(stderr, "error: cannot read %s\n", token_file.c_str()); return 1; }
+
+        // If json_payload starts with @, read from file
+        if (!json_payload.empty() && json_payload[0] == '@') {
+            json_payload = read_file(json_payload.substr(1));
+            if (json_payload.empty()) { fprintf(stderr, "error: cannot read payload file\n"); return 1; }
+        }
+
+        return cmd_send_mqtt(token_json, device_id, json_payload, wait_secs);
     }
 
     // --- print ---
