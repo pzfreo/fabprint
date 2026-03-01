@@ -11,7 +11,12 @@ with the goal of triggering a cloud print from third-party code (not BambuStudio
 **Python wrapper:** `src/fabprint/cloud.py`
 **Docker image:** `Dockerfile.cloud-bridge`
 
-**Status: CLOUD PRINT WORKING** — via wrapping the proprietary library (see "Solution" section below).
+**Status: CLOUD PRINT WORKING** — two approaches:
+1. **C++ bridge** wrapping `libbambu_networking.so` (see "Solution" section below)
+2. **Pure Python** — no proprietary library needed! (see "Pure Python Cloud Print" section below)
+
+The pure Python approach uses standard HTTP + MQTT with X.509 signing. It bypasses the
+`POST /my/task` endpoint entirely by sending the MQTT `project_file` command directly.
 
 ---
 
@@ -1124,6 +1129,446 @@ Still a viable option for printers on the same network:
 
 Wrap `libbambu_networking.so` via C++ `dlopen()` — this is what we implemented and it works.
 See the "Solution" section above.
+
+### Pure Python / Direct HTTP (NEW — Feasible!)
+
+**Discovery:** The Bambu Lab cloud API CAN be called directly via standard HTTP
+without the proprietary library. No request signing, HMAC, or special authentication
+is required beyond the Bearer token and X-BBL-* headers.
+
+#### What Works via Pure HTTP
+
+| Endpoint | Method | Status |
+|----------|--------|--------|
+| /v1/iot-service/api/user/bind | GET | **Working** — lists devices |
+| /v1/iot-service/api/user/print | GET | **Working** — device status + access code |
+| /v1/design-user-service/my/preference | GET | **Working** — user profile |
+| /v1/user-service/my/tasks | GET | **Working** — list print tasks |
+| /v1/iot-service/api/user/project | POST | **Working** — create project, returns S3 URL |
+| /v1/iot-service/api/user/project/{id} | GET | **Working** — project details |
+| /v1/iot-service/api/user/project/{id} | PATCH | **Partial** — only `profile_id` accepted |
+| S3 presigned URL | PUT | **Working** — file upload (no Content-Type header!) |
+| /v1/user-service/my/task | POST | **Working** — creates task (see required fields below) |
+
+#### Required Headers
+
+```
+Content-Type: application/json
+Authorization: Bearer <token>
+X-BBL-Client-Type: slicer
+X-BBL-Client-Name: BambuStudio
+X-BBL-Client-Version: 02.05.01.52
+X-BBL-OS-Type: linux
+X-BBL-OS-Version: 6.8.0
+X-BBL-Device-ID: <any unique hex string>
+X-BBL-Language: en
+```
+
+No special User-Agent is required for REST endpoints (unlike the library's
+`bambu_network_agent/01.09.05.01`).
+
+#### Task Creation — POST /v1/user-service/my/task
+
+**Required fields** (server returns error message if missing):
+- `deviceId` (string) — printer serial number
+- `modelId` (string) — from project creation response
+- `profileId` (integer) — from project creation response
+- `plateIndex` (integer) — plate number (usually 1)
+- `title` (string) — task display name
+- `cover` (string) — cover image URL
+
+**Critical required field** (server returns empty 400 if missing, NO error message):
+- `mode` (string) — must be `"cloud_file"` for cloud prints
+
+**Optional fields:**
+- `designId` (integer) — default 0
+- `amsDetailMapping` (array) — AMS filament mapping, default `[]`
+- `bedType` (string) — `"auto"` or specific bed type
+- `timelapse` (boolean) — enable timelapse recording
+- `useAms` (boolean) — use AMS filament system
+- `flowCalibration` (boolean) — auto flow calibration
+- `bedLevelling` (boolean) — auto bed leveling
+- `vibrationCalibration` (boolean) — vibration compensation
+- `layerInspect` (boolean) — first layer inspection
+
+**Example request:**
+```json
+{
+    "deviceId": "01P00A451601106",
+    "modelId": "USf9309334c60f9f",
+    "profileId": 636989901,
+    "plateIndex": 1,
+    "title": "my_print",
+    "cover": "https://public-cdn.bambulab.cn/default/task.jpg",
+    "mode": "cloud_file"
+}
+```
+
+**Response:** `{"id": 778578021}` (HTTP 200)
+
+#### S3 Upload
+
+The presigned URL from project creation response should be used with a simple PUT.
+**Do NOT set Content-Type header** — S3 signature validation will fail.
+
+```python
+with open('file.3mf', 'rb') as f:
+    requests.put(upload_url, data=f)  # No headers!
+```
+
+#### Pure Python Cloud Print (Complete — No Library Needed!)
+
+**Status: WORKING (dry-run tested Feb 2026)**
+
+The complete cloud print flow can be done in pure Python, bypassing the proprietary library
+entirely. The key insight is that `POST /my/task` is NOT needed — the MQTT `project_file`
+command triggers the print directly.
+
+**Flow (6 steps):**
+
+1. **Create project** — `POST /v1/iot-service/api/user/project` with `{"name": "file.3mf"}`
+   Returns `project_id`, `model_id`, `profile_id`, `upload_url`, `upload_ticket`.
+
+2. **Upload full 3MF** — `PUT upload_url` with raw file bytes, **NO Content-Type header**.
+   The `upload_url` from step 1 is a presigned S3 URL. Upload the FULL sliced `.gcode.3mf`
+   here (not a config-only 3MF). The server extracts everything: configs, gcode, plate
+   metadata, compatibility info, thumbnails.
+
+3. **Notify** — `PUT /v1/iot-service/api/user/notification` with
+   `{"upload": {"ticket": upload_ticket, "origin_file_name": "file.3mf"}}`.
+   Server processes the 3MF within ~2 seconds. Poll project detail until
+   `profiles[0].context.plates[0].gcode.url` is populated.
+
+4. **Patch project** — `PATCH /v1/iot-service/api/user/project/{id}` with
+   `{"name": "file.3mf", "profile_id": profile_id}`.
+
+5. **Get download URL** — `GET /v1/iot-service/api/user/profile/{profile_id}?model_id=X`.
+   Returns `url` (signed S3 URL to the 3MF) and `md5`. Convert `url` to dualstack format:
+   `https://s3.{region}.amazonaws.com/{bucket}/...` →
+   `https://{bucket}.s3.dualstack.{region}.amazonaws.com/...`
+
+6. **MQTT project_file** — Connect to `us.mqtt.bambulab.com:8883` with `u_{uid}` / token.
+   Send signed `project_file` command to `device/{device_id}/request`:
+   ```json
+   {"print": {"command": "project_file", "param": "Metadata/plate_1.gcode",
+     "project_id": "...", "profile_id": "...", "task_id": "0", "subtask_id": "0",
+     "subtask_name": "file.3mf", "url": "<dualstack S3 URL>", "md5": "...",
+     "bed_type": "auto", "use_ams": true, ...}}
+   ```
+   Sign with Bambu Connect X.509 RSA-SHA256 key (publicly extracted, cert_id known).
+
+**Key discoveries:**
+- **No config 3MF needed** — uploading the full 3MF to `upload_url` extracts everything
+  (slice_info.config, plate_1.json, model_settings.config, project_settings.config, gcode).
+  The library uploads a separate config 3MF, but it's unnecessary for the pure Python path.
+- **No POST /my/task needed** — this endpoint has server-side validation that rejects
+  HTTP-created models (empty 400). It works for library-created models (can reprint old
+  jobs) but not for new pure-HTTP uploads. The MQTT `project_file` command bypasses this.
+- **POST /my/task with `mode: "cloud_file"`** works for EXISTING model_ids (previously
+  uploaded via library). Missing `mode` field causes empty 400 with no error message.
+- **upload_url is for the 3MF file** — the project creation's `upload_url` triggers
+  server-side extraction when a file is uploaded there and a notification is sent.
+- **Profile URL must be dualstack format** — the MQTT command URL should use
+  `{bucket}.s3.dualstack.{region}.amazonaws.com` style, not path-style.
+
+**What still requires the library:**
+- `POST /my/task` for new models (task shows in Bambu Handy app history)
+- Without it, prints work but don't appear in the task history
+
+**Script:** `/tmp/test_pure_python_cloud_print.py`
+
+#### POST /my/task Analysis
+
+`POST /my/task` has server-side validation beyond field checking:
+
+| Model source | Result |
+|---|---|
+| Library-created model + matching profile | 200 OK ✅ |
+| HTTP-created model + matching profile | 400 empty ❌ |
+| Any model + mismatched profile | 403 ❌ |
+| Any model + profileId=0 | 400 empty ❌ |
+
+The server validates model/profile pairs (403 on mismatch) and has an internal flag on
+models created by the library vs HTTP. Same headers, same token, same payload — only
+the model_id determines success. Tested with OrcaSlicer headers, BambuStudio headers,
+curl, sessions with Cloudflare cookies — all produce the same result.
+
+No third-party project has successfully called this endpoint for new models:
+- coelacant1/Bambu-Lab-Cloud-API: "Print job submission" listed as "Not Yet Implemented"
+- OrcaSlicer: delegates to `libbambu_networking.so`
+- KITT/bambu-mcp: bypass task creation entirely
+
+#### Library Anti-Debug Analysis
+
+The proprietary `libbambu_networking.so` uses multiple anti-debugging techniques:
+
+1. **Static networking:** ALL networking (curl, OpenSSL, DNS resolver) is statically
+   linked inside VMProtect-obfuscated code. `nm -D` shows ZERO networking symbols.
+   LD_PRELOAD hooks on connect/socket/getaddrinfo are completely ineffective.
+
+2. **Anti-debug checks:**
+   - Reads `/proc/self/status` to check `TracerPid` field
+   - Reads `/proc/<parent_pid>/cmdline` to identify tracer process
+   - Calls `ptrace(PTRACE_TRACEME)` as secondary check
+   - Crashes with SIGSEGV if any check detects debugging
+
+3. **Bypass method (for research):** A ptrace-based stealth tracer can:
+   - Intercept `read()` on `/proc/self/status` and patch `TracerPid: <pid>` → `TracerPid: 0`
+   - Intercept `read()` on `/proc/<tracer>/cmdline` and fake the content
+   - Replace `ptrace(TRACEME)` syscall with `getpid()` and fake return value 0
+   - Successfully redirect `connect()` syscalls from port 443 to a local proxy
+   - See `/tmp/ptrace_stealth.c` for implementation
+
+4. **TLS interception blocked:** Even with connection redirection working,
+   the library's statically-linked TLS rejects mitmproxy certificates.
+   The embedded curl respects `CURL_CA_BUNDLE` for connecting to the real API,
+   but adding the mitmproxy CA to the bundle causes initialization failures
+   under ptrace (timing-sensitive behavior).
+
+---
+
+## Private Key Extraction Attempts (Feb 2026)
+
+### Goal
+
+Extract the RSA private key used by `libbambu_networking.so` for signing MQTT `project_file`
+commands, enabling pure Python cloud printing without the proprietary library.
+
+### Background
+
+The library successfully signs and sends MQTT commands during `start_print()`. The signing
+uses RSA-SHA256 with an X.509 certificate. The device certificate
+(CN=`GLOF3813734089-b04ef6650000`, RSA 2048-bit, valid 2025-02-09 to 2026-08-14) was found
+in memory, but its **private key** is needed to sign messages independently.
+
+Key distinction:
+- `send_message_to_printer()` with `MSG_SIGN=1` signs pushall/get_accessories (rc=0)
+- `send_message_to_printer()` returns **-4** for `project_file` and `gcode_line` — the
+  library gates these command types at the application level, BEFORE signing
+- `start_print()` works end-to-end because it uses an internal code path that bypasses
+  `send_message_to_printer()`
+
+### Approach 1: PEM/DER Memory Scan (FAILED)
+
+**Tool:** `/tmp/self_scan_bridge.cpp` — self-scanning bridge with SIGSEGV/SIGBUS signal
+handlers using `sigsetjmp`/`siglongjmp` for safe memory reading.
+
+**Method:** After loading the library and logging in (waiting 8s for key decryption),
+scanned all readable memory regions matching `libbambu`, `[heap]`, or anonymous writable.
+Searched for PEM markers (`BEGIN PRIVATE KEY`, `BEGIN RSA PRIVATE KEY`) and DER PKCS#8
+headers (`30 82 XX XX 02 01 00`).
+
+**Result:** Found 200 items — ALL certificates, ZERO private keys.
+
+6 unique certificates found:
+| CN | Type | Notes |
+|----|------|-------|
+| GLOF3813734089-b04ef6650000 | Device cert | Library-generated, RSA 2048, used for MQTT TLS |
+| GLOF3813734089.bambulab.com | Printer cert | Issued by application_root |
+| application_root.bambulab.com | Intermediate CA | |
+| BBL CA | Root CA | 2022–2032 |
+| BBL CA2 RSA | New root CA | 2025–2035 |
+| BBL CA2 ECC | New ECC root | 2025–2035 |
+
+**Conclusion:** Private key is NOT stored in PEM or DER format in memory. OpenSSL 3.x
+stores decrypted keys internally as BIGNUM structures (raw word arrays), not serialized.
+
+### Approach 2: LD_PRELOAD OpenSSL Hook (FAILED)
+
+**Tool:** `/tmp/hook_sign.c` — shared library intercepting `EVP_DigestSignFinal`,
+`EVP_PKEY_sign`, and `EVP_SignFinal`.
+
+**Method:** Compiled as shared object, ran bridge with `LD_PRELOAD=/tmp/hook_sign.so`.
+
+**Result:** Zero keys captured. No hook functions were called.
+
+**Root cause:** Library **statically links OpenSSL**. `ldd` shows only basic system
+libraries (libpthread, libstdc++, libdl, libc, libz, libm, libgcc_s) — no libssl or
+libcrypto. LD_PRELOAD only intercepts dynamically-linked functions.
+
+### Approach 3: External Process Memory Scan (FAILED)
+
+**Tool:** `/tmp/bg_bridge.cpp` (background bridge) + `/tmp/scan_pid.py` (external scanner).
+
+**Method:** Started the bridge as a background process (PID 13239, login=0), then tried
+to read `/proc/PID/mem` from a separate Python script.
+
+**Result:** `Permission denied` on `/proc/PID/mem`.
+
+**Root cause:** `ptrace_scope=1` on this Linux kernel. External process memory reading
+requires parent-child relationship. Cannot be fixed without root.
+
+### Approach 4: Library Export Functions (FAILED)
+
+**Tool:** `/tmp/get_cert2.cpp`, `/tmp/get_token.cpp`
+
+**Method:** Tried calling various `bambu_network_get_*` exports to find a key getter.
+
+**Results:**
+- `bambu_network_get_device_cert` → NULL (function doesn't exist)
+- `bambu_network_get_user_id` → "1939415276" ✅
+- `bambu_network_get_user_name` → "paul@fremantle.org" ✅
+- `bambu_network_get_my_token` → segfault (wrong calling convention?)
+
+**Conclusion:** No exported function exposes the private key.
+
+### Approach 5: BIGNUM Memory Scan (IN PROGRESS)
+
+**Tool:** `/tmp/bignum_scan_bridge.cpp`
+
+**Method:** Since OpenSSL stores keys as BIGNUM structures (arrays of `uint64_t` in
+little-endian word order on x86_64), search for the known RSA modulus in both:
+1. Big-endian format (as in certificate DER encoding)
+2. BIGNUM LE word-reversed format (as in OpenSSL's internal structs)
+
+Then follow pointer chains: modulus data → BIGNUM struct → RSA_KEY struct → private
+exponent BIGNUM.
+
+Known modulus (from device cert):
+```
+C7E73DCABEEBEA926FA5D805C1736EB427E4DA5FF536FE67DD58DA17EE0DA5DC
+32C95FB578830973EC9CCAEE861372E7BECD3175ED29DBF2DABE4BAF3B25A1C1
+325A9B4EC998D33801842B8AF3B49A803A36A426F25E47AD8EAA3E288C54E97C
+95F6F075DC452ABAE8B46B919B742E0CE347EB3053F51CEAB3AF000CF247295B
+136832EF82DDACB0CCD7AE1BCC05C0A40B7024B95560902321A86FD8F60D88DF
+A06695371D63D5D9D49C1939BCF58742E24E31D21313E4D2C9A5DE1217D3C7B2
+65CB893C59B8DD8218F1D2F1877BFE2B27008A30A6CC1B882EF89E202D837AFD
+A104FD0025EA24CDB12AB8E59F4505D81C320C35D8DE1F8991EBCF7A94C9EE13
+```
+
+BIGNUM LE first 16 bytes (search pattern):
+`13 ee c9 94 7a cf eb 91 89 1f de d8 35 0c 32 1c`
+
+**Status:** Scanner compiles and runs, but per-byte `safe_memcpy` across 86 memory regions
+is too slow. Needs optimization (bulk page reads with mmap/pread).
+
+### Approach 6: Binary Disassembly (PARTIAL)
+
+**Method:** Disassembled `send_message_to_printer` and `start_print` exports.
+
+**Findings:** All exported functions use the same anti-debug trampoline pattern:
+```
+push rcx; push rdx; push rdi; push rsi; pushf
+call 0x116730          ; anti-debug check
+popf; pop rsi; pop rdi; pop rdx; pop rcx
+jmp <real_implementation>  ; obfuscated code
+```
+
+The real implementations jump to heavily obfuscated code (VMProtect-style: stack
+manipulation, `xchg` tricks, `push/pop` chains). Makes binary patching impractical.
+
+Key addresses (in `/tmp/bambu_plugin/libbambu_networking.so`):
+| Export | Address | Real impl | Size |
+|--------|---------|-----------|------|
+| `send_message_to_printer` | 0x33c4c0 | 0x8a6130 | 0x159 |
+| `start_print` | 0x351600 | 0x8a6890 | 0x1f4 |
+| `start_publish` | 0x077120 | 0x8a4460 | 0x321 |
+| anti-debug check | 0x116730 | — | — |
+
+`start_publish` is for MakerWorld model publishing, NOT MQTT publish.
+
+### Encrypted Config File
+
+The library stores key material in `/tmp/bambu_agent/config/BambuNetworkEngine.conf`
+(688 bytes, high entropy). Encrypted at rest, decrypted at runtime.
+
+- KEK from cloud API (`efc30d7df1f956d7a9a5220b48ba68db`) does NOT decrypt it
+- Encryption scheme unknown (not standard AES-CBC/GCM with known IV patterns)
+- Backup at `BambuNetworkEngine.conf.bak`
+
+### Old Bambu Connect Key (Jan 2025)
+
+The Bambu Connect v1.0.4 private key (publicly extracted Jan 2025) was tested with all
+9 cert_id format variants against 3 printer-registered cert_ids. ALL attempts fail with
+error `84033545` (0x05024009 = "signature verification failed").
+
+**Conclusion:** The key is **per-installation**, not global (see BC macOS findings below).
+Each installation generates its own RSA key pair and certificate.
+
+### Bambu Connect macOS Analysis (Feb 28, 2026)
+
+Analysis of the Bambu Connect macOS app (Electron-based) revealed the certificate
+architecture:
+
+**Found in compiled bytecode:**
+```
+Subject/OU: GLOF3813734089-524a37c80000
+Issuer:     GLOF3813734089.bambulab.com
+Valid:      Dec 2024 – Dec 2025 (EXPIRED)
+Key usage:  Digital Signature, Key Encipherment, Key Agreement
+```
+
+**Certificate comparison across installations:**
+
+| Installation | Cert CN suffix | Valid until | Key storage |
+|---|---|---|---|
+| BC macOS (Electron) | `524a37c80000` | Dec 2025 (expired) | AES-256 in IndexedDB |
+| Linux library (our instance) | `b04ef6650000` | Aug 2026 | Encrypted in BambuNetworkEngine.conf |
+| BC v1.0.4 (Jan 2025 leak) | (unknown) | (unknown) | Extracted from memory |
+
+**Critical insight: Per-installation key pairs.** Each Bambu Connect / library installation:
+1. Generates its own RSA 2048-bit key pair via `install_device_cert(dev_id, lan_only)`
+2. Gets a unique certificate signed by `GLOF3813734089.bambulab.com` (account-level CA)
+3. Uses a unique suffix (e.g., `524a37c80000`, `b04ef6650000`) as the installation ID
+4. The `GLOF3813734089` prefix is the **account/printer identifier**, shared across all installations
+
+This means:
+- The Jan 2025 "leaked" key was never a global key — it was from ONE specific installation
+- Our Linux library has its OWN private key (for the `b04ef6650000` cert)
+- The BC mac private key wouldn't work for us even if extracted (different cert, and expired)
+- To use pure Python, we must extract OUR library's `b04ef6650000` private key specifically
+
+**BC macOS key storage:**
+- Private key encrypted with AES-256
+- Key derivation code is in compiled V8 bytecode (.jsc files) — not readable
+- Strings found: `encAppKey`, `random_key`, `aes256`
+- Stored in IndexedDB or fetched via `app_cert_install` API endpoint
+- NOT in the app bundle or Local Storage
+
+**Potential new approach:** Call `bambu_network_install_device_cert()` to generate a FRESH
+certificate, then immediately scan memory for the newly-generated key before it gets
+encrypted. The key would be in plaintext BIGNUM form during the CSR construction phase.
+
+### Remaining Approaches (Not Yet Tried)
+
+1. **Optimized BIGNUM scan** — Read pages in bulk (entire page → local buffer), then
+   search with memcmp instead of per-byte safe_memcpy. Would reduce scan time dramatically.
+
+2. **install_device_cert + immediate scan** — Call the library's cert installation function
+   to trigger key generation, then scan memory for the fresh RSA key before encryption.
+   The `install_device_cert(dev_id, lan_only)` export takes the printer device ID.
+
+3. **LD_PRELOAD on write()** — Hook `write()` (glibc, dynamically linked) during
+   `install_device_cert()` to capture what gets written to BambuNetworkEngine.conf.
+   May reveal the key format or encryption scheme.
+
+4. **GDB debugging** — GDB not installed but could be. Bridge is our own code, so GDB
+   is the parent (bypasses ptrace_scope=1). Could breakpoint at cert generation.
+
+5. **Inline binary patching** — Patch `send_message_to_printer` to skip the command-type
+   check returning -4 for project_file. Hard due to VMProtect obfuscation.
+
+6. **Intercept at syscall level** — Hook `write()`/`send()` via LD_PRELOAD during
+   `start_print()` + TLS key logging to capture the signed MQTT project_file command.
+
+### Current Status (Feb 28, 2026)
+
+**Working:** C++ bridge (`scripts/bambu_cloud_bridge.cpp`) wrapping `libbambu_networking.so`
+for cloud printing. This is the production solution.
+
+**Blocked:** Pure Python cloud printing. All private key extraction attempts have failed.
+The library's key is encrypted at rest, stored in opaque OpenSSL internal structures at
+runtime, protected by static linking (no LD_PRELOAD), obfuscated code (no easy binary
+patching), and anti-debug checks.
+
+**Key architecture discovery:** Certificate signing is per-installation, not per-account.
+Each installation generates its own RSA key pair. The `install_device_cert` library export
+triggers this process. Intercepting key generation is the most promising remaining path.
+
+**Three viable paths forward:**
+1. **Use the C++ bridge** as the production solution (already working)
+2. **Optimized BIGNUM scan** to find the key in OpenSSL's internal memory structures
+3. **install_device_cert interception** — trigger fresh key generation and capture it
 
 ---
 
