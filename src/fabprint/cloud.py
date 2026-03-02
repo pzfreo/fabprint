@@ -24,6 +24,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -214,10 +215,28 @@ def cloud_print(
         "--timeout",
         str(timeout),
     ]
+
+    # Auto-generate config-only 3MF if not provided.
+    # The v02.05 library requires a separate config_filename (3MF without gcode).
+    tmp_config = None
     if config_3mf and config_3mf.exists():
         args.extend(["--config-3mf", str(config_3mf.resolve())])
+    else:
+        config_bytes = _strip_gcode_from_3mf(threemf_path)
+        tmp_config = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
+        tmp_config.write(config_bytes)
+        tmp_config.close()
+        args.extend(["--config-3mf", tmp_config.name])
+        log.debug("Auto-generated config 3MF: %s (%d bytes)", tmp_config.name, len(config_bytes))
 
-    result = _run_bridge(args, timeout=timeout + 60, verbose=verbose)
+    try:
+        result = _run_bridge(args, timeout=timeout + 60, verbose=verbose)
+    finally:
+        if tmp_config:
+            try:
+                os.unlink(tmp_config.name)
+            except OSError:
+                pass
 
     if result.stderr:
         log.debug("Bridge stderr: %s", result.stderr.strip())
@@ -720,22 +739,25 @@ def cloud_print_http(
     if verbose:
         log.info("Task body: %s", json.dumps(task_body, indent=2))
 
-    # Sign the task body with the BambuConnect X.509 private key.
+    # Sign the task body with the library's per-installation RSA-2048 key.
     # The server includes this signature in the MQTT command to the printer;
-    # without it the printer rejects the command.
-    task_body_bytes = json.dumps(task_body, separators=(",", ":")).encode("utf-8")
-    signature_b64 = _sign_task_body(task_body_bytes)
-    log.debug("Creating print task for device %s (signed)", device_id)
+    # without it the printer rejects the command ("MQTT Command verification failed").
+    #
+    # The signing key is stored encrypted in BambuNetworkEngine.conf and cannot
+    # be extracted (it's never exposed in standard PEM/DER or OpenSSL structures).
+    # The library generates a per-installation certificate via the /cert endpoint.
+    #
+    # For now, POST /my/task is sent unsigned. The task will be created (HTTP 200)
+    # but the printer will reject the MQTT command. Use cloud-bridge mode for
+    # working cloud prints (the bridge binary handles signing internally).
+    log.warning(
+        "cloud-http: POST /my/task sent unsigned — printer may reject. "
+        "Use cloud-bridge mode for reliable cloud printing."
+    )
     task_data = _check(
         session.post(
             f"{BASE_URL}/v1/user-service/my/task",
-            data=task_body_bytes,
-            headers={
-                "Content-Type": "application/json",
-                "x-bbl-app-certification-id": BAMBU_CERT_ID,
-                "x-bbl-device-security-sign": signature_b64,
-                "x-connect-api-acton": "sign",
-            },
+            json=task_body,
         ),
         "create task",
     )

@@ -11,13 +11,18 @@ with the goal of triggering a cloud print from third-party code (not BambuStudio
 **Python wrapper:** `src/fabprint/cloud.py`
 **Docker image:** `Dockerfile.cloud-bridge`
 
-**Status: CLOUD PRINT WORKING** — two approaches:
-1. **C++ bridge** wrapping `libbambu_networking.so` (see "Solution" section below)
-2. **Pure Python REST** — no proprietary library needed! (see "Pure Python Cloud Print" section below)
+**Status: CLOUD PRINT WORKING** via C++ bridge wrapping `libbambu_networking.so`.
 
-The pure Python approach uses standard HTTP only. Key discovery from BambuConnect traffic
-capture (Mar 2026): `POST /my/task` works directly when using BambuConnect client headers
-(`x-bbl-client-type: connect`). No MQTT, no X.509 signing, no library needed.
+The bridge handles the full flow including RSA-2048 signing of `POST /my/task` via
+the library's internal per-installation certificate. Pure Python handles steps 1–7
+(project creation, upload, patch) but step 8 (task creation) requires RSA signing
+that only the library can provide. Without signing, the task is created (HTTP 200)
+but the printer rejects the MQTT command ("verification failed").
+
+**Key architectural finding (Mar 2026):** Each installation gets its own RSA-2048 key pair.
+The private key is stored encrypted in `BambuNetworkEngine.conf` and is never exposed in
+standard PEM/DER or OpenSSL RSA structures — even during active signing. Exhaustive extraction
+attempts via Frida, mitmproxy, and memory scanning all confirmed the key is not extractable.
 
 ---
 
@@ -1496,35 +1501,32 @@ requires parent-child relationship. Cannot be fixed without root.
 
 **Conclusion:** No exported function exposes the private key.
 
-### Approach 5: BIGNUM Memory Scan (IN PROGRESS)
+### Approach 5: BIGNUM Memory Scan via Frida (FAILED)
 
-**Tool:** `/tmp/bignum_scan_bridge.cpp`
+**Tool:** Frida v17.7.3 with custom JavaScript instrumentation scripts (`/tmp/frida_trace_rsa.js`)
 
 **Method:** Since OpenSSL stores keys as BIGNUM structures (arrays of `uint64_t` in
-little-endian word order on x86_64), search for the known RSA modulus in both:
+little-endian word order on x86_64), used Frida `Memory.scanSync()` to search for the
+known RSA modulus from the installation's certificate in both:
 1. Big-endian format (as in certificate DER encoding)
 2. BIGNUM LE word-reversed format (as in OpenSSL's internal structs)
 
-Then follow pointer chains: modulus data → BIGNUM struct → RSA_KEY struct → private
+Then followed pointer chains: modulus data → BIGNUM struct → RSA_KEY struct → private
 exponent BIGNUM.
 
-Known modulus (from device cert):
-```
-C7E73DCABEEBEA926FA5D805C1736EB427E4DA5FF536FE67DD58DA17EE0DA5DC
-32C95FB578830973EC9CCAEE861372E7BECD3175ED29DBF2DABE4BAF3B25A1C1
-325A9B4EC998D33801842B8AF3B49A803A36A426F25E47AD8EAA3E288C54E97C
-95F6F075DC452ABAE8B46B919B742E0CE347EB3053F51CEAB3AF000CF247295B
-136832EF82DDACB0CCD7AE1BCC05C0A40B7024B95560902321A86FD8F60D88DF
-A06695371D63D5D9D49C1939BCF58742E24E31D21313E4D2C9A5DE1217D3C7B2
-65CB893C59B8DD8218F1D2F1877BFE2B27008A30A6CC1B882EF89E202D837AFD
-A104FD0025EA24CDB12AB8E59F4505D81C320C35D8DE1F8991EBCF7A94C9EE13
-```
+**Results (from Frida hooking `start_print`):**
+- **5 big-endian modulus hits** — DER-encoded certificate copies in heap
+- **2 little-endian BIGNUM hits** — OpenSSL BIGNUM data at known addresses
+- Traced from BIGNUM data → found pointers to BIGNUM structs (top=32, dmax validated)
+- Traced from BIGNUM structs → found RSA structures with matching `e=65537`
+- **ALL RSA structures have `d = NULL`** — public key only!
+- No PEM or DER private key patterns found anywhere in process memory
+- No PKCS#1 or PKCS#8 private key headers (`30 82 XX XX 02 01 00`) found
 
-BIGNUM LE first 16 bytes (search pattern):
-`13 ee c9 94 7a cf eb 91 89 1f de d8 35 0c 32 1c`
-
-**Status:** Scanner compiles and runs, but per-byte `safe_memcpy` across 86 memory regions
-is too slow. Needs optimization (bulk page reads with mmap/pread).
+**Conclusion:** The library stores the private key in a custom internal format, NOT in
+standard OpenSSL RSA structures. Even during active signing (hooked `start_print` on both
+entry and exit), the private exponent `d` is NULL in all RSA structures. The library
+likely uses its own crypto implementation or stores key material in obfuscated form.
 
 ### Approach 6: Binary Disassembly (PARTIAL)
 
@@ -1554,11 +1556,98 @@ Key addresses (in `/tmp/bambu_plugin/libbambu_networking.so`):
 ### Encrypted Config File
 
 The library stores key material in `/tmp/bambu_agent/config/BambuNetworkEngine.conf`
-(688 bytes, high entropy). Encrypted at rest, decrypted at runtime.
+(688 bytes, 7.66 bits/byte entropy — fully encrypted). Encrypted at rest, decrypted at runtime.
 
 - KEK from cloud API (`efc30d7df1f956d7a9a5220b48ba68db`) does NOT decrypt it
 - Encryption scheme unknown (not standard AES-CBC/GCM with known IV patterns)
 - Backup at `BambuNetworkEngine.conf.bak`
+
+### Approach 7: mitmproxy HTTPS Interception (Mar 2026)
+
+**Tool:** mitmproxy v11.1.3 with custom addon (`/tmp/mitm_capture2.py`)
+
+**Method:** Ran the bridge with `HTTPS_PROXY` pointing to mitmproxy. Appended mitmproxy's
+CA cert to the system CA bundle and to `slicer_base64.cer` so the library's static
+libcurl would trust it. Captured all HTTP traffic during a successful `start_print()`.
+
+**Results — Successfully captured signing headers from POST /my/task:**
+```
+x-bbl-app-certification-id: CN=GLOF3813734089.bambulab.com:a4e8faaa1a38e3650a0ea590d192383f
+x-bbl-device-security-sign: IlN4Ym0I6sPF...KhsCKg== (344 chars base64, 256 bytes = RSA-2048)
+```
+- **`x-connect-api-acton` header NOT sent** by library (BambuConnect sends `sign`)
+- Server returned HTTP 200 with `{"id": 782951694}` — task created, printer started PREPARE
+- POST body: 500 bytes JSON with deviceId, modelId, profileId, amsMapping, etc.
+
+**Also captured certificate download:**
+```
+GET /v1/iot-service/api/user/applications/{app_id}/cert?aes256=<RSA-encrypted-AES-key>
+```
+Response contained:
+- `cert`: Full PEM chain (3 certs — leaf, intermediate CA, root CA)
+- `key`: 940 chars base64 (704 bytes) — AES-256-encrypted private key
+- `crl`: Certificate revocation list
+
+**Leaf cert:** CN=GLOF3813734089-836763c70000, RSA 2048-bit, valid 2025-12-21 to 2027-06-25
+**Intermediate CA:** CN=GLOF3813734089.bambulab.com (account-level, signs all installation certs)
+**Root CA:** CN=application_root.bambulab.com (signed by BBL CA)
+
+Custom X.509 OIDs in leaf cert:
+- `1.3.6.1.4.1.1666250441.1` = "v1" (version)
+- `1.3.6.1.4.1.1666250441.2` = "false" (revoked flag)
+- `1.3.6.1.4.1.1666250441.1.1` = "3DP" (product type)
+- `1.3.6.1.4.1.1666250441.1.2` = "Studio" (client type)
+
+**Key exchange flow:**
+1. Library generates random AES-256 key
+2. RSA-encrypts AES key with server's public key (embedded in library binary)
+3. Sends encrypted AES key as `aes256` URL parameter
+4. Server decrypts AES key, generates RSA-2048 key pair, signs cert
+5. Server AES-256-encrypts private key with the AES key
+6. Returns cert chain + encrypted private key
+7. Library decrypts private key with its AES key, stores in BambuNetworkEngine.conf
+
+The `key` field cannot be decrypted without the AES key, which is only known to
+the library (generated internally) and the server. The server's RSA public key
+(used to encrypt the `aes256` parameter) is embedded in the library binary.
+
+### Approach 8: Frida RSA Structure Tracing (Mar 2026, FAILED)
+
+**Tool:** Frida with `/tmp/frida_trace_rsa.js` — comprehensive pointer chain analysis
+
+**Method:** Three-phase extraction during `start_print()`:
+1. Find LE modulus BIGNUM data in memory (pattern: last 8 bytes reversed)
+2. Search for pointers TO the data → identify BIGNUM structs (validate top=32)
+3. Search for pointers TO BIGNUM structs → identify RSA structures (validate e=65537)
+4. Read d, p, q, dp, dq, qinv from RSA structure offsets
+
+Tested all possible offsets (0–128 in steps of 8) for where `n` sits in the RSA struct.
+
+**Results:**
+- Phase 1: Found 2 LE modulus data locations
+- Phase 2: Found 2 valid BIGNUM(n) structs with top=32
+- Phase 3: Found RSA structures at multiple offsets — **ALL have d=NULL**
+- Scanned on both `start_print` entry AND exit — same result
+- Repeated for both BIGNUM addresses — same result
+
+**Definitive conclusion:** The library does NOT use standard OpenSSL RSA structures for
+private key storage. The key is held in a custom obfuscated format. The RSA-2048 signing
+works through an internal implementation that never populates the standard `d` field.
+
+### MQTT app_cert_list (from captures)
+
+The printer broadcasts registered cert IDs via MQTT `security` topic:
+```json
+{
+  "command": "app_cert_list",
+  "cert_ids": [
+    "a4e8faaa1a38e3650a0ea590d192383fCN=GLOF3813734089.bambulab.com",
+    "f9332ab780a6ffe6664db61be42b04ee"
+  ]
+}
+```
+- First entry: our library's current cert (used for signing)
+- Second entry: old cert from Jan 2025 extraction (still registered but key rotated)
 
 ### Old Bambu Connect Key (Jan 2025)
 
@@ -1613,47 +1702,51 @@ This means:
 certificate, then immediately scan memory for the newly-generated key before it gets
 encrypted. The key would be in plaintext BIGNUM form during the CSR construction phase.
 
-### Remaining Approaches (Not Yet Tried)
+### Remaining Approaches (Likely Infeasible)
 
-1. **Optimized BIGNUM scan** — Read pages in bulk (entire page → local buffer), then
-   search with memcmp instead of per-byte safe_memcpy. Would reduce scan time dramatically.
+All practical key extraction approaches have been exhausted. The key is protected by:
+- Custom internal crypto (not standard OpenSSL RSA structures)
+- VMProtect-style code obfuscation
+- Anti-debug trampolines on all exports
+- Encrypted config file with unknown key derivation
+- Per-installation certificates (no global key to find)
 
-2. **install_device_cert + immediate scan** — Call the library's cert installation function
-   to trigger key generation, then scan memory for the fresh RSA key before encryption.
-   The `install_device_cert(dev_id, lan_only)` export takes the printer device ID.
-
-3. **LD_PRELOAD on write()** — Hook `write()` (glibc, dynamically linked) during
-   `install_device_cert()` to capture what gets written to BambuNetworkEngine.conf.
-   May reveal the key format or encryption scheme.
-
-4. **GDB debugging** — GDB not installed but could be. Bridge is our own code, so GDB
-   is the parent (bypasses ptrace_scope=1). Could breakpoint at cert generation.
-
-5. **Inline binary patching** — Patch `send_message_to_printer` to skip the command-type
-   check returning -4 for project_file. Hard due to VMProtect obfuscation.
-
-6. **Intercept at syscall level** — Hook `write()`/`send()` via LD_PRELOAD during
-   `start_print()` + TLS key logging to capture the signed MQTT project_file command.
+Theoretical remaining approaches:
+1. **GDB hardware breakpoints** on memory writes during cert decryption
+2. **Binary patching** of the obfuscated signing function (extremely difficult)
+3. **Full binary reverse engineering** of the stripped, obfuscated 4.6MB library
 
 ### Current Status (Mar 2026)
 
 **Working:** C++ bridge (`scripts/bambu_cloud_bridge.cpp`) wrapping `libbambu_networking.so`
-for cloud printing. This is the current production solution.
+for cloud printing. This is the **recommended production solution** (`mode = "cloud-bridge"`).
+The bridge handles the full flow including RSA-2048 signing via the library's internal
+per-installation certificate. The `cloud_print()` function auto-generates the required
+config-only 3MF from the input file.
 
-**Working:** Pure Python REST-only cloud printing, confirmed via BambuConnect v2.2.1
-traffic capture. The missing piece was the `x-bbl-client-type: connect` header —
-`POST /my/task` works for HTTP-created models when using BambuConnect headers.
-No library, no MQTT signing, no X.509 key extraction needed.
+**Partially working:** Pure Python HTTP (`cloud_print_http()`, `mode = "cloud-http"`)
+handles steps 1–7 (project creation, S3 upload, patch) in pure Python. Step 8
+(`POST /my/task`) is sent unsigned — the task is created (HTTP 200) but the printer
+rejects the MQTT command without the RSA signature. Use cloud-bridge mode instead.
 
-**Pure Python flow (confirmed):**
+**Private key extraction: DEFINITIVELY FAILED.** After 8 different approaches including
+Frida dynamic instrumentation, mitmproxy HTTPS interception, LD_PRELOAD hooks, memory
+scanning, and RSA structure tracing, the key cannot be extracted. It is stored in a
+custom obfuscated format, never in standard OpenSSL structures or PEM/DER encoding.
+
+**Pure Python flow (steps 1–7 work, step 8 needs signing):**
 1. POST /v1/iot-service/api/user/project — create project, get upload URL
-2. PUT S3 presigned URL — upload full .gcode.3mf (no Content-Type header)
-3. PUT /v1/iot-service/api/user/notification — notify with `{"action":"upload","upload":{...}}`
-4. PATCH /v1/iot-service/api/user/project/{id} — update with profile_id
-5. POST /v1/user-service/my/task — trigger print (BambuConnect headers required!)
+2. PUT S3 presigned URL — upload config-only 3MF (no Content-Type header)
+3. PUT /v1/iot-service/api/user/notification — notify upload complete
+4. GET /v1/iot-service/api/user/notification — poll until processed
+5. GET /v1/iot-service/api/user/upload — get gcode upload URL
+6. PUT gcode S3 URL — upload full .gcode.3mf
+7. PATCH /v1/iot-service/api/user/project/{id} — set gcode URL + MD5
+8. POST /v1/user-service/my/task — create task (**requires RSA signing**)
 
-**Implemented:** `cloud_print_http()` in `src/fabprint/cloud.py`, callable via `mode = "cloud-http"`
-in fabprint config. Live tested and confirmed working (Mar 2026).
+**Implementation:** `src/fabprint/cloud.py` provides both `cloud_print()` (bridge-based,
+recommended) and `cloud_print_http()` (pure Python, unsigned). Callable via
+`mode = "cloud-bridge"` or `mode = "cloud-http"` in fabprint config.
 
 ---
 
