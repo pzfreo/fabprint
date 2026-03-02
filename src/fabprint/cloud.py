@@ -1,13 +1,17 @@
-"""Cloud printing via the bambu_cloud_bridge C++ binary.
+"""Cloud printing — C++ bridge and pure Python HTTP implementations.
 
-This module wraps the compiled bambu_cloud_bridge binary, which uses
-Bambu Lab's proprietary libbambu_networking.so to upload 3MF files
-and start cloud print jobs.
+Two approaches:
 
-The bridge binary must be available either:
-  - In PATH as 'bambu_cloud_bridge'
-  - At the path specified by BAMBU_BRIDGE_PATH env var
-  - Via Docker: fabprint/cloud-bridge image
+1. C++ bridge (cloud-bridge mode): wraps the compiled bambu_cloud_bridge binary,
+   which uses Bambu Lab's proprietary libbambu_networking.so.
+
+   The bridge binary must be available either:
+     - In PATH as 'bambu_cloud_bridge'
+     - At the path specified by BAMBU_BRIDGE_PATH env var
+     - Via Docker: fabprint/cloud-bridge image
+
+2. Pure Python HTTP (cloud-http mode): direct REST calls to Bambu Lab's API
+   using BambuConnect client headers. Requires 'requests' (pip install fabprint[cloud]).
 """
 
 from __future__ import annotations
@@ -17,12 +21,15 @@ import logging
 import os
 import shutil
 import subprocess
+import time
+import uuid
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 BRIDGE_NAME = "bambu_cloud_bridge"
 DOCKER_IMAGE = "fabprint/cloud-bridge"
+BASE_URL = "https://api.bambulab.com"
 
 
 def _find_bridge() -> str | None:
@@ -225,3 +232,170 @@ def cloud_cancel(
         raise RuntimeError(
             f"Bridge returned non-JSON output (exit {result.returncode}): {result.stdout[:200]}"
         )
+
+
+def cloud_print_http(
+    threemf_path: Path,
+    device_id: str,
+    token_file: Path,
+    *,
+    project_name: str = "fabprint",
+    plate_index: int = 1,
+    bed_type: str = "auto",
+    use_ams: bool = True,
+    ams_mapping: list[int] | None = None,
+    timelapse: bool = False,
+    bed_leveling: bool = True,
+    verbose: bool = False,
+) -> dict:
+    """Start a cloud print job via pure Python HTTP (no C++ bridge needed).
+
+    Uses BambuConnect client headers to call Bambu Lab's REST API directly.
+    Requires 'requests': pip install fabprint[cloud]
+
+    Args:
+        threemf_path: Path to the sliced .gcode.3mf file
+        device_id: Printer serial number
+        token_file: Path to JSON file with {"token": "...", "email": "..."}
+        project_name: Title shown in Bambu Handy app
+        plate_index: Plate number to print (usually 1)
+        bed_type: Bed surface type ("auto", "textured_plate", "smooth_plate", etc.)
+        use_ams: Whether to use AMS filament system
+        ams_mapping: AMS slot mapping list, e.g. [0,1,2,3]. Defaults to [0,1,2,3].
+        timelapse: Enable timelapse recording
+        bed_leveling: Enable auto bed leveling
+        verbose: Log extra debug info
+
+    Returns:
+        dict with keys: result, task_id, project_id, model_id
+
+    Raises:
+        RuntimeError: On HTTP errors or missing 'requests' library
+        FileNotFoundError: If 3mf or token file doesn't exist
+    """
+    try:
+        import requests
+    except ImportError:
+        raise RuntimeError(
+            "Pure Python cloud print requires 'requests'. "
+            "Install with: pip install fabprint[cloud]"
+        )
+
+    if not threemf_path.exists():
+        raise FileNotFoundError(f"3MF file not found: {threemf_path}")
+    if not token_file.exists():
+        raise FileNotFoundError(f"Token file not found: {token_file}")
+
+    token_data = json.loads(token_file.read_text())
+    token = token_data["token"]
+
+    session = requests.Session()
+    session.headers.update(
+        {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "x-bbl-client-name": "BambuConnect",
+            "x-bbl-client-type": "connect",
+            "x-bbl-client-version": "v2.2.1-beta.2",
+            "x-bbl-device-id": str(uuid.uuid4()),
+            "x-bbl-language": "en-GB",
+        }
+    )
+
+    def _check(resp: "requests.Response", step: str) -> dict:
+        if not resp.ok:
+            raise RuntimeError(
+                f"Cloud HTTP {step} failed ({resp.status_code}): {resp.text[:300]}"
+            )
+        return resp.json()
+
+    # Step 1: Create project
+    log.debug("Creating project for %s", threemf_path.name)
+    data = _check(
+        session.post(
+            f"{BASE_URL}/v1/iot-service/api/user/project", json={"name": threemf_path.name}
+        ),
+        "create project",
+    )
+    project_id = data["project"]["id"]
+    model_id = data["project"]["model_id"]
+    profile_id = data["project"]["profile_id"]
+    upload_url = data["project"]["upload_url"]
+    upload_ticket = data["project"]["upload_ticket"]
+    log.debug("Project created: project_id=%s model_id=%s", project_id, model_id)
+
+    # Step 2: Upload 3MF to presigned S3 URL (no Content-Type header)
+    log.debug("Uploading %s to S3", threemf_path.name)
+    with open(threemf_path, "rb") as f:
+        resp = requests.put(upload_url, data=f, headers={})
+    if not resp.ok:
+        raise RuntimeError(f"S3 upload failed ({resp.status_code}): {resp.text[:200]}")
+    log.debug("Upload complete")
+
+    # Step 3: Notify server upload is complete
+    _check(
+        session.put(
+            f"{BASE_URL}/v1/iot-service/api/user/notification",
+            json={
+                "action": "upload",
+                "upload": {"ticket": upload_ticket, "origin_file_name": threemf_path.name},
+            },
+        ),
+        "notification",
+    )
+
+    # Step 4: Poll until profile is ready (server processes the 3MF)
+    log.debug("Waiting for server to process 3MF...")
+    for attempt in range(15):
+        proj = _check(
+            session.get(f"{BASE_URL}/v1/iot-service/api/user/project/{project_id}"),
+            "poll project",
+        )
+        profiles = proj.get("model", {}).get("profiles", [])
+        if profiles:
+            log.debug("Profile ready after %d poll(s)", attempt + 1)
+            break
+        if verbose:
+            log.debug("Poll %d/15: profile not ready yet", attempt + 1)
+        time.sleep(2)
+    else:
+        raise RuntimeError(f"Profile not ready after 30s for project {project_id}")
+
+    # Step 5: Patch project with profile_id
+    _check(
+        session.patch(
+            f"{BASE_URL}/v1/iot-service/api/user/project/{project_id}",
+            json={"profile_id": str(profile_id)},
+        ),
+        "patch project",
+    )
+
+    # Step 6: Create print task
+    task_body = {
+        "deviceId": device_id,
+        "modelId": model_id,
+        "profileId": profile_id,
+        "plateIndex": plate_index,
+        "title": project_name,
+        "cover": "",
+        "mode": "cloud_file",
+        "bedType": bed_type,
+        "useAms": use_ams,
+        "amsMapping": ams_mapping if ams_mapping is not None else [0, 1, 2, 3],
+        "timelapse": timelapse,
+        "bedLeveling": bed_leveling,
+    }
+    log.debug("Creating print task for device %s", device_id)
+    task_data = _check(
+        session.post(f"{BASE_URL}/v1/user-service/my/task", json=task_body),
+        "create task",
+    )
+    task_id = task_data["id"]
+    log.debug("Task created: task_id=%s", task_id)
+
+    return {
+        "result": "success",
+        "task_id": task_id,
+        "project_id": project_id,
+        "model_id": model_id,
+    }
