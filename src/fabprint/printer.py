@@ -389,12 +389,15 @@ def _send_cloud_http(
         device_id=serial,
         token_file=token_file,
         project_name=gcode_path.stem,
+        bed_type="textured_plate",
+        verbose=True,
     )
 
+    status = result.get("task_status", "unknown")
     if result.get("result") == "success":
-        print(f"  Print job sent to {serial} (task_id={result.get('task_id')})")
+        print(f"  Print job sent to {serial} (task_id={result.get('task_id')}, status={status})")
     else:
-        raise RuntimeError(f"Cloud print failed: {result}")
+        raise RuntimeError(f"Cloud print failed (status={status}): {result}")
 
 
 def send_print(
