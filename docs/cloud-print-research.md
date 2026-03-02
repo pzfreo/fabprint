@@ -5,7 +5,7 @@
 This document captures all findings from reverse-engineering the Bambu Lab cloud print API,
 with the goal of triggering a cloud print from third-party code (not BambuStudio or Bambu Connect).
 
-**Printer:** Bambu Lab P1S, serial `01P00A451601106`, with 4-slot AMS
+**Printer:** Bambu Lab P1S, serial `<DEVICE_ID>`, with 4-slot AMS
 **Branch:** `cloud-print-test`
 **Working solution:** `scripts/bambu_cloud_bridge.cpp` — C++ bridge to `libbambu_networking.so`
 **Python wrapper:** `src/fabprint/cloud.py`
@@ -13,10 +13,11 @@ with the goal of triggering a cloud print from third-party code (not BambuStudio
 
 **Status: CLOUD PRINT WORKING** — two approaches:
 1. **C++ bridge** wrapping `libbambu_networking.so` (see "Solution" section below)
-2. **Pure Python** — no proprietary library needed! (see "Pure Python Cloud Print" section below)
+2. **Pure Python REST** — no proprietary library needed! (see "Pure Python Cloud Print" section below)
 
-The pure Python approach uses standard HTTP + MQTT with X.509 signing. It bypasses the
-`POST /my/task` endpoint entirely by sending the MQTT `project_file` command directly.
+The pure Python approach uses standard HTTP only. Key discovery from BambuConnect traffic
+capture (Mar 2026): `POST /my/task` works directly when using BambuConnect client headers
+(`x-bbl-client-type: connect`). No MQTT, no X.509 signing, no library needed.
 
 ---
 
@@ -79,7 +80,7 @@ Response: {"devices": [...]}
 
 Device object:
 {
-    "dev_id": "01P00A451601106",
+    "dev_id": "<DEVICE_ID>",
     "name": "bambu p1s",
     "online": true,
     "dev_product_name": "P1S",
@@ -135,13 +136,16 @@ Adding extra headers can break the S3 signature validation.
 #### PUT /v1/iot-service/api/user/notification (Upload Complete)
 
 ```
-# Minimal payload:
-{"upload": {"ticket": "abc123", "origin_file_name": "file.3mf"}}
+# Captured from BambuConnect (Mar 2026) — use this format:
+{"action": "upload", "upload": {"ticket": "abc123", "origin_file_name": "connect_config.3mf"}}
 
 # Extended payload (fallback):
-{"upload": {"ticket": "abc123", "origin_file_name": "file.3mf",
+{"action": "upload", "upload": {"ticket": "abc123", "origin_file_name": "file.3mf",
             "status": "complete", "file_size": 0}}
 ```
+
+Note: The `"action": "upload"` top-level key is required — captured from BC traffic.
+Earlier tests used the nested-only format and it also worked, but include `action` to match BC exactly.
 
 #### GET /v1/iot-service/api/user/notification (Poll Upload)
 
@@ -181,8 +185,18 @@ Fallback when project detail URL isn't immediately available.
 
 #### PATCH /v1/iot-service/api/user/project/{id} (Update Project)
 
-Multiple payload variants work — try in order:
+Multiple payload variants work. **BambuConnect (Mar 2026) uses:**
 
+```json
+{
+  "profile_id": "639766066",
+  "profile_print_3mf": [
+    {"comments": "no_ips", "md5": "<MD5_OF_3MF>", "plate_idx": 1, "url": "https://s3..."}
+  ]
+}
+```
+
+Simpler variants that also work:
 1. `{"name": "file.3mf", "profile_id": "636077332"}` (profile_id as string)
 2. `{"name": "file.3mf", "status": "uploaded"}`
 3. `{"model_id": "USb7b76c7521e40c", "name": "file.3mf"}`
@@ -192,7 +206,7 @@ Multiple payload variants work — try in order:
 
 | Method | Endpoint | Direct HTTP | Via Library | Notes |
 |--------|----------|-------------|-------------|-------|
-| **POST** | **/v1/user-service/my/task** | **400/403** | **Working** | Requires library's auth mechanism (see below) |
+| **POST** | **/v1/user-service/my/task** | **Working** ✅ | **Working** | Requires BambuConnect headers (`x-bbl-client-type: connect`) — slicer headers fail |
 | POST | /v1/iot-service/api/user/print | 405 | N/A | GET-only endpoint |
 | GET | /v1/iot-service/api/user/files | 404 | N/A | Endpoint doesn't exist |
 
@@ -1152,6 +1166,18 @@ is required beyond the Bearer token and X-BBL-* headers.
 
 #### Required Headers
 
+**For POST /my/task (new models) — use BambuConnect headers (captured Mar 2026):**
+```
+Content-Type: application/json
+Authorization: Bearer <token>
+x-bbl-client-name: BambuConnect
+x-bbl-client-type: connect
+x-bbl-client-version: v2.2.1-beta.2
+x-bbl-device-id: <unique UUID, e.g. generated once and reused>
+x-bbl-language: en-GB
+```
+
+**For all other endpoints — slicer headers also work:**
 ```
 Content-Type: application/json
 Authorization: Bearer <token>
@@ -1166,6 +1192,9 @@ X-BBL-Language: en
 
 No special User-Agent is required for REST endpoints (unlike the library's
 `bambu_network_agent/01.09.05.01`).
+
+**Key finding:** `POST /my/task` for HTTP-created models requires `x-bbl-client-type: connect`.
+Slicer headers return 400 empty for new HTTP-created models.
 
 #### Task Creation — POST /v1/user-service/my/task
 
@@ -1194,7 +1223,7 @@ No special User-Agent is required for REST endpoints (unlike the library's
 **Example request:**
 ```json
 {
-    "deviceId": "01P00A451601106",
+    "deviceId": "<DEVICE_ID>",
     "modelId": "USf9309334c60f9f",
     "profileId": 636989901,
     "plateIndex": 1,
@@ -1204,7 +1233,60 @@ No special User-Agent is required for REST endpoints (unlike the library's
 }
 ```
 
-**Response:** `{"id": 778578021}` (HTTP 200)
+**Response:** `{"id": <task_id>}` (HTTP 200)
+
+#### Complete Task Body (Captured from BambuConnect v2.2.1, Mar 2026)
+
+This is the exact payload BC sent when triggering a real print (5-filament AMS config):
+
+```json
+{
+  "amsDetailMapping": [
+    {"ams": -1, "amsId": 255, "slotId": 255, "filamentId": "", "filamentType": "", "targetColor": ""},
+    {"ams": -1, "amsId": 255, "slotId": 255, "filamentId": "", "filamentType": "", "targetColor": ""},
+    {"ams": 2, "amsId": 0, "slotId": 2, "nozzleId": 0, "sourceColor": "F2754EFF", "targetColor": "2850E0FF", "filamentType": "PETG-CF", "targetFilamentType": "PETG-CF"},
+    {"ams": -1, "amsId": 255, "slotId": 255, "filamentId": "", "filamentType": "", "targetColor": ""},
+    {"ams": -1, "amsId": 255, "slotId": 255, "filamentId": "", "filamentType": "", "targetColor": ""}
+  ],
+  "amsMapping": [-1, -1, 2, -1, -1],
+  "amsMapping2": [
+    {"amsId": 255, "slotId": 255},
+    {"amsId": 255, "slotId": 255},
+    {"amsId": 0, "slotId": 2},
+    {"amsId": 255, "slotId": 255},
+    {"amsId": 255, "slotId": 255}
+  ],
+  "bedType": "textured_plate",
+  "cover": "",
+  "deviceId": "<DEVICE_ID>",
+  "filamentSettingIds": ["", "", "GFSG50", "", ""],
+  "isPublicProfile": false,
+  "jobType": 1,
+  "layerInspect": true,
+  "mode": "cloud_file",
+  "modelId": "USbf276844668d16",
+  "plateIndex": 1,
+  "profileId": 639766066,
+  "title": "plate_sliced.gcode.3mf",
+  "useAms": true,
+  "timelapse": false,
+  "bedLeveling": true,
+  "flowCali": false,
+  "extrudeCaliManualMode": 1,
+  "autoBedLeveling": 2,
+  "extrudeCaliFlag": 2,
+  "nozzleOffsetCali": 2,
+  "nozzleInfos": [],
+  "primeVolumeMode": "Default"
+}
+```
+
+Notes:
+- `amsId: 255` / `slotId: 255` = unused slot (no filament)
+- `amsId: 0` / `slotId: 2` = AMS unit 0, slot 2 (0-indexed)
+- `profileId` is integer here; PATCH endpoint uses string form
+- `cover: ""` is fine — empty string works (BC uses thumbnail URL when available)
+- `filamentSettingIds` indexed by filament slot (empty string for unused slots)
 
 #### S3 Upload
 
@@ -1218,13 +1300,12 @@ with open('file.3mf', 'rb') as f:
 
 #### Pure Python Cloud Print (Complete — No Library Needed!)
 
-**Status: WORKING (dry-run tested Feb 2026)**
+**Status: WORKING — confirmed via BambuConnect traffic capture (Mar 2026)**
 
 The complete cloud print flow can be done in pure Python, bypassing the proprietary library
-entirely. The key insight is that `POST /my/task` is NOT needed — the MQTT `project_file`
-command triggers the print directly.
+entirely. `POST /my/task` works directly when using BambuConnect client headers.
 
-**Flow (6 steps):**
+**Flow (5 steps, REST-only):**
 
 1. **Create project** — `POST /v1/iot-service/api/user/project` with `{"name": "file.3mf"}`
    Returns `project_id`, `model_id`, `profile_id`, `upload_url`, `upload_ticket`.
@@ -1235,45 +1316,42 @@ command triggers the print directly.
    metadata, compatibility info, thumbnails.
 
 3. **Notify** — `PUT /v1/iot-service/api/user/notification` with
-   `{"upload": {"ticket": upload_ticket, "origin_file_name": "file.3mf"}}`.
+   `{"action": "upload", "upload": {"ticket": upload_ticket, "origin_file_name": "file.3mf"}}`.
    Server processes the 3MF within ~2 seconds. Poll project detail until
    `profiles[0].context.plates[0].gcode.url` is populated.
 
 4. **Patch project** — `PATCH /v1/iot-service/api/user/project/{id}` with
-   `{"name": "file.3mf", "profile_id": profile_id}`.
+   `{"profile_id": profile_id, "profile_print_3mf": [{"comments": "no_ips", "md5": "<md5>", "plate_idx": 1, "url": "<s3-url>"}]}`.
+   Simple variant also works: `{"name": "file.3mf", "profile_id": profile_id}`.
 
-5. **Get download URL** — `GET /v1/iot-service/api/user/profile/{profile_id}?model_id=X`.
-   Returns `url` (signed S3 URL to the 3MF) and `md5`. Convert `url` to dualstack format:
-   `https://s3.{region}.amazonaws.com/{bucket}/...` →
-   `https://{bucket}.s3.dualstack.{region}.amazonaws.com/...`
-
-6. **MQTT project_file** — Connect to `us.mqtt.bambulab.com:8883` with `u_{uid}` / token.
-   Send signed `project_file` command to `device/{device_id}/request`:
-   ```json
-   {"print": {"command": "project_file", "param": "Metadata/plate_1.gcode",
-     "project_id": "...", "profile_id": "...", "task_id": "0", "subtask_id": "0",
-     "subtask_name": "file.3mf", "url": "<dualstack S3 URL>", "md5": "...",
-     "bed_type": "auto", "use_ams": true, ...}}
-   ```
-   Sign with Bambu Connect X.509 RSA-SHA256 key (publicly extracted, cert_id known).
+5. **Create task** — `POST /v1/user-service/my/task` with **BambuConnect headers**.
+   Returns `{"id": <task_id>}` (HTTP 200). Print starts and appears in Bambu Handy history.
 
 **Key discoveries:**
-- **No config 3MF needed** — uploading the full 3MF to `upload_url` extracts everything
-  (slice_info.config, plate_1.json, model_settings.config, project_settings.config, gcode).
+- **BambuConnect headers required for POST /my/task** — use `x-bbl-client-type: connect`,
+  `x-bbl-client-name: BambuConnect`. Slicer headers (`x-bbl-client-type: slicer`) cause
+  400 empty for HTTP-created models. This was the missing piece.
+- **No config 3MF needed** — uploading the full 3MF to `upload_url` extracts everything.
   The library uploads a separate config 3MF, but it's unnecessary for the pure Python path.
-- **No POST /my/task needed** — this endpoint has server-side validation that rejects
-  HTTP-created models (empty 400). It works for library-created models (can reprint old
-  jobs) but not for new pure-HTTP uploads. The MQTT `project_file` command bypasses this.
-- **POST /my/task with `mode: "cloud_file"`** works for EXISTING model_ids (previously
-  uploaded via library). Missing `mode` field causes empty 400 with no error message.
+- **`mode: "cloud_file"` is required** — missing this field causes empty 400 with no error.
+- **`action: "upload"` required in notification** — captured from BC, top-level field.
 - **upload_url is for the 3MF file** — the project creation's `upload_url` triggers
   server-side extraction when a file is uploaded there and a notification is sent.
-- **Profile URL must be dualstack format** — the MQTT command URL should use
-  `{bucket}.s3.dualstack.{region}.amazonaws.com` style, not path-style.
 
-**What still requires the library:**
-- `POST /my/task` for new models (task shows in Bambu Handy app history)
-- Without it, prints work but don't appear in the task history
+**Alternative (MQTT path, no POST /my/task):**
+
+Steps 1-4 same as above. Step 5 replaced with:
+
+`MQTT project_file` — Connect to `us.mqtt.bambulab.com:8883` with `u_{uid}` / token.
+Send signed `project_file` command to `device/{device_id}/request`:
+```json
+{"print": {"command": "project_file", "param": "Metadata/plate_1.gcode",
+  "project_id": "...", "profile_id": "...", "task_id": "0", "subtask_id": "0",
+  "subtask_name": "file.3mf", "url": "<dualstack S3 URL>", "md5": "...",
+  "bed_type": "auto", "use_ams": true, ...}}
+```
+Sign with Bambu Connect X.509 RSA-SHA256 key (publicly extracted, cert_id known).
+Downside: does NOT create a task record in Bambu Handy app history.
 
 **Script:** `/tmp/test_pure_python_cloud_print.py`
 
@@ -1281,22 +1359,18 @@ command triggers the print directly.
 
 `POST /my/task` has server-side validation beyond field checking:
 
-| Model source | Result |
-|---|---|
-| Library-created model + matching profile | 200 OK ✅ |
-| HTTP-created model + matching profile | 400 empty ❌ |
-| Any model + mismatched profile | 403 ❌ |
-| Any model + profileId=0 | 400 empty ❌ |
+| Model source | Headers | Result |
+|---|---|---|
+| Library-created model + matching profile | any | 200 OK ✅ |
+| HTTP-created model + matching profile | **BambuConnect** (`x-bbl-client-type: connect`) | **200 OK ✅** |
+| HTTP-created model + matching profile | slicer (`x-bbl-client-type: slicer`) | 400 empty ❌ |
+| Any model + mismatched profile | any | 403 ❌ |
+| Any model + profileId=0 | any | 400 empty ❌ |
 
-The server validates model/profile pairs (403 on mismatch) and has an internal flag on
-models created by the library vs HTTP. Same headers, same token, same payload — only
-the model_id determines success. Tested with OrcaSlicer headers, BambuStudio headers,
-curl, sessions with Cloudflare cookies — all produce the same result.
-
-No third-party project has successfully called this endpoint for new models:
-- coelacant1/Bambu-Lab-Cloud-API: "Print job submission" listed as "Not Yet Implemented"
-- OrcaSlicer: delegates to `libbambu_networking.so`
-- KITT/bambu-mcp: bypass task creation entirely
+**Key finding (Mar 2026):** The 400 empty error for HTTP-created models was caused by using
+slicer headers. Switching to BambuConnect headers (`x-bbl-client-type: connect`,
+`x-bbl-client-name: BambuConnect`) makes POST /my/task work for all HTTP-created models.
+Captured from live BambuConnect v2.2.1 traffic during a real print trigger.
 
 #### Library Anti-Debug Analysis
 
@@ -1551,31 +1625,32 @@ encrypted. The key would be in plaintext BIGNUM form during the CSR construction
 6. **Intercept at syscall level** — Hook `write()`/`send()` via LD_PRELOAD during
    `start_print()` + TLS key logging to capture the signed MQTT project_file command.
 
-### Current Status (Feb 28, 2026)
+### Current Status (Mar 2026)
 
 **Working:** C++ bridge (`scripts/bambu_cloud_bridge.cpp`) wrapping `libbambu_networking.so`
-for cloud printing. This is the production solution.
+for cloud printing. This is the current production solution.
 
-**Blocked:** Pure Python cloud printing. All private key extraction attempts have failed.
-The library's key is encrypted at rest, stored in opaque OpenSSL internal structures at
-runtime, protected by static linking (no LD_PRELOAD), obfuscated code (no easy binary
-patching), and anti-debug checks.
+**Working:** Pure Python REST-only cloud printing, confirmed via BambuConnect v2.2.1
+traffic capture. The missing piece was the `x-bbl-client-type: connect` header —
+`POST /my/task` works for HTTP-created models when using BambuConnect headers.
+No library, no MQTT signing, no X.509 key extraction needed.
 
-**Key architecture discovery:** Certificate signing is per-installation, not per-account.
-Each installation generates its own RSA key pair. The `install_device_cert` library export
-triggers this process. Intercepting key generation is the most promising remaining path.
+**Pure Python flow (confirmed):**
+1. POST /v1/iot-service/api/user/project — create project, get upload URL
+2. PUT S3 presigned URL — upload full .gcode.3mf (no Content-Type header)
+3. PUT /v1/iot-service/api/user/notification — notify with `{"action":"upload","upload":{...}}`
+4. PATCH /v1/iot-service/api/user/project/{id} — update with profile_id
+5. POST /v1/user-service/my/task — trigger print (BambuConnect headers required!)
 
-**Three viable paths forward:**
-1. **Use the C++ bridge** as the production solution (already working)
-2. **Optimized BIGNUM scan** to find the key in OpenSSL's internal memory structures
-3. **install_device_cert interception** — trigger fresh key generation and capture it
+**Next step:** Implement this flow in `src/fabprint/cloud.py` as a pure Python alternative
+to the C++ bridge.
 
 ---
 
 ## Printer Details
 
 - Model: P1S (dev_model_name: C12)
-- Serial: 01P00A451601106
-- LAN access code: 19236776 (from GET /user/print)
+- Serial: `<DEVICE_ID>`
+- LAN access code: `<ACCESS_CODE>` (from GET /user/print)
 - AMS: 4-slot, gcode uses slots 1 and 2
 - Online: yes
