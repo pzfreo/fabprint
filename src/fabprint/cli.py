@@ -93,6 +93,11 @@ def main(argv: list[str] | None = None) -> None:
         "--view", action="store_true", help="Show plate in viewer before slicing"
     )
     print_cmd.add_argument(
+        "--experimental",
+        action="store_true",
+        help="Enable experimental printer modes (e.g. cloud-http, which lacks request signing)",
+    )
+    print_cmd.add_argument(
         "--docker",
         action="store_true",
         help="Force slicing via Docker (even if local slicer is available)",
@@ -309,7 +314,13 @@ def _cmd_print(args: argparse.Namespace) -> None:
             raise RuntimeError(f"No gcode files found in {output_dir}")
         gcode_path = gcode_files[0]
 
-    send_print(gcode_path, cfg.printer, dry_run=args.dry_run, upload_only=args.upload_only)
+    send_print(
+        gcode_path,
+        cfg.printer,
+        dry_run=args.dry_run,
+        upload_only=args.upload_only,
+        experimental=getattr(args, "experimental", False),
+    )
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:

@@ -5,18 +5,24 @@
 This document captures all findings from reverse-engineering the Bambu Lab cloud print API,
 with the goal of triggering a cloud print from third-party code (not BambuStudio or Bambu Connect).
 
-**Printer:** Bambu Lab P1S, serial `01P00A451601106`, with 4-slot AMS
+**Printer:** Bambu Lab P1S, serial `<DEVICE_ID>`, with 4-slot AMS
 **Branch:** `cloud-print-test`
 **Working solution:** `scripts/bambu_cloud_bridge.cpp` — C++ bridge to `libbambu_networking.so`
 **Python wrapper:** `src/fabprint/cloud.py`
 **Docker image:** `Dockerfile.cloud-bridge`
 
-**Status: CLOUD PRINT WORKING** — two approaches:
-1. **C++ bridge** wrapping `libbambu_networking.so` (see "Solution" section below)
-2. **Pure Python** — no proprietary library needed! (see "Pure Python Cloud Print" section below)
+**Status: CLOUD PRINT WORKING** via C++ bridge wrapping `libbambu_networking.so`.
 
-The pure Python approach uses standard HTTP + MQTT with X.509 signing. It bypasses the
-`POST /my/task` endpoint entirely by sending the MQTT `project_file` command directly.
+The bridge handles the full flow including RSA-2048 signing of `POST /my/task` via
+the library's internal per-installation certificate. Pure Python handles steps 1–7
+(project creation, upload, patch) but step 8 (task creation) requires RSA signing
+that only the library can provide. Without signing, the task is created (HTTP 200)
+but the printer rejects the MQTT command ("verification failed").
+
+**Key architectural finding (Mar 2026):** Each installation gets its own RSA-2048 key pair.
+The private key is stored encrypted in `BambuNetworkEngine.conf` and is never exposed in
+standard PEM/DER or OpenSSL RSA structures — even during active signing. Exhaustive extraction
+attempts via Frida, mitmproxy, and memory scanning all confirmed the key is not extractable.
 
 ---
 
@@ -79,7 +85,7 @@ Response: {"devices": [...]}
 
 Device object:
 {
-    "dev_id": "01P00A451601106",
+    "dev_id": "<DEVICE_ID>",
     "name": "bambu p1s",
     "online": true,
     "dev_product_name": "P1S",
@@ -135,13 +141,16 @@ Adding extra headers can break the S3 signature validation.
 #### PUT /v1/iot-service/api/user/notification (Upload Complete)
 
 ```
-# Minimal payload:
-{"upload": {"ticket": "abc123", "origin_file_name": "file.3mf"}}
+# Captured from BambuConnect (Mar 2026) — use this format:
+{"action": "upload", "upload": {"ticket": "abc123", "origin_file_name": "connect_config.3mf"}}
 
 # Extended payload (fallback):
-{"upload": {"ticket": "abc123", "origin_file_name": "file.3mf",
+{"action": "upload", "upload": {"ticket": "abc123", "origin_file_name": "file.3mf",
             "status": "complete", "file_size": 0}}
 ```
+
+Note: The `"action": "upload"` top-level key is required — captured from BC traffic.
+Earlier tests used the nested-only format and it also worked, but include `action` to match BC exactly.
 
 #### GET /v1/iot-service/api/user/notification (Poll Upload)
 
@@ -181,8 +190,18 @@ Fallback when project detail URL isn't immediately available.
 
 #### PATCH /v1/iot-service/api/user/project/{id} (Update Project)
 
-Multiple payload variants work — try in order:
+Multiple payload variants work. **BambuConnect (Mar 2026) uses:**
 
+```json
+{
+  "profile_id": "639766066",
+  "profile_print_3mf": [
+    {"comments": "no_ips", "md5": "<MD5_OF_3MF>", "plate_idx": 1, "url": "https://s3..."}
+  ]
+}
+```
+
+Simpler variants that also work:
 1. `{"name": "file.3mf", "profile_id": "636077332"}` (profile_id as string)
 2. `{"name": "file.3mf", "status": "uploaded"}`
 3. `{"model_id": "USb7b76c7521e40c", "name": "file.3mf"}`
@@ -192,7 +211,7 @@ Multiple payload variants work — try in order:
 
 | Method | Endpoint | Direct HTTP | Via Library | Notes |
 |--------|----------|-------------|-------------|-------|
-| **POST** | **/v1/user-service/my/task** | **400/403** | **Working** | Requires library's auth mechanism (see below) |
+| **POST** | **/v1/user-service/my/task** | **Working** ✅ | **Working** | Requires BambuConnect headers (`x-bbl-client-type: connect`) — slicer headers fail |
 | POST | /v1/iot-service/api/user/print | 405 | N/A | GET-only endpoint |
 | GET | /v1/iot-service/api/user/files | 404 | N/A | Endpoint doesn't exist |
 
@@ -1152,6 +1171,18 @@ is required beyond the Bearer token and X-BBL-* headers.
 
 #### Required Headers
 
+**For POST /my/task (new models) — use BambuConnect headers (captured Mar 2026):**
+```
+Content-Type: application/json
+Authorization: Bearer <token>
+x-bbl-client-name: BambuConnect
+x-bbl-client-type: connect
+x-bbl-client-version: v2.2.1-beta.2
+x-bbl-device-id: <unique UUID, e.g. generated once and reused>
+x-bbl-language: en-GB
+```
+
+**For all other endpoints — slicer headers also work:**
 ```
 Content-Type: application/json
 Authorization: Bearer <token>
@@ -1166,6 +1197,9 @@ X-BBL-Language: en
 
 No special User-Agent is required for REST endpoints (unlike the library's
 `bambu_network_agent/01.09.05.01`).
+
+**Key finding:** `POST /my/task` for HTTP-created models requires `x-bbl-client-type: connect`.
+Slicer headers return 400 empty for new HTTP-created models.
 
 #### Task Creation — POST /v1/user-service/my/task
 
@@ -1194,7 +1228,7 @@ No special User-Agent is required for REST endpoints (unlike the library's
 **Example request:**
 ```json
 {
-    "deviceId": "01P00A451601106",
+    "deviceId": "<DEVICE_ID>",
     "modelId": "USf9309334c60f9f",
     "profileId": 636989901,
     "plateIndex": 1,
@@ -1204,7 +1238,60 @@ No special User-Agent is required for REST endpoints (unlike the library's
 }
 ```
 
-**Response:** `{"id": 778578021}` (HTTP 200)
+**Response:** `{"id": <task_id>}` (HTTP 200)
+
+#### Complete Task Body (Captured from BambuConnect v2.2.1, Mar 2026)
+
+This is the exact payload BC sent when triggering a real print (5-filament AMS config):
+
+```json
+{
+  "amsDetailMapping": [
+    {"ams": -1, "amsId": 255, "slotId": 255, "filamentId": "", "filamentType": "", "targetColor": ""},
+    {"ams": -1, "amsId": 255, "slotId": 255, "filamentId": "", "filamentType": "", "targetColor": ""},
+    {"ams": 2, "amsId": 0, "slotId": 2, "nozzleId": 0, "sourceColor": "F2754EFF", "targetColor": "2850E0FF", "filamentType": "PETG-CF", "targetFilamentType": "PETG-CF"},
+    {"ams": -1, "amsId": 255, "slotId": 255, "filamentId": "", "filamentType": "", "targetColor": ""},
+    {"ams": -1, "amsId": 255, "slotId": 255, "filamentId": "", "filamentType": "", "targetColor": ""}
+  ],
+  "amsMapping": [-1, -1, 2, -1, -1],
+  "amsMapping2": [
+    {"amsId": 255, "slotId": 255},
+    {"amsId": 255, "slotId": 255},
+    {"amsId": 0, "slotId": 2},
+    {"amsId": 255, "slotId": 255},
+    {"amsId": 255, "slotId": 255}
+  ],
+  "bedType": "textured_plate",
+  "cover": "",
+  "deviceId": "<DEVICE_ID>",
+  "filamentSettingIds": ["", "", "GFSG50", "", ""],
+  "isPublicProfile": false,
+  "jobType": 1,
+  "layerInspect": true,
+  "mode": "cloud_file",
+  "modelId": "USbf276844668d16",
+  "plateIndex": 1,
+  "profileId": 639766066,
+  "title": "plate_sliced.gcode.3mf",
+  "useAms": true,
+  "timelapse": false,
+  "bedLeveling": true,
+  "flowCali": false,
+  "extrudeCaliManualMode": 1,
+  "autoBedLeveling": 2,
+  "extrudeCaliFlag": 2,
+  "nozzleOffsetCali": 2,
+  "nozzleInfos": [],
+  "primeVolumeMode": "Default"
+}
+```
+
+Notes:
+- `amsId: 255` / `slotId: 255` = unused slot (no filament)
+- `amsId: 0` / `slotId: 2` = AMS unit 0, slot 2 (0-indexed)
+- `profileId` is integer here; PATCH endpoint uses string form
+- `cover: ""` is fine — empty string works (BC uses thumbnail URL when available)
+- `filamentSettingIds` indexed by filament slot (empty string for unused slots)
 
 #### S3 Upload
 
@@ -1216,64 +1303,84 @@ with open('file.3mf', 'rb') as f:
     requests.put(upload_url, data=f)  # No headers!
 ```
 
-#### Pure Python Cloud Print (Complete — No Library Needed!)
+#### Pure Python Cloud Print (8-step flow)
 
-**Status: WORKING (dry-run tested Feb 2026)**
+**Status: TASK CREATED BUT PRINTER REJECTS — task appears in Bambu Handy but printer does not start
+(MQTT command rejected: "MQTT Command verification failed"). Signing is required — see below.**
 
-The complete cloud print flow can be done in pure Python, bypassing the proprietary library
-entirely. The key insight is that `POST /my/task` is NOT needed — the MQTT `project_file`
-command triggers the print directly.
+**Implemented as `mode = "cloud-http"` (experimental) in fabprint.**
 
-**Flow (6 steps):**
+**Flow (8 steps, REST-only — captured from BambuConnect v2.2.1 TLS traffic, Mar 2026):**
 
 1. **Create project** — `POST /v1/iot-service/api/user/project` with `{"name": "file.3mf"}`
-   Returns `project_id`, `model_id`, `profile_id`, `upload_url`, `upload_ticket`.
+   Returns: `project_id`, `model_id`, `profile_id` (string), `upload_url`, `upload_ticket`.
 
-2. **Upload full 3MF** — `PUT upload_url` with raw file bytes, **NO Content-Type header**.
-   The `upload_url` from step 1 is a presigned S3 URL. Upload the FULL sliced `.gcode.3mf`
-   here (not a config-only 3MF). The server extracts everything: configs, gcode, plate
-   metadata, compatibility info, thumbnails.
+2. **Upload config-only 3MF** — `PUT upload_url` with config-only 3MF bytes (gcode stripped),
+   **NO Content-Type header**. BC strips gcode from the 3MF before this upload — it does NOT
+   upload the full gcode.3mf here. See `_strip_gcode_from_3mf()` in `cloud.py`.
+   The `origin_file_name` in the notification should be `"connect_config.3mf"`.
 
-3. **Notify** — `PUT /v1/iot-service/api/user/notification` with
-   `{"upload": {"ticket": upload_ticket, "origin_file_name": "file.3mf"}}`.
-   Server processes the 3MF within ~2 seconds. Poll project detail until
-   `profiles[0].context.plates[0].gcode.url` is populated.
+3. **Notify** — `PUT /v1/iot-service/api/user/notification` with:
+   `{"action": "upload", "upload": {"ticket": upload_ticket, "origin_file_name": "connect_config.3mf"}}`.
+   Note: `origin_file_name` must be `"connect_config.3mf"`, not the actual filename.
 
-4. **Patch project** — `PATCH /v1/iot-service/api/user/project/{id}` with
-   `{"name": "file.3mf", "profile_id": profile_id}`.
+4. **Poll `GET /notification`** — `GET /v1/iot-service/api/user/notification?action=upload&ticket=...`
+   Wait until `message != "running"`. Returns `"success"` when done (~2-4 seconds, 1-2 polls).
+   **This step is required** — proceeding before processing completes causes PATCH to fail
+   with `code 11: "Wrong file format"`.
 
-5. **Get download URL** — `GET /v1/iot-service/api/user/profile/{profile_id}?model_id=X`.
-   Returns `url` (signed S3 URL to the 3MF) and `md5`. Convert `url` to dualstack format:
-   `https://s3.{region}.amazonaws.com/{bucket}/...` →
-   `https://{bucket}.s3.dualstack.{region}.amazonaws.com/...`
+5. **Get gcode upload URL** — `GET /v1/iot-service/api/user/upload?model_id=X&profile_id=Y&project_id=Z&filename=file.gcode.3mf&md5=<MD5>&size=<size>`
+   Returns presigned S3 URL for the full gcode.3mf.
 
-6. **MQTT project_file** — Connect to `us.mqtt.bambulab.com:8883` with `u_{uid}` / token.
-   Send signed `project_file` command to `device/{device_id}/request`:
+6. **Upload full gcode.3mf** — `PUT <gcode_upload_url>` with the full `.gcode.3mf` bytes,
+   **NO Content-Type header**.
+
+7. **PATCH project** — `PATCH /v1/iot-service/api/user/project/{id}` with:
    ```json
-   {"print": {"command": "project_file", "param": "Metadata/plate_1.gcode",
-     "project_id": "...", "profile_id": "...", "task_id": "0", "subtask_id": "0",
-     "subtask_name": "file.3mf", "url": "<dualstack S3 URL>", "md5": "...",
-     "bed_type": "auto", "use_ams": true, ...}}
+   {"profile_id": "640212109",
+    "profile_print_3mf": [{"comments": "no_ips", "md5": "B19B...", "plate_idx": 1, "url": "<gcode_upload_url>"}]}
    ```
-   Sign with Bambu Connect X.509 RSA-SHA256 key (publicly extracted, cert_id known).
+   `profile_id` as string, `md5` = uppercase MD5 of the full gcode.3mf bytes.
+   **Use the `gcode_upload_url` from step 5 (NOT a GET /profile URL) and the gcode.3mf MD5
+   (NOT the config 3MF MD5).** This is the exact format captured from BC v2.2.1 TLS traffic.
+
+8. **Create task** — `POST /v1/user-service/my/task` with **BambuConnect headers**.
+   `profileId` must be integer (not string). Include `jobType: 1`.
+   Returns `{"id": <task_id>}` (HTTP 200). Task appears in Bambu Handy history, but the
+   printer rejects the MQTT command because the request lacks RSA-2048 signing.
 
 **Key discoveries:**
-- **No config 3MF needed** — uploading the full 3MF to `upload_url` extracts everything
-  (slice_info.config, plate_1.json, model_settings.config, project_settings.config, gcode).
-  The library uploads a separate config 3MF, but it's unnecessary for the pure Python path.
-- **No POST /my/task needed** — this endpoint has server-side validation that rejects
-  HTTP-created models (empty 400). It works for library-created models (can reprint old
-  jobs) but not for new pure-HTTP uploads. The MQTT `project_file` command bypasses this.
-- **POST /my/task with `mode: "cloud_file"`** works for EXISTING model_ids (previously
-  uploaded via library). Missing `mode` field causes empty 400 with no error message.
-- **upload_url is for the 3MF file** — the project creation's `upload_url` triggers
-  server-side extraction when a file is uploaded there and a notification is sent.
-- **Profile URL must be dualstack format** — the MQTT command URL should use
-  `{bucket}.s3.dualstack.{region}.amazonaws.com` style, not path-style.
+- **BambuConnect headers required for POST /my/task** — use `x-bbl-client-type: connect`,
+  `x-bbl-client-name: BambuConnect`. Slicer headers cause 400 empty for HTTP-created models.
+- **Notification poll (GET) required** — must wait for `message: "success"` before PATCH.
+  Proceeding too early causes `code 11: "Wrong file format"` on PATCH.
+- **Two-upload pattern** — step 2 uploads config-only 3MF to `upload_url` (from POST /project),
+  step 6 uploads full gcode.3mf to a separate URL from GET /user/upload.
+- **PATCH uses gcode upload URL + gcode MD5** — NOT the GET /profile URL or config 3MF MD5.
+  Using the wrong URL/MD5 causes the task to be created but the printer ignores it.
+- **origin_file_name must be `"connect_config.3mf"`** — using the actual filename here
+  causes BC-side errors (confirmed from captured traffic).
+- **profileId type mismatch** — project creation returns profile_id as string; POST /my/task
+  requires it as integer. Convert with `int(profile_id)`.
+- **`mode: "cloud_file"` required** — empty 400 (no error message) if missing.
+- **POST /my/task requires signing** — `x-bbl-device-security-sign` (RSA-2048 signature),
+  `x-bbl-app-certification-id` (cert CN + fingerprint). Without it: task created (200) but
+  printer rejects MQTT command with "MQTT Command verification failed". See signing section.
 
-**What still requires the library:**
-- `POST /my/task` for new models (task shows in Bambu Handy app history)
-- Without it, prints work but don't appear in the task history
+**Alternative (MQTT path, no POST /my/task):**
+
+Steps 1-4 same as above. Step 5 replaced with:
+
+`MQTT project_file` — Connect to `us.mqtt.bambulab.com:8883` with `u_{uid}` / token.
+Send signed `project_file` command to `device/{device_id}/request`:
+```json
+{"print": {"command": "project_file", "param": "Metadata/plate_1.gcode",
+  "project_id": "...", "profile_id": "...", "task_id": "0", "subtask_id": "0",
+  "subtask_name": "file.3mf", "url": "<dualstack S3 URL>", "md5": "...",
+  "bed_type": "auto", "use_ams": true, ...}}
+```
+Sign with Bambu Connect X.509 RSA-SHA256 key (publicly extracted, cert_id known).
+Downside: does NOT create a task record in Bambu Handy app history.
 
 **Script:** `/tmp/test_pure_python_cloud_print.py`
 
@@ -1281,22 +1388,18 @@ command triggers the print directly.
 
 `POST /my/task` has server-side validation beyond field checking:
 
-| Model source | Result |
-|---|---|
-| Library-created model + matching profile | 200 OK ✅ |
-| HTTP-created model + matching profile | 400 empty ❌ |
-| Any model + mismatched profile | 403 ❌ |
-| Any model + profileId=0 | 400 empty ❌ |
+| Model source | Headers | Result |
+|---|---|---|
+| Library-created model + matching profile | any | 200 OK ✅ |
+| HTTP-created model + matching profile | **BambuConnect** (`x-bbl-client-type: connect`) | **200 OK ✅** |
+| HTTP-created model + matching profile | slicer (`x-bbl-client-type: slicer`) | 400 empty ❌ |
+| Any model + mismatched profile | any | 403 ❌ |
+| Any model + profileId=0 | any | 400 empty ❌ |
 
-The server validates model/profile pairs (403 on mismatch) and has an internal flag on
-models created by the library vs HTTP. Same headers, same token, same payload — only
-the model_id determines success. Tested with OrcaSlicer headers, BambuStudio headers,
-curl, sessions with Cloudflare cookies — all produce the same result.
-
-No third-party project has successfully called this endpoint for new models:
-- coelacant1/Bambu-Lab-Cloud-API: "Print job submission" listed as "Not Yet Implemented"
-- OrcaSlicer: delegates to `libbambu_networking.so`
-- KITT/bambu-mcp: bypass task creation entirely
+**Key finding (Mar 2026):** The 400 empty error for HTTP-created models was caused by using
+slicer headers. Switching to BambuConnect headers (`x-bbl-client-type: connect`,
+`x-bbl-client-name: BambuConnect`) makes POST /my/task work for all HTTP-created models.
+Captured from live BambuConnect v2.2.1 traffic during a real print trigger.
 
 #### Library Anti-Debug Analysis
 
@@ -1412,35 +1515,32 @@ requires parent-child relationship. Cannot be fixed without root.
 
 **Conclusion:** No exported function exposes the private key.
 
-### Approach 5: BIGNUM Memory Scan (IN PROGRESS)
+### Approach 5: BIGNUM Memory Scan via Frida (FAILED)
 
-**Tool:** `/tmp/bignum_scan_bridge.cpp`
+**Tool:** Frida v17.7.3 with custom JavaScript instrumentation scripts (`/tmp/frida_trace_rsa.js`)
 
 **Method:** Since OpenSSL stores keys as BIGNUM structures (arrays of `uint64_t` in
-little-endian word order on x86_64), search for the known RSA modulus in both:
+little-endian word order on x86_64), used Frida `Memory.scanSync()` to search for the
+known RSA modulus from the installation's certificate in both:
 1. Big-endian format (as in certificate DER encoding)
 2. BIGNUM LE word-reversed format (as in OpenSSL's internal structs)
 
-Then follow pointer chains: modulus data → BIGNUM struct → RSA_KEY struct → private
+Then followed pointer chains: modulus data → BIGNUM struct → RSA_KEY struct → private
 exponent BIGNUM.
 
-Known modulus (from device cert):
-```
-C7E73DCABEEBEA926FA5D805C1736EB427E4DA5FF536FE67DD58DA17EE0DA5DC
-32C95FB578830973EC9CCAEE861372E7BECD3175ED29DBF2DABE4BAF3B25A1C1
-325A9B4EC998D33801842B8AF3B49A803A36A426F25E47AD8EAA3E288C54E97C
-95F6F075DC452ABAE8B46B919B742E0CE347EB3053F51CEAB3AF000CF247295B
-136832EF82DDACB0CCD7AE1BCC05C0A40B7024B95560902321A86FD8F60D88DF
-A06695371D63D5D9D49C1939BCF58742E24E31D21313E4D2C9A5DE1217D3C7B2
-65CB893C59B8DD8218F1D2F1877BFE2B27008A30A6CC1B882EF89E202D837AFD
-A104FD0025EA24CDB12AB8E59F4505D81C320C35D8DE1F8991EBCF7A94C9EE13
-```
+**Results (from Frida hooking `start_print`):**
+- **5 big-endian modulus hits** — DER-encoded certificate copies in heap
+- **2 little-endian BIGNUM hits** — OpenSSL BIGNUM data at known addresses
+- Traced from BIGNUM data → found pointers to BIGNUM structs (top=32, dmax validated)
+- Traced from BIGNUM structs → found RSA structures with matching `e=65537`
+- **ALL RSA structures have `d = NULL`** — public key only!
+- No PEM or DER private key patterns found anywhere in process memory
+- No PKCS#1 or PKCS#8 private key headers (`30 82 XX XX 02 01 00`) found
 
-BIGNUM LE first 16 bytes (search pattern):
-`13 ee c9 94 7a cf eb 91 89 1f de d8 35 0c 32 1c`
-
-**Status:** Scanner compiles and runs, but per-byte `safe_memcpy` across 86 memory regions
-is too slow. Needs optimization (bulk page reads with mmap/pread).
+**Conclusion:** The library stores the private key in a custom internal format, NOT in
+standard OpenSSL RSA structures. Even during active signing (hooked `start_print` on both
+entry and exit), the private exponent `d` is NULL in all RSA structures. The library
+likely uses its own crypto implementation or stores key material in obfuscated form.
 
 ### Approach 6: Binary Disassembly (PARTIAL)
 
@@ -1470,11 +1570,150 @@ Key addresses (in `/tmp/bambu_plugin/libbambu_networking.so`):
 ### Encrypted Config File
 
 The library stores key material in `/tmp/bambu_agent/config/BambuNetworkEngine.conf`
-(688 bytes, high entropy). Encrypted at rest, decrypted at runtime.
+(688 bytes, 7.66 bits/byte entropy — fully encrypted). Encrypted at rest, decrypted at runtime.
 
 - KEK from cloud API (`efc30d7df1f956d7a9a5220b48ba68db`) does NOT decrypt it
 - Encryption scheme unknown (not standard AES-CBC/GCM with known IV patterns)
 - Backup at `BambuNetworkEngine.conf.bak`
+
+### Approach 7: mitmproxy HTTPS Interception (Mar 2026)
+
+**Tool:** mitmproxy v11.1.3 with custom addon (`/tmp/mitm_capture2.py`)
+
+**Method:** Ran the bridge with `HTTPS_PROXY` pointing to mitmproxy. Appended mitmproxy's
+CA cert to the system CA bundle and to `slicer_base64.cer` so the library's static
+libcurl would trust it. Captured all HTTP traffic during a successful `start_print()`.
+
+**Results — Successfully captured signing headers from POST /my/task:**
+```
+x-bbl-app-certification-id: CN=GLOF3813734089.bambulab.com:a4e8faaa1a38e3650a0ea590d192383f
+x-bbl-device-security-sign: IlN4Ym0I6sPF...KhsCKg== (344 chars base64, 256 bytes = RSA-2048)
+```
+- **`x-connect-api-acton` header NOT sent** by library (BambuConnect sends `sign`)
+- Server returned HTTP 200 with `{"id": 782951694}` — task created, printer started PREPARE
+- POST body: 500 bytes JSON with deviceId, modelId, profileId, amsMapping, etc.
+
+**Also captured certificate download:**
+```
+GET /v1/iot-service/api/user/applications/{app_id}/cert?aes256=<RSA-encrypted-AES-key>
+```
+Response contained:
+- `cert`: Full PEM chain (3 certs — leaf, intermediate CA, root CA)
+- `key`: 940 chars base64 (704 bytes) — AES-256-encrypted private key
+- `crl`: Certificate revocation list
+
+**Leaf cert:** CN=GLOF3813734089-836763c70000, RSA 2048-bit, valid 2025-12-21 to 2027-06-25
+**Intermediate CA:** CN=GLOF3813734089.bambulab.com (account-level, signs all installation certs)
+**Root CA:** CN=application_root.bambulab.com (signed by BBL CA)
+
+Custom X.509 OIDs in leaf cert:
+- `1.3.6.1.4.1.1666250441.1` = "v1" (version)
+- `1.3.6.1.4.1.1666250441.2` = "false" (revoked flag)
+- `1.3.6.1.4.1.1666250441.1.1` = "3DP" (product type)
+- `1.3.6.1.4.1.1666250441.1.2` = "Studio" (client type)
+
+**Key exchange flow:**
+1. Library generates random AES-256 key
+2. RSA-encrypts AES key with server's public key (embedded in library binary)
+3. Sends encrypted AES key as `aes256` URL parameter
+4. Server decrypts AES key, generates RSA-2048 key pair, signs cert
+5. Server AES-256-encrypts private key with the AES key
+6. Returns cert chain + encrypted private key
+7. Library decrypts private key with its AES key, stores in BambuNetworkEngine.conf
+
+The `key` field cannot be decrypted without the AES key, which is only known to
+the library (generated internally) and the server. The server's RSA public key
+(used to encrypt the `aes256` parameter) is embedded in the library binary.
+
+### Approach 8: Frida RSA Structure Tracing (Mar 2026, FAILED)
+
+**Tool:** Frida with `/tmp/frida_trace_rsa.js` — comprehensive pointer chain analysis
+
+**Method:** Three-phase extraction during `start_print()`:
+1. Find LE modulus BIGNUM data in memory (pattern: last 8 bytes reversed)
+2. Search for pointers TO the data → identify BIGNUM structs (validate top=32)
+3. Search for pointers TO BIGNUM structs → identify RSA structures (validate e=65537)
+4. Read d, p, q, dp, dq, qinv from RSA structure offsets
+
+Tested all possible offsets (0–128 in steps of 8) for where `n` sits in the RSA struct.
+
+**Results:**
+- Phase 1: Found 2 LE modulus data locations
+- Phase 2: Found 2 valid BIGNUM(n) structs with top=32
+- Phase 3: Found RSA structures at multiple offsets — **ALL have d=NULL**
+- Scanned on both `start_print` entry AND exit — same result
+- Repeated for both BIGNUM addresses — same result
+
+**Definitive conclusion:** The library does NOT use standard OpenSSL RSA structures for
+private key storage. The key is held in a custom obfuscated format. The RSA-2048 signing
+works through an internal implementation that never populates the standard `d` field.
+
+### Approach 9: BambuConnect macOS CDP JavaScript API Hooking (Mar 2026, FAILED)
+
+**Tool:** Node.js Inspector via `kill -SIGUSR1 <BC PID>` (SIGUSR1 enables inspector on
+port 9229; `--inspect` flag has no effect on this BC installation)
+
+**Method:** Attached Chrome DevTools Protocol (CDP) to the BambuConnect main process and
+injected hook scripts into both the main process and renderer.
+
+**Hooks attempted:**
+
+| Hook target | Method | Result |
+|---|---|---|
+| `require('crypto').createSign` | Replace with instrumented version in main process | Nothing captured |
+| `Sign.prototype.sign` | Patch native binding via `_handle` protocol | Nothing captured |
+| `require('crypto').sign` (one-shot) | Replace with instrumented version | Nothing captured |
+| `webcrypto.subtle.sign` | Replace in main process | Nothing captured |
+| `fetch`, `XMLHttpRequest`, `subtle.sign` | Injected via `Runtime.evaluate` into renderer | Nothing captured |
+
+**Root cause:** BC's `main.jsc` (compiled V8 bytecode via `main-loader.cjs`) captures
+references to crypto function objects at startup. By the time hooks are installed via CDP,
+the closures inside main.jsc already hold direct references to the original functions.
+Patching `Sign.prototype.sign` or `crypto.createSign` after the fact does not intercept
+calls from pre-captured references.
+
+**IPC discovery (side effect):**
+- Found `bridge` IPC channel firing continuously for `publishMqttMessage` (printer polls)
+- Enumerated all `ipcMain` handler registrations; found: `uploadFileToDevice`,
+  `connectAndSubscribeLanDevice`, `getCloudDeviceTicket`, `publishMqttMessage`
+- The `bridge` channel is BC's primary renderer↔main transport; all print actions go through it
+- Calling IPC handlers with a fake event object crashed BC (SIGUSR1 to restart)
+
+**Storage enumeration:**
+
+| Storage location | Contents | Key material? |
+|---|---|---|
+| LevelDB (Chromium Local Storage) | `token`, `device_id` in plaintext | No |
+| IndexedDB (renderer context) | 3 databases: filament profiles, HMS actions, OTA updates | No |
+| `app.getPath('userData')` safeStorage scan | No `v10`/`v11` encrypted value prefixes | No |
+
+**Conclusion:** The BC macOS private key is NOT in Local Storage or IndexedDB. The encrypted
+key material is stored elsewhere (likely fetched and held in memory only, or stored in macOS
+Keychain). With V8 bytecode closures capturing references at startup and no extractable
+storage, CDP-based extraction is not viable for this version of BambuConnect.
+
+**Hackaday key test (Mar 2026):**
+
+The publicly-extracted BambuConnect v1.0.4 private key (Jan 2025) was wired into
+`_sign_task_body()` and tested against POST /my/task. Result: **HTTP 403 Forbidden** from
+the server (not just printer rejection). This confirms the server validates the signature
+against the registered cert for that specific installation — a per-installation key from
+one specific build does not work for any other installation.
+
+### MQTT app_cert_list (from captures)
+
+The printer broadcasts registered cert IDs via MQTT `security` topic:
+```json
+{
+  "command": "app_cert_list",
+  "cert_ids": [
+    "a4e8faaa1a38e3650a0ea590d192383fCN=GLOF3813734089.bambulab.com",
+    "f9332ab780a6ffe6664db61be42b04ee"
+  ]
+}
+```
+- First entry: our library's current cert (used for signing)
+- Second entry: old cert from Jan 2025 extraction (still registered but key rotated)
 
 ### Old Bambu Connect Key (Jan 2025)
 
@@ -1529,53 +1768,61 @@ This means:
 certificate, then immediately scan memory for the newly-generated key before it gets
 encrypted. The key would be in plaintext BIGNUM form during the CSR construction phase.
 
-### Remaining Approaches (Not Yet Tried)
+### Remaining Approaches (Likely Infeasible)
 
-1. **Optimized BIGNUM scan** — Read pages in bulk (entire page → local buffer), then
-   search with memcmp instead of per-byte safe_memcpy. Would reduce scan time dramatically.
+All practical key extraction approaches have been exhausted. The key is protected by:
+- Custom internal crypto (not standard OpenSSL RSA structures)
+- VMProtect-style code obfuscation
+- Anti-debug trampolines on all exports
+- Encrypted config file with unknown key derivation
+- Per-installation certificates (no global key to find)
 
-2. **install_device_cert + immediate scan** — Call the library's cert installation function
-   to trigger key generation, then scan memory for the fresh RSA key before encryption.
-   The `install_device_cert(dev_id, lan_only)` export takes the printer device ID.
+Theoretical remaining approaches:
+1. **GDB hardware breakpoints** on memory writes during cert decryption
+2. **Binary patching** of the obfuscated signing function (extremely difficult)
+3. **Full binary reverse engineering** of the stripped, obfuscated 4.6MB library
 
-3. **LD_PRELOAD on write()** — Hook `write()` (glibc, dynamically linked) during
-   `install_device_cert()` to capture what gets written to BambuNetworkEngine.conf.
-   May reveal the key format or encryption scheme.
-
-4. **GDB debugging** — GDB not installed but could be. Bridge is our own code, so GDB
-   is the parent (bypasses ptrace_scope=1). Could breakpoint at cert generation.
-
-5. **Inline binary patching** — Patch `send_message_to_printer` to skip the command-type
-   check returning -4 for project_file. Hard due to VMProtect obfuscation.
-
-6. **Intercept at syscall level** — Hook `write()`/`send()` via LD_PRELOAD during
-   `start_print()` + TLS key logging to capture the signed MQTT project_file command.
-
-### Current Status (Feb 28, 2026)
+### Current Status (Mar 2026)
 
 **Working:** C++ bridge (`scripts/bambu_cloud_bridge.cpp`) wrapping `libbambu_networking.so`
-for cloud printing. This is the production solution.
+for cloud printing. This is the **recommended production solution** (`mode = "cloud-bridge"`).
+The bridge handles the full flow including RSA-2048 signing via the library's internal
+per-installation certificate. The `cloud_print()` function auto-generates the required
+config-only 3MF from the input file.
 
-**Blocked:** Pure Python cloud printing. All private key extraction attempts have failed.
-The library's key is encrypted at rest, stored in opaque OpenSSL internal structures at
-runtime, protected by static linking (no LD_PRELOAD), obfuscated code (no easy binary
-patching), and anti-debug checks.
+**Partially working (experimental):** Pure Python HTTP (`cloud_print_http()`,
+`mode = "cloud-http"`) handles all 8 steps in pure Python. POST /my/task is sent unsigned
+— the task is created (HTTP 200) but the printer rejects the MQTT command without the
+RSA signature ("MQTT Command verification failed"). **Gated behind `--experimental` flag**
+in the CLI — running without it prints an error and points to cloud-bridge. Use
+cloud-bridge mode instead.
 
-**Key architecture discovery:** Certificate signing is per-installation, not per-account.
-Each installation generates its own RSA key pair. The `install_device_cert` library export
-triggers this process. Intercepting key generation is the most promising remaining path.
+**Private key extraction: DEFINITIVELY FAILED.** After 9 different approaches including
+Frida dynamic instrumentation, mitmproxy HTTPS interception, LD_PRELOAD hooks, memory
+scanning, RSA structure tracing, and BambuConnect CDP-based JavaScript API hooking, the
+key cannot be extracted. It is stored in a custom obfuscated format, never in standard
+OpenSSL structures or PEM/DER encoding. See "Approach 9" below for the latest attempts.
 
-**Three viable paths forward:**
-1. **Use the C++ bridge** as the production solution (already working)
-2. **Optimized BIGNUM scan** to find the key in OpenSSL's internal memory structures
-3. **install_device_cert interception** — trigger fresh key generation and capture it
+**Pure Python flow (steps 1–7 work, step 8 creates task but printer rejects):**
+1. POST /v1/iot-service/api/user/project — create project, get upload URL
+2. PUT S3 presigned URL — upload config-only 3MF (gcode stripped, no Content-Type header)
+3. PUT /v1/iot-service/api/user/notification — notify upload complete (`origin_file_name: "connect_config.3mf"`)
+4. GET /v1/iot-service/api/user/notification — poll until processed
+5. GET /v1/iot-service/api/user/upload — get gcode.3mf upload URL
+6. PUT gcode S3 URL — upload full .gcode.3mf (no Content-Type header)
+7. PATCH /v1/iot-service/api/user/project/{id} — set **gcode upload URL** + **gcode.3mf MD5**
+8. POST /v1/user-service/my/task — create task (**requires RSA signing to avoid printer rejection**)
+
+**Implementation:** `src/fabprint/cloud.py` provides both `cloud_print()` (bridge-based,
+recommended) and `cloud_print_http()` (pure Python, unsigned). Callable via
+`mode = "cloud-bridge"` (default) or `mode = "cloud-http" --experimental` in fabprint.
 
 ---
 
 ## Printer Details
 
 - Model: P1S (dev_model_name: C12)
-- Serial: 01P00A451601106
-- LAN access code: 19236776 (from GET /user/print)
+- Serial: `<DEVICE_ID>`
+- LAN access code: `<ACCESS_CODE>` (from GET /user/print)
 - AMS: 4-slot, gcode uses slots 1 and 2
 - Online: yes

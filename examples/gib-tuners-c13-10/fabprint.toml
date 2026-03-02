@@ -2,7 +2,8 @@
 # FDM print plate for Bambu Lab P1S
 
 [printer]
-mode = "bambu-connect"    # preferred
+mode = "cloud-bridge"
+serial = "01P00A451601106"
 
 [plate]
 size = [256, 256]

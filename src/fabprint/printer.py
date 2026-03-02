@@ -341,11 +341,84 @@ def _send_cloud_bridge(
         raise RuntimeError(f"Cloud print failed: {result}")
 
 
+def _send_cloud_http(
+    gcode_path: Path,
+    serial: str | None = None,
+    dry_run: bool = False,
+    experimental: bool = False,
+) -> None:
+    """Send gcode to printer via pure Python HTTP (no C++ bridge needed).
+
+    Uses BambuConnect REST API with BambuConnect client headers.
+    Requires token file at ~/.bambu_cloud_token or BAMBU_TOKEN_FILE env var.
+
+    This mode is EXPERIMENTAL: POST /my/task requires a request signature that
+    cannot yet be reproduced in pure Python (Bambu rotated the key since the
+    Hackaday extraction). Without the correct signature the printer rejects the
+    MQTT command. Use cloud-bridge mode for reliable cloud printing.
+    """
+    if not experimental:
+        raise RuntimeError(
+            "cloud-http mode is experimental and currently non-functional "
+            "(request signing not yet solved — see docs/cloud-print-research.md).\n"
+            "Use mode = \"cloud-bridge\" in fabprint.toml, or pass --experimental "
+            "to run anyway."
+        )
+    from fabprint.cloud import cloud_print_http
+
+    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
+    if token_file_str:
+        token_file = Path(token_file_str)
+    else:
+        token_file = Path.home() / ".bambu_cloud_token"
+
+    if not token_file.exists():
+        raise FileNotFoundError(
+            f"Token file not found: {token_file}. "
+            "Run 'python scripts/bambu_cloud_login.py' first, or set BAMBU_TOKEN_FILE."
+        )
+
+    if not serial:
+        serial = os.environ.get("BAMBU_SERIAL")
+    if not serial:
+        raise ValueError(
+            "cloud-http mode requires serial. Set in [printer] config or BAMBU_SERIAL env var."
+        )
+
+    sliced_3mf = gcode_path.parent / "plate_sliced.gcode.3mf"
+    if sliced_3mf.exists():
+        threemf_path = sliced_3mf
+    else:
+        threemf_path = wrap_gcode_3mf(gcode_path)
+
+    print(f"Sending {threemf_path.name} via cloud HTTP")
+
+    if dry_run:
+        print(f"  [dry-run] Would upload {threemf_path.name} to printer {serial}")
+        return
+
+    result = cloud_print_http(
+        threemf_path=threemf_path,
+        device_id=serial,
+        token_file=token_file,
+        project_name=gcode_path.stem,
+        bed_type="textured_plate",
+        verbose=True,
+    )
+
+    status = result.get("task_status", "unknown")
+    if result.get("result") == "success":
+        print(f"  Print job sent to {serial} (task_id={result.get('task_id')}, status={status})")
+    else:
+        raise RuntimeError(f"Cloud print failed (status={status}): {result}")
+
+
 def send_print(
     gcode_path: Path,
     config: PrinterConfig,
     dry_run: bool = False,
     upload_only: bool = False,
+    experimental: bool = False,
 ) -> None:
     """Send gcode to a Bambu Lab printer.
 
@@ -388,4 +461,12 @@ def send_print(
             gcode_path,
             serial=creds["serial"],
             dry_run=dry_run,
+        )
+
+    elif creds["mode"] == "cloud-http":
+        _send_cloud_http(
+            gcode_path,
+            serial=creds["serial"],
+            dry_run=dry_run,
+            experimental=experimental,
         )

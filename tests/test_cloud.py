@@ -23,8 +23,14 @@ def token_file(tmp_path):
 
 @pytest.fixture
 def threemf_file(tmp_path):
+    import io
+    import zipfile
+
     f = tmp_path / "test.3mf"
-    f.write_bytes(b"PK\x03\x04fake3mf")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Metadata/model_settings.config", "<config/>")
+    f.write_bytes(buf.getvalue())
     return f
 
 
