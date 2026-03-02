@@ -317,11 +317,11 @@ def cloud_print_http(
         ),
         "create project",
     )
-    project_id = data["project"]["id"]
-    model_id = data["project"]["model_id"]
-    profile_id = data["project"]["profile_id"]
-    upload_url = data["project"]["upload_url"]
-    upload_ticket = data["project"]["upload_ticket"]
+    project_id = data["project_id"]
+    model_id = data["model_id"]
+    profile_id = int(data["profile_id"])
+    upload_url = data["upload_url"]
+    upload_ticket = data["upload_ticket"]
     log.debug("Project created: project_id=%s model_id=%s", project_id, model_id)
 
     # Step 2: Upload 3MF to presigned S3 URL (no Content-Type header)
@@ -344,28 +344,47 @@ def cloud_print_http(
         "notification",
     )
 
-    # Step 4: Poll until profile is ready (server processes the 3MF)
+    # Step 4: Poll GET /notification until processing is done (not "running")
     log.debug("Waiting for server to process 3MF...")
     for attempt in range(15):
-        proj = _check(
-            session.get(f"{BASE_URL}/v1/iot-service/api/user/project/{project_id}"),
-            "poll project",
+        r = session.get(
+            f"{BASE_URL}/v1/iot-service/api/user/notification",
+            params={"action": "upload", "ticket": upload_ticket},
         )
-        profiles = proj.get("model", {}).get("profiles", [])
-        if profiles:
-            log.debug("Profile ready after %d poll(s)", attempt + 1)
+        msg = r.json().get("message", "")
+        if msg != "running":
+            log.debug("Processing done after %d poll(s): %s", attempt + 1, msg)
             break
         if verbose:
-            log.debug("Poll %d/15: profile not ready yet", attempt + 1)
+            log.debug("Poll %d/15: still processing", attempt + 1)
         time.sleep(2)
     else:
-        raise RuntimeError(f"Profile not ready after 30s for project {project_id}")
+        raise RuntimeError(f"3MF processing timed out for project {project_id}")
 
-    # Step 5: Patch project with profile_id
+    # Step 5: Get profile S3 URL + MD5, patch project with profile_print_3mf
+    prof = _check(
+        session.get(
+            f"{BASE_URL}/v1/iot-service/api/user/profile/{profile_id}",
+            params={"model_id": model_id},
+        ),
+        "get profile",
+    )
+    profile_url = prof["url"]
+    profile_md5 = prof["md5"].upper()
     _check(
         session.patch(
             f"{BASE_URL}/v1/iot-service/api/user/project/{project_id}",
-            json={"profile_id": str(profile_id)},
+            json={
+                "profile_id": str(profile_id),
+                "profile_print_3mf": [
+                    {
+                        "comments": "no_ips",
+                        "md5": profile_md5,
+                        "plate_idx": plate_index,
+                        "url": profile_url,
+                    }
+                ],
+            },
         ),
         "patch project",
     )
@@ -384,6 +403,8 @@ def cloud_print_http(
         "amsMapping": ams_mapping if ams_mapping is not None else [0, 1, 2, 3],
         "timelapse": timelapse,
         "bedLeveling": bed_leveling,
+        "jobType": 1,
+        "isPublicProfile": False,
     }
     log.debug("Creating print task for device %s", device_id)
     task_data = _check(

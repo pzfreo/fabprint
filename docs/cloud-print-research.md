@@ -1300,43 +1300,53 @@ with open('file.3mf', 'rb') as f:
 
 #### Pure Python Cloud Print (Complete — No Library Needed!)
 
-**Status: WORKING — confirmed via BambuConnect traffic capture (Mar 2026)**
+**Status: FULLY WORKING — live tested Mar 2026 (`cloud_print_http()` in `src/fabprint/cloud.py`)**
 
-The complete cloud print flow can be done in pure Python, bypassing the proprietary library
-entirely. `POST /my/task` works directly when using BambuConnect client headers.
+**Implemented as `mode = "cloud-http"` in fabprint.**
 
-**Flow (5 steps, REST-only):**
+**Flow (6 steps, REST-only):**
 
 1. **Create project** — `POST /v1/iot-service/api/user/project` with `{"name": "file.3mf"}`
-   Returns `project_id`, `model_id`, `profile_id`, `upload_url`, `upload_ticket`.
+   Returns: `project_id`, `model_id`, `profile_id` (string), `upload_url`, `upload_ticket`.
 
 2. **Upload full 3MF** — `PUT upload_url` with raw file bytes, **NO Content-Type header**.
    The `upload_url` from step 1 is a presigned S3 URL. Upload the FULL sliced `.gcode.3mf`
-   here (not a config-only 3MF). The server extracts everything: configs, gcode, plate
-   metadata, compatibility info, thumbnails.
+   (not a config-only 3MF). Server extracts everything: configs, gcode, plate metadata.
 
-3. **Notify** — `PUT /v1/iot-service/api/user/notification` with
+3. **Notify** — `PUT /v1/iot-service/api/user/notification` with:
    `{"action": "upload", "upload": {"ticket": upload_ticket, "origin_file_name": "file.3mf"}}`.
-   Server processes the 3MF within ~2 seconds. Poll project detail until
-   `profiles[0].context.plates[0].gcode.url` is populated.
 
-4. **Patch project** — `PATCH /v1/iot-service/api/user/project/{id}` with
-   `{"profile_id": profile_id, "profile_print_3mf": [{"comments": "no_ips", "md5": "<md5>", "plate_idx": 1, "url": "<s3-url>"}]}`.
-   Simple variant also works: `{"name": "file.3mf", "profile_id": profile_id}`.
+4. **Poll `GET /notification`** — `GET /v1/iot-service/api/user/notification?action=upload&ticket=...`
+   Wait until `message != "running"`. Returns `"success"` when done (~2-4 seconds, 1-2 polls).
+   **This step is required** — proceeding before processing completes causes PATCH to fail
+   with `code 11: "Wrong file format"`.
 
-5. **Create task** — `POST /v1/user-service/my/task` with **BambuConnect headers**.
+5. **Get profile URL + PATCH** — `GET /v1/iot-service/api/user/profile/{profile_id}?model_id=X`
+   Returns `url` (presigned S3 URL to the full 3MF) and `md5` (MD5 of the file).
+   Then `PATCH /v1/iot-service/api/user/project/{id}` with:
+   ```json
+   {"profile_id": "640212109",
+    "profile_print_3mf": [{"comments": "no_ips", "md5": "B19B...", "plate_idx": 1, "url": "https://s3..."}]}
+   ```
+   `profile_id` as string, `md5` uppercase. **profile_print_3mf is required** — the simple
+   `{"profile_id": ...}` PATCH does NOT enable POST /my/task to succeed.
+
+6. **Create task** — `POST /v1/user-service/my/task` with **BambuConnect headers**.
+   `profileId` must be integer (not string). Include `jobType: 1`.
    Returns `{"id": <task_id>}` (HTTP 200). Print starts and appears in Bambu Handy history.
 
 **Key discoveries:**
 - **BambuConnect headers required for POST /my/task** — use `x-bbl-client-type: connect`,
-  `x-bbl-client-name: BambuConnect`. Slicer headers (`x-bbl-client-type: slicer`) cause
-  400 empty for HTTP-created models. This was the missing piece.
-- **No config 3MF needed** — uploading the full 3MF to `upload_url` extracts everything.
-  The library uploads a separate config 3MF, but it's unnecessary for the pure Python path.
-- **`mode: "cloud_file"` is required** — missing this field causes empty 400 with no error.
-- **`action: "upload"` required in notification** — captured from BC, top-level field.
-- **upload_url is for the 3MF file** — the project creation's `upload_url` triggers
-  server-side extraction when a file is uploaded there and a notification is sent.
+  `x-bbl-client-name: BambuConnect`. Slicer headers cause 400 empty for HTTP-created models.
+- **Notification poll (GET) required** — must wait for `message: "success"` before PATCH.
+  Proceeding too early causes `code 11: "Wrong file format"` on PATCH.
+- **profile_print_3mf required in PATCH** — simple `{"profile_id": ...}` alone is NOT enough
+  to enable POST /my/task. Must include the S3 URL and MD5 from GET /profile.
+- **profileId type mismatch** — project creation returns profile_id as string; POST /my/task
+  requires it as integer. Convert with `int(profile_id)`.
+- **`mode: "cloud_file"` required** — empty 400 (no error message) if missing.
+- **response structure** — all fields at top level, not nested under `"project"`.
+- **No config 3MF needed** — uploading the full 3MF to `upload_url` is sufficient.
 
 **Alternative (MQTT path, no POST /my/task):**
 
@@ -1642,8 +1652,8 @@ No library, no MQTT signing, no X.509 key extraction needed.
 4. PATCH /v1/iot-service/api/user/project/{id} — update with profile_id
 5. POST /v1/user-service/my/task — trigger print (BambuConnect headers required!)
 
-**Next step:** Implement this flow in `src/fabprint/cloud.py` as a pure Python alternative
-to the C++ bridge.
+**Implemented:** `cloud_print_http()` in `src/fabprint/cloud.py`, callable via `mode = "cloud-http"`
+in fabprint config. Live tested and confirmed working (Mar 2026).
 
 ---
 
