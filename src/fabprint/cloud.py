@@ -16,6 +16,7 @@ Two approaches:
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ import shutil
 import subprocess
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -234,6 +236,22 @@ def cloud_cancel(
         )
 
 
+def _strip_gcode_from_3mf(path: Path) -> bytes:
+    """Return a 3MF ZIP with gcode files removed (config-only).
+
+    BambuConnect uploads a config-only 3MF as the first file so Bambu's server
+    does not store gcode in model storage. The actual gcode is uploaded separately
+    via the GET /user/upload endpoint.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(path, "r") as zin, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            # Skip gcode files; keep all metadata, config, thumbnails, etc.
+            if not item.filename.endswith(".gcode"):
+                zout.writestr(item, zin.read(item.filename))
+    return buf.getvalue()
+
+
 def cloud_print_http(
     threemf_path: Path,
     device_id: str,
@@ -324,13 +342,17 @@ def cloud_print_http(
     upload_ticket = data["upload_ticket"]
     log.debug("Project created: project_id=%s model_id=%s", project_id, model_id)
 
-    # Step 2: Upload 3MF to presigned S3 URL (no Content-Type header)
-    log.debug("Uploading %s to S3", threemf_path.name)
-    with open(threemf_path, "rb") as f:
-        resp = requests.put(upload_url, data=f, headers={})
+    # Step 2: Upload config-only 3MF (no gcode) to presigned S3 URL.
+    # BambuConnect uploads a small config 3MF first (without gcode) so the server
+    # does NOT extract gcode to model storage. With a full gcode 3MF here, the server
+    # extracts gcode metadata but leaves the URL empty, causing "MQTT command
+    # verification failed" on the printer. The actual gcode goes to user/upload (step 5).
+    log.debug("Uploading config-only 3MF to S3 (stripping gcode)")
+    config_3mf_bytes = _strip_gcode_from_3mf(threemf_path)
+    resp = requests.put(upload_url, data=config_3mf_bytes, headers={})
     if not resp.ok:
         raise RuntimeError(f"S3 upload failed ({resp.status_code}): {resp.text[:200]}")
-    log.debug("Upload complete")
+    log.debug("Config upload complete (%d bytes)", len(config_3mf_bytes))
 
     # Step 3: Notify server upload is complete
     _check(
@@ -361,7 +383,24 @@ def cloud_print_http(
     else:
         raise RuntimeError(f"3MF processing timed out for project {project_id}")
 
-    # Step 5: Get profile S3 URL + MD5, patch project with profile_print_3mf
+    # Step 5: Upload full 3MF to printer-accessible storage (BC does this as a second PUT)
+    log.debug("Getting gcode upload URL for %s_%s_1.3mf", model_id, profile_id)
+    upload_info = _check(
+        session.get(
+            f"{BASE_URL}/v1/iot-service/api/user/upload",
+            params={"models": f"{model_id}_{profile_id}_1.3mf"},
+        ),
+        "get gcode upload url",
+    )
+    gcode_upload_url = upload_info["urls"][0]["url"]
+    log.debug("Uploading full 3MF to gcode storage (%s bytes)", threemf_path.stat().st_size)
+    with open(threemf_path, "rb") as f:
+        resp = requests.put(gcode_upload_url, data=f, headers={})
+    if not resp.ok:
+        raise RuntimeError(f"Gcode S3 upload failed ({resp.status_code}): {resp.text[:200]}")
+    log.debug("Gcode upload complete")
+
+    # Step 6: Get profile S3 URL + MD5, patch project with profile_print_3mf
     prof = _check(
         session.get(
             f"{BASE_URL}/v1/iot-service/api/user/profile/{profile_id}",
@@ -389,7 +428,7 @@ def cloud_print_http(
         "patch project",
     )
 
-    # Step 6: Create print task
+    # Step 7: Create print task (body matches BambuConnect v2.2.1 capture)
     task_body = {
         "deviceId": device_id,
         "modelId": model_id,
@@ -403,8 +442,16 @@ def cloud_print_http(
         "amsMapping": ams_mapping if ams_mapping is not None else [0, 1, 2, 3],
         "timelapse": timelapse,
         "bedLeveling": bed_leveling,
+        "flowCali": False,
+        "layerInspect": True,
         "jobType": 1,
         "isPublicProfile": False,
+        "extrudeCaliManualMode": 1,
+        "autoBedLeveling": 2,
+        "extrudeCaliFlag": 2,
+        "nozzleOffsetCali": 2,
+        "nozzleInfos": [],
+        "primeVolumeMode": "Default",
     }
     log.debug("Creating print task for device %s", device_id)
     task_data = _check(
