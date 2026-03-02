@@ -739,21 +739,11 @@ def cloud_print_http(
     if verbose:
         log.info("Task body: %s", json.dumps(task_body, indent=2))
 
-    # Sign the task body with the library's per-installation RSA-2048 key.
-    # The server includes this signature in the MQTT command to the printer;
-    # without it the printer rejects the command ("MQTT Command verification failed").
-    #
-    # The signing key is stored encrypted in BambuNetworkEngine.conf and cannot
-    # be extracted (it's never exposed in standard PEM/DER or OpenSSL structures).
-    # The library generates a per-installation certificate via the /cert endpoint.
-    #
-    # For now, POST /my/task is sent unsigned. The task will be created (HTTP 200)
-    # but the printer will reject the MQTT command. Use cloud-bridge mode for
-    # working cloud prints (the bridge binary handles signing internally).
-    log.warning(
-        "cloud-http: POST /my/task sent unsigned — printer may reject. "
-        "Use cloud-bridge mode for reliable cloud printing."
-    )
+    # POST /my/task — sent unsigned (correct signing key not yet available).
+    # BC signs this request with its X.509 private key; the server includes the
+    # signature in the MQTT command to the printer. Without it the printer rejects
+    # the command ("MQTT Command verification failed"). The Hackaday-extracted key
+    # does not work with BC v2.2.1-beta.2 (server returns 403 on wrong signature).
     task_data = _check(
         session.post(
             f"{BASE_URL}/v1/user-service/my/task",

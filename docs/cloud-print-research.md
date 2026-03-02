@@ -1303,55 +1303,69 @@ with open('file.3mf', 'rb') as f:
     requests.put(upload_url, data=f)  # No headers!
 ```
 
-#### Pure Python Cloud Print (Complete — No Library Needed!)
+#### Pure Python Cloud Print (8-step flow)
 
-**Status: FULLY WORKING — live tested Mar 2026 (`cloud_print_http()` in `src/fabprint/cloud.py`)**
+**Status: TASK CREATED BUT PRINTER REJECTS — task appears in Bambu Handy but printer does not start
+(MQTT command rejected: "MQTT Command verification failed"). Signing is required — see below.**
 
-**Implemented as `mode = "cloud-http"` in fabprint.**
+**Implemented as `mode = "cloud-http"` (experimental) in fabprint.**
 
-**Flow (6 steps, REST-only):**
+**Flow (8 steps, REST-only — captured from BambuConnect v2.2.1 TLS traffic, Mar 2026):**
 
 1. **Create project** — `POST /v1/iot-service/api/user/project` with `{"name": "file.3mf"}`
    Returns: `project_id`, `model_id`, `profile_id` (string), `upload_url`, `upload_ticket`.
 
-2. **Upload full 3MF** — `PUT upload_url` with raw file bytes, **NO Content-Type header**.
-   The `upload_url` from step 1 is a presigned S3 URL. Upload the FULL sliced `.gcode.3mf`
-   (not a config-only 3MF). Server extracts everything: configs, gcode, plate metadata.
+2. **Upload config-only 3MF** — `PUT upload_url` with config-only 3MF bytes (gcode stripped),
+   **NO Content-Type header**. BC strips gcode from the 3MF before this upload — it does NOT
+   upload the full gcode.3mf here. See `_strip_gcode_from_3mf()` in `cloud.py`.
+   The `origin_file_name` in the notification should be `"connect_config.3mf"`.
 
 3. **Notify** — `PUT /v1/iot-service/api/user/notification` with:
-   `{"action": "upload", "upload": {"ticket": upload_ticket, "origin_file_name": "file.3mf"}}`.
+   `{"action": "upload", "upload": {"ticket": upload_ticket, "origin_file_name": "connect_config.3mf"}}`.
+   Note: `origin_file_name` must be `"connect_config.3mf"`, not the actual filename.
 
 4. **Poll `GET /notification`** — `GET /v1/iot-service/api/user/notification?action=upload&ticket=...`
    Wait until `message != "running"`. Returns `"success"` when done (~2-4 seconds, 1-2 polls).
    **This step is required** — proceeding before processing completes causes PATCH to fail
    with `code 11: "Wrong file format"`.
 
-5. **Get profile URL + PATCH** — `GET /v1/iot-service/api/user/profile/{profile_id}?model_id=X`
-   Returns `url` (presigned S3 URL to the full 3MF) and `md5` (MD5 of the file).
-   Then `PATCH /v1/iot-service/api/user/project/{id}` with:
+5. **Get gcode upload URL** — `GET /v1/iot-service/api/user/upload?model_id=X&profile_id=Y&project_id=Z&filename=file.gcode.3mf&md5=<MD5>&size=<size>`
+   Returns presigned S3 URL for the full gcode.3mf.
+
+6. **Upload full gcode.3mf** — `PUT <gcode_upload_url>` with the full `.gcode.3mf` bytes,
+   **NO Content-Type header**.
+
+7. **PATCH project** — `PATCH /v1/iot-service/api/user/project/{id}` with:
    ```json
    {"profile_id": "640212109",
-    "profile_print_3mf": [{"comments": "no_ips", "md5": "B19B...", "plate_idx": 1, "url": "https://s3..."}]}
+    "profile_print_3mf": [{"comments": "no_ips", "md5": "B19B...", "plate_idx": 1, "url": "<gcode_upload_url>"}]}
    ```
-   `profile_id` as string, `md5` uppercase. **profile_print_3mf is required** — the simple
-   `{"profile_id": ...}` PATCH does NOT enable POST /my/task to succeed.
+   `profile_id` as string, `md5` = uppercase MD5 of the full gcode.3mf bytes.
+   **Use the `gcode_upload_url` from step 5 (NOT a GET /profile URL) and the gcode.3mf MD5
+   (NOT the config 3MF MD5).** This is the exact format captured from BC v2.2.1 TLS traffic.
 
-6. **Create task** — `POST /v1/user-service/my/task` with **BambuConnect headers**.
+8. **Create task** — `POST /v1/user-service/my/task` with **BambuConnect headers**.
    `profileId` must be integer (not string). Include `jobType: 1`.
-   Returns `{"id": <task_id>}` (HTTP 200). Print starts and appears in Bambu Handy history.
+   Returns `{"id": <task_id>}` (HTTP 200). Task appears in Bambu Handy history, but the
+   printer rejects the MQTT command because the request lacks RSA-2048 signing.
 
 **Key discoveries:**
 - **BambuConnect headers required for POST /my/task** — use `x-bbl-client-type: connect`,
   `x-bbl-client-name: BambuConnect`. Slicer headers cause 400 empty for HTTP-created models.
 - **Notification poll (GET) required** — must wait for `message: "success"` before PATCH.
   Proceeding too early causes `code 11: "Wrong file format"` on PATCH.
-- **profile_print_3mf required in PATCH** — simple `{"profile_id": ...}` alone is NOT enough
-  to enable POST /my/task. Must include the S3 URL and MD5 from GET /profile.
+- **Two-upload pattern** — step 2 uploads config-only 3MF to `upload_url` (from POST /project),
+  step 6 uploads full gcode.3mf to a separate URL from GET /user/upload.
+- **PATCH uses gcode upload URL + gcode MD5** — NOT the GET /profile URL or config 3MF MD5.
+  Using the wrong URL/MD5 causes the task to be created but the printer ignores it.
+- **origin_file_name must be `"connect_config.3mf"`** — using the actual filename here
+  causes BC-side errors (confirmed from captured traffic).
 - **profileId type mismatch** — project creation returns profile_id as string; POST /my/task
   requires it as integer. Convert with `int(profile_id)`.
 - **`mode: "cloud_file"` required** — empty 400 (no error message) if missing.
-- **response structure** — all fields at top level, not nested under `"project"`.
-- **No config 3MF needed** — uploading the full 3MF to `upload_url` is sufficient.
+- **POST /my/task requires signing** — `x-bbl-device-security-sign` (RSA-2048 signature),
+  `x-bbl-app-certification-id` (cert CN + fingerprint). Without it: task created (200) but
+  printer rejects MQTT command with "MQTT Command verification failed". See signing section.
 
 **Alternative (MQTT path, no POST /my/task):**
 
@@ -1634,6 +1648,58 @@ Tested all possible offsets (0–128 in steps of 8) for where `n` sits in the RS
 private key storage. The key is held in a custom obfuscated format. The RSA-2048 signing
 works through an internal implementation that never populates the standard `d` field.
 
+### Approach 9: BambuConnect macOS CDP JavaScript API Hooking (Mar 2026, FAILED)
+
+**Tool:** Node.js Inspector via `kill -SIGUSR1 <BC PID>` (SIGUSR1 enables inspector on
+port 9229; `--inspect` flag has no effect on this BC installation)
+
+**Method:** Attached Chrome DevTools Protocol (CDP) to the BambuConnect main process and
+injected hook scripts into both the main process and renderer.
+
+**Hooks attempted:**
+
+| Hook target | Method | Result |
+|---|---|---|
+| `require('crypto').createSign` | Replace with instrumented version in main process | Nothing captured |
+| `Sign.prototype.sign` | Patch native binding via `_handle` protocol | Nothing captured |
+| `require('crypto').sign` (one-shot) | Replace with instrumented version | Nothing captured |
+| `webcrypto.subtle.sign` | Replace in main process | Nothing captured |
+| `fetch`, `XMLHttpRequest`, `subtle.sign` | Injected via `Runtime.evaluate` into renderer | Nothing captured |
+
+**Root cause:** BC's `main.jsc` (compiled V8 bytecode via `main-loader.cjs`) captures
+references to crypto function objects at startup. By the time hooks are installed via CDP,
+the closures inside main.jsc already hold direct references to the original functions.
+Patching `Sign.prototype.sign` or `crypto.createSign` after the fact does not intercept
+calls from pre-captured references.
+
+**IPC discovery (side effect):**
+- Found `bridge` IPC channel firing continuously for `publishMqttMessage` (printer polls)
+- Enumerated all `ipcMain` handler registrations; found: `uploadFileToDevice`,
+  `connectAndSubscribeLanDevice`, `getCloudDeviceTicket`, `publishMqttMessage`
+- The `bridge` channel is BC's primary renderer↔main transport; all print actions go through it
+- Calling IPC handlers with a fake event object crashed BC (SIGUSR1 to restart)
+
+**Storage enumeration:**
+
+| Storage location | Contents | Key material? |
+|---|---|---|
+| LevelDB (Chromium Local Storage) | `token`, `device_id` in plaintext | No |
+| IndexedDB (renderer context) | 3 databases: filament profiles, HMS actions, OTA updates | No |
+| `app.getPath('userData')` safeStorage scan | No `v10`/`v11` encrypted value prefixes | No |
+
+**Conclusion:** The BC macOS private key is NOT in Local Storage or IndexedDB. The encrypted
+key material is stored elsewhere (likely fetched and held in memory only, or stored in macOS
+Keychain). With V8 bytecode closures capturing references at startup and no extractable
+storage, CDP-based extraction is not viable for this version of BambuConnect.
+
+**Hackaday key test (Mar 2026):**
+
+The publicly-extracted BambuConnect v1.0.4 private key (Jan 2025) was wired into
+`_sign_task_body()` and tested against POST /my/task. Result: **HTTP 403 Forbidden** from
+the server (not just printer rejection). This confirms the server validates the signature
+against the registered cert for that specific installation — a per-installation key from
+one specific build does not work for any other installation.
+
 ### MQTT app_cert_list (from captures)
 
 The printer broadcasts registered cert IDs via MQTT `security` topic:
@@ -1724,29 +1790,32 @@ The bridge handles the full flow including RSA-2048 signing via the library's in
 per-installation certificate. The `cloud_print()` function auto-generates the required
 config-only 3MF from the input file.
 
-**Partially working:** Pure Python HTTP (`cloud_print_http()`, `mode = "cloud-http"`)
-handles steps 1–7 (project creation, S3 upload, patch) in pure Python. Step 8
-(`POST /my/task`) is sent unsigned — the task is created (HTTP 200) but the printer
-rejects the MQTT command without the RSA signature. Use cloud-bridge mode instead.
+**Partially working (experimental):** Pure Python HTTP (`cloud_print_http()`,
+`mode = "cloud-http"`) handles all 8 steps in pure Python. POST /my/task is sent unsigned
+— the task is created (HTTP 200) but the printer rejects the MQTT command without the
+RSA signature ("MQTT Command verification failed"). **Gated behind `--experimental` flag**
+in the CLI — running without it prints an error and points to cloud-bridge. Use
+cloud-bridge mode instead.
 
-**Private key extraction: DEFINITIVELY FAILED.** After 8 different approaches including
+**Private key extraction: DEFINITIVELY FAILED.** After 9 different approaches including
 Frida dynamic instrumentation, mitmproxy HTTPS interception, LD_PRELOAD hooks, memory
-scanning, and RSA structure tracing, the key cannot be extracted. It is stored in a
-custom obfuscated format, never in standard OpenSSL structures or PEM/DER encoding.
+scanning, RSA structure tracing, and BambuConnect CDP-based JavaScript API hooking, the
+key cannot be extracted. It is stored in a custom obfuscated format, never in standard
+OpenSSL structures or PEM/DER encoding. See "Approach 9" below for the latest attempts.
 
-**Pure Python flow (steps 1–7 work, step 8 needs signing):**
+**Pure Python flow (steps 1–7 work, step 8 creates task but printer rejects):**
 1. POST /v1/iot-service/api/user/project — create project, get upload URL
-2. PUT S3 presigned URL — upload config-only 3MF (no Content-Type header)
-3. PUT /v1/iot-service/api/user/notification — notify upload complete
+2. PUT S3 presigned URL — upload config-only 3MF (gcode stripped, no Content-Type header)
+3. PUT /v1/iot-service/api/user/notification — notify upload complete (`origin_file_name: "connect_config.3mf"`)
 4. GET /v1/iot-service/api/user/notification — poll until processed
-5. GET /v1/iot-service/api/user/upload — get gcode upload URL
-6. PUT gcode S3 URL — upload full .gcode.3mf
-7. PATCH /v1/iot-service/api/user/project/{id} — set gcode URL + MD5
-8. POST /v1/user-service/my/task — create task (**requires RSA signing**)
+5. GET /v1/iot-service/api/user/upload — get gcode.3mf upload URL
+6. PUT gcode S3 URL — upload full .gcode.3mf (no Content-Type header)
+7. PATCH /v1/iot-service/api/user/project/{id} — set **gcode upload URL** + **gcode.3mf MD5**
+8. POST /v1/user-service/my/task — create task (**requires RSA signing to avoid printer rejection**)
 
 **Implementation:** `src/fabprint/cloud.py` provides both `cloud_print()` (bridge-based,
 recommended) and `cloud_print_http()` (pure Python, unsigned). Callable via
-`mode = "cloud-bridge"` or `mode = "cloud-http"` in fabprint config.
+`mode = "cloud-bridge"` (default) or `mode = "cloud-http" --experimental` in fabprint.
 
 ---
 
