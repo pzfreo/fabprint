@@ -16,6 +16,7 @@ Two approaches:
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -360,7 +361,7 @@ def cloud_print_http(
             f"{BASE_URL}/v1/iot-service/api/user/notification",
             json={
                 "action": "upload",
-                "upload": {"ticket": upload_ticket, "origin_file_name": threemf_path.name},
+                "upload": {"ticket": upload_ticket, "origin_file_name": "connect_config.3mf"},
             },
         ),
         "notification",
@@ -383,7 +384,9 @@ def cloud_print_http(
     else:
         raise RuntimeError(f"3MF processing timed out for project {project_id}")
 
-    # Step 5: Upload full 3MF to printer-accessible storage (BC does this as a second PUT)
+    # Step 5: Upload full gcode.3mf to printer-accessible storage (second S3 upload).
+    # BambuConnect uses a separate presigned URL for this (different bucket/path from step 2).
+    # We compute the MD5 here because PATCH must reference this URL + MD5 of this file.
     log.debug("Getting gcode upload URL for %s_%s_1.3mf", model_id, profile_id)
     upload_info = _check(
         session.get(
@@ -393,23 +396,18 @@ def cloud_print_http(
         "get gcode upload url",
     )
     gcode_upload_url = upload_info["urls"][0]["url"]
-    log.debug("Uploading full 3MF to gcode storage (%s bytes)", threemf_path.stat().st_size)
-    with open(threemf_path, "rb") as f:
-        resp = requests.put(gcode_upload_url, data=f, headers={})
+    gcode_bytes = threemf_path.read_bytes()
+    gcode_md5 = hashlib.md5(gcode_bytes).hexdigest().upper()
+    log.debug("Uploading full 3MF to gcode storage (%d bytes, md5=%s)", len(gcode_bytes), gcode_md5)
+    resp = requests.put(gcode_upload_url, data=gcode_bytes, headers={})
     if not resp.ok:
         raise RuntimeError(f"Gcode S3 upload failed ({resp.status_code}): {resp.text[:200]}")
     log.debug("Gcode upload complete")
 
-    # Step 6: Get profile S3 URL + MD5, patch project with profile_print_3mf
-    prof = _check(
-        session.get(
-            f"{BASE_URL}/v1/iot-service/api/user/profile/{profile_id}",
-            params={"model_id": model_id},
-        ),
-        "get profile",
-    )
-    profile_url = prof["url"]
-    profile_md5 = prof["md5"].upper()
+    # Step 6: PATCH project with gcode upload URL + MD5.
+    # BambuConnect does NOT call GET /profile here — it uses the user/upload URL directly.
+    # Using the wrong URL or MD5 (e.g. from GET /profile) causes "MQTT command verification
+    # failed" on the printer because the printer checks the MD5 of the file it downloads.
     _check(
         session.patch(
             f"{BASE_URL}/v1/iot-service/api/user/project/{project_id}",
@@ -418,9 +416,9 @@ def cloud_print_http(
                 "profile_print_3mf": [
                     {
                         "comments": "no_ips",
-                        "md5": profile_md5,
+                        "md5": gcode_md5,
                         "plate_idx": plate_index,
-                        "url": profile_url,
+                        "url": gcode_upload_url,
                     }
                 ],
             },
