@@ -157,6 +157,7 @@ def _run_bridge(
                 if os.path.exists(arg):
                     dst = os.path.join(staging, os.path.basename(arg))
                     shutil.copy2(arg, dst)
+                    os.chmod(dst, 0o644)  # Docker runs as different user
                     docker_args.append(f"/data/{os.path.basename(arg)}")
                 else:
                     docker_args.append(arg)
