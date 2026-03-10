@@ -363,9 +363,11 @@ def _cmd_status(args: argparse.Namespace) -> None:
 
     ams_trays = parse_ams_trays(status)
     if ams_trays:
+        tray_now_raw = int(status.get("ams", {}).get("tray_now", 255))
         print("  AMS:")
         for t in ams_trays:
-            print(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  #{t['color']}")
+            active = " <-- printing" if t["phys_slot"] == tray_now_raw else ""
+            print(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  #{t['color']}{active}")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:
