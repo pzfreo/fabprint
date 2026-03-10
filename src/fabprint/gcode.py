@@ -25,12 +25,20 @@ def parse_gcode_metadata(gcode_path: Path) -> dict[str, str | float | int]:
         elif m := re.match(r";\s*estimated printing time.*?=\s*(.+)", line):
             stats["print_time"] = m.group(1).strip()
 
-    # Scan tail for filament stats
+    # Scan tail for filament stats. OrcaSlicer emits one line per slot
+    # (including 0.00 for unused slots) then sometimes a total line.
+    # Sum all values to get the true total; a single total line gives itself.
+    filament_g_total = 0.0
+    filament_cm3_total = 0.0
     for line in lines[-50:]:
         if m := re.match(r";\s*(?:total )?filament used \[g\]\s*=\s*([\d.]+)", line):
-            stats["filament_g"] = float(m.group(1))
+            filament_g_total += float(m.group(1))
         elif m := re.match(r";\s*(?:total )?filament used \[cm3\]\s*=\s*([\d.]+)", line):
-            stats["filament_cm3"] = float(m.group(1))
+            filament_cm3_total += float(m.group(1))
+    if filament_g_total > 0:
+        stats["filament_g"] = filament_g_total
+    if filament_cm3_total > 0:
+        stats["filament_cm3"] = filament_cm3_total
 
     # Convert time string like "1h 7m 32s" to seconds
     if "print_time" in stats:
