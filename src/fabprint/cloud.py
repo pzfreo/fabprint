@@ -150,8 +150,10 @@ def _run_bridge(
         import shutil
         import tempfile
 
-        staging = tempfile.mkdtemp(prefix="fabprint_bridge_")
-        os.chmod(staging, 0o755)  # mkdtemp creates 0700; Docker user needs traversal
+        # Use /tmp explicitly: macOS tempfile defaults to /var/folders/ which is
+        # a symlink Docker may not resolve correctly. /tmp is always shared.
+        staging = tempfile.mkdtemp(prefix="fabprint_bridge_", dir="/tmp")
+        os.chmod(staging, 0o755)
         try:
             docker_args = []
             for arg in args:
