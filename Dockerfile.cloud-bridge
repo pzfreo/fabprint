@@ -11,7 +11,7 @@
 
 FROM --platform=linux/amd64 ubuntu:24.04
 
-LABEL org.opencontainers.image.description="Bambu Lab cloud print bridge (headless, libbambu_networking v02.05.00.56)"
+LABEL org.opencontainers.image.description="Bambu Lab cloud print bridge (headless)"
 
 # Build tools + runtime deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -19,12 +19,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         libcurl4 \
+        python3 \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy bundled libbambu_networking.so (slicer plugin v02.05.00.56)
-# Source: https://public-cdn.bblmw.com/upgrade/studio/plugins/02.05.00.56/8b2ace6050/linux_02.05.00.56.zip
-# (Bambu CDN URLs expire/rotate; .so is bundled to ensure reproducible builds)
-COPY scripts/libbambu_networking.so /tmp/bambu_plugin/libbambu_networking.so
+# Fetch libbambu_networking.so from Bambu's official API at build time.
+# The API returns a signed CDN URL for the current Linux plugin zip.
+# No redistribution of Bambu's proprietary binary — fetched from their servers.
+ARG BAMBU_SLICER_VERSION=02.05.00.00
+RUN mkdir -p /tmp/bambu_plugin \
+    && PLUGIN_URL=$(curl -fsSL \
+        -H "User-Agent: BambuStudio/${BAMBU_SLICER_VERSION}" \
+        -H "X-BBL-OS-Type: linux" \
+        "https://api.bambulab.com/v1/iot-service/api/slicer/resource?slicer/plugins/cloud=${BAMBU_SLICER_VERSION}" \
+        | python3 -c "import sys,json; r=json.load(sys.stdin)['resources']; print([x for x in r if 'plugins' in x['type']][0]['url'])") \
+    && curl -fsSL -o /tmp/plugins.zip "$PLUGIN_URL" \
+    && unzip -j /tmp/plugins.zip libbambu_networking.so -d /tmp/bambu_plugin/ \
+    && rm /tmp/plugins.zip
 
 # Download slicer TLS certificate (for MQTT to *.bambulab.com)
 RUN mkdir -p /tmp/bambu_agent/cert /tmp/bambu_agent/log /tmp/bambu_agent/config \
