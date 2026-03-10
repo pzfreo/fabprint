@@ -150,9 +150,9 @@ def _run_bridge(
         import shutil
         import tempfile
 
-        # Use /tmp explicitly: macOS tempfile defaults to /var/folders/ which is
-        # a symlink Docker may not resolve correctly. /tmp is always shared.
-        staging = tempfile.mkdtemp(prefix="fabprint_bridge_", dir="/tmp")
+        # Resolve symlinks: on macOS /tmp -> /private/tmp and /var/folders ->
+        # /private/var/folders. Docker Desktop shares /private, not the symlinks.
+        staging = os.path.realpath(tempfile.mkdtemp(prefix="fabprint_bridge_"))
         os.chmod(staging, 0o755)
         try:
             docker_args = []
