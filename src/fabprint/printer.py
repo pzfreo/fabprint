@@ -283,6 +283,27 @@ def _send_bambu_connect(
     print("  Opened in Bambu Connect — confirm and print from there")
 
 
+def _get_token_file() -> Path:
+    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
+    return Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
+
+
+def get_printer_status(serial: str) -> dict:
+    """Query live printer status via the cloud bridge.
+
+    Returns a dict with keys like gcode_state, mc_percent, layer_num, etc.
+    Raises RuntimeError if the bridge fails.
+    """
+    from fabprint.cloud import cloud_status
+
+    token_file = _get_token_file()
+    if not token_file.exists():
+        raise FileNotFoundError(
+            f"Token file not found: {token_file}. Run 'python scripts/bambu_cloud_login.py' first."
+        )
+    return cloud_status(serial, token_file)
+
+
 def _send_cloud_bridge(
     gcode_path: Path,
     serial: str | None = None,
@@ -295,11 +316,7 @@ def _send_cloud_bridge(
     """
     from fabprint.cloud import cloud_print
 
-    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
-    if token_file_str:
-        token_file = Path(token_file_str)
-    else:
-        token_file = Path.home() / ".bambu_cloud_token"
+    token_file = _get_token_file()
 
     if not token_file.exists():
         raise FileNotFoundError(
@@ -313,6 +330,23 @@ def _send_cloud_bridge(
         raise ValueError(
             "cloud-bridge mode requires serial. Set in [printer] config or BAMBU_SERIAL env var."
         )
+
+    # Check printer availability before sending
+    if not dry_run:
+        try:
+            status = get_printer_status(serial)
+            gcode_state = status.get("gcode_state", "")
+            if gcode_state not in ("IDLE", "FINISH", "FAILED", ""):
+                raise RuntimeError(
+                    f"Printer is not ready (state: {gcode_state}). "
+                    "Wait for current job to finish or cancel it first."
+                )
+            if gcode_state:
+                print(f"  Printer ready (state: {gcode_state})")
+        except RuntimeError as e:
+            if "not ready" in str(e):
+                raise
+            log.debug("Status check failed (printer may be offline): %s", e)
 
     # Use the slicer's .gcode.3mf if available, otherwise wrap the gcode
     sliced_3mf = gcode_path.parent / "plate_sliced.gcode.3mf"
