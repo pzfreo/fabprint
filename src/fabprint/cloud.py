@@ -151,6 +151,7 @@ def _run_bridge(
         import tempfile
 
         staging = tempfile.mkdtemp(prefix="fabprint_bridge_")
+        os.chmod(staging, 0o755)  # mkdtemp creates 0700; Docker user needs traversal
         try:
             docker_args = []
             for arg in args:
