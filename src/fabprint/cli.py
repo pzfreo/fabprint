@@ -331,6 +331,7 @@ def _cmd_print(args: argparse.Namespace) -> None:
 
 
 def _cmd_status(args: argparse.Namespace) -> None:
+    from fabprint.cloud import parse_ams_trays
     from fabprint.printer import get_printer_status
 
     cfg = load_config(args.config)
@@ -359,6 +360,12 @@ def _cmd_status(args: argparse.Namespace) -> None:
         if remaining:
             h, m = divmod(int(remaining), 60)
             print(f"  Remaining: {h}h {m}m" if h else f"  Remaining: {m}m")
+
+    ams_trays = parse_ams_trays(status)
+    if ams_trays:
+        print("  AMS:")
+        for t in ams_trays:
+            print(f"    slot {t['phys_slot']}  {t['type']:<12}  #{t['color']}")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:
