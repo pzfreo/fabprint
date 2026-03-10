@@ -745,7 +745,8 @@ static int cmd_print(const std::string& token_json_raw, const std::string& devic
                      const std::string& file_3mf, const std::string& config_3mf,
                      const std::string& project_name, int timeout_secs,
                      const std::string& ams_mapping_str = "[0,1,2,3]",
-                     const std::string& ams_mapping2_str = "") {
+                     const std::string& ams_mapping2_str = "",
+                     const std::string& ams_mapping_info_str = "") {
     int saved_out = dup(STDOUT_FILENO);
     int devnull_fd = open("/dev/null", O_WRONLY);
     if (devnull_fd >= 0) { dup2(devnull_fd, STDOUT_FILENO); close(devnull_fd); }
@@ -796,7 +797,7 @@ static int cmd_print(const std::string& token_json_raw, const std::string& devic
     params.nozzle_mapping = "[]";
     params.ams_mapping = ams_mapping_str;
     params.ams_mapping2 = ams_mapping2_str;
-    params.ams_mapping_info = "";
+    params.ams_mapping_info = ams_mapping_info_str;
     params.nozzles_info = "";
     params.connection_type = "cloud";
     params.comments = "";
@@ -1044,6 +1045,7 @@ int main(int argc, char* argv[]) {
         std::string project_name = "fabprint";
         std::string ams_mapping_str = "[0,1,2,3]";
         std::string ams_mapping2_str = "";
+        std::string ams_mapping_info_str = "";
         int timeout = 180;
 
         for (int i = 5; i < argc; i++) {
@@ -1053,6 +1055,7 @@ int main(int argc, char* argv[]) {
             else if (arg == "--timeout" && i + 1 < argc) timeout = atoi(argv[++i]);
             else if (arg == "--ams-mapping" && i + 1 < argc) ams_mapping_str = argv[++i];
             else if (arg == "--ams-mapping2" && i + 1 < argc) ams_mapping2_str = argv[++i];
+            else if (arg == "--ams-mapping-info" && i + 1 < argc) ams_mapping_info_str = argv[++i];
         }
 
         std::string token_json = read_file(token_file);
@@ -1065,7 +1068,7 @@ int main(int argc, char* argv[]) {
         }
 
         return cmd_print(token_json, device_id, file_3mf, config_3mf, project_name, timeout,
-                         ams_mapping_str, ams_mapping2_str);
+                         ams_mapping_str, ams_mapping2_str, ams_mapping_info_str);
     }
 
     fprintf(stderr, "error: unknown command '%s'\n\n", command.c_str());
