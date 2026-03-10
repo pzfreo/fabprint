@@ -150,6 +150,7 @@ def _run_bridge(
             "docker",
             "run",
             "--rm",
+            "--pull=always",
             "--platform",
             "linux/amd64",
         ]
@@ -230,7 +231,9 @@ def cloud_print(
     # Build AMS mapping from 3MF + live printer AMS state (if available)
     ams_data = _build_ams_mapping(threemf_path, ams_trays=ams_trays)
     ams_mapping_str = json.dumps(ams_data["amsMapping"]) if ams_data["amsMapping"] else "[0,1,2,3]"
+    ams_mapping2_str = json.dumps(ams_data["amsMapping2"])
     log.debug("AMS mapping for bridge: %s", ams_mapping_str)
+    log.debug("AMS mapping2 for bridge: %s", ams_mapping2_str)
 
     args = [
         "print",
@@ -243,6 +246,8 @@ def cloud_print(
         str(timeout),
         "--ams-mapping",
         ams_mapping_str,
+        "--ams-mapping2",
+        ams_mapping2_str,
     ]
 
     # Auto-generate config-only 3MF if not provided.
