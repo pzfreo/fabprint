@@ -243,7 +243,11 @@ def cloud_print(
         args.extend(["--config-3mf", str(config_3mf.resolve())])
     else:
         config_bytes = _strip_gcode_from_3mf(threemf_path)
-        tmp_config = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
+        # Create alongside the source 3MF so it's under /Users — macOS
+        # /var/folders temp files cause statx() ENOSYS inside Docker/Rosetta.
+        tmp_config = tempfile.NamedTemporaryFile(
+            suffix=".3mf", delete=False, dir=threemf_path.parent
+        )
         tmp_config.write(config_bytes)
         tmp_config.close()
         args.extend(["--config-3mf", tmp_config.name])
