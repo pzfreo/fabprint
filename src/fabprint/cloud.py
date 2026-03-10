@@ -202,6 +202,7 @@ def cloud_print(
     project_name: str = "fabprint",
     timeout: int = 180,
     verbose: bool = False,
+    ams_trays: list[dict] | None = None,
 ) -> dict:
     """Start a cloud print job.
 
@@ -226,6 +227,11 @@ def cloud_print(
     if not token_file.exists():
         raise FileNotFoundError(f"Token file not found: {token_file}")
 
+    # Build AMS mapping from 3MF + live printer AMS state (if available)
+    ams_data = _build_ams_mapping(threemf_path, ams_trays=ams_trays)
+    ams_mapping_str = json.dumps(ams_data["amsMapping"]) if ams_data["amsMapping"] else "[0,1,2,3]"
+    log.debug("AMS mapping for bridge: %s", ams_mapping_str)
+
     args = [
         "print",
         str(threemf_path.resolve()),
@@ -235,6 +241,8 @@ def cloud_print(
         project_name,
         "--timeout",
         str(timeout),
+        "--ams-mapping",
+        ams_mapping_str,
     ]
 
     # Auto-generate config-only 3MF if not provided.
@@ -389,7 +397,9 @@ def _strip_gcode_from_3mf(path: Path) -> bytes:
     return buf.getvalue()
 
 
-def _build_ams_mapping(threemf_path: Path, plate_index: int = 1) -> dict:
+def _build_ams_mapping(
+    threemf_path: Path, plate_index: int = 1, ams_trays: list[dict] | None = None
+) -> dict:
     """Parse 3MF to build amsDetailMapping, amsMapping, amsMapping2, filamentSettingIds.
 
     Returns a dict with all AMS-related task body fields, matching BambuConnect's format.
@@ -438,20 +448,21 @@ def _build_ams_mapping(threemf_path: Path, plate_index: int = 1) -> dict:
     if not filament_by_id:
         return result
 
-    # Build mapping arrays using only filaments actually used in the plate.
-    # Using total_slots (all configured AMS slots) adds unused 255/255 entries
-    # that cause "Failed to get AMS mapping table" warnings on the printer.
+    # amsMapping: one entry per virtual slot (total_slots length), 255 for unused.
+    # Physical slot assignment uses live AMS state when available, otherwise sequential.
+    am = _build_ams_mapping_from_state(filament_by_id, total_slots, ams_trays or [])
+
     for filament_id in sorted(filament_by_id.keys()):
-        slot_idx = filament_id - 1  # 1-based id → 0-based AMS slot
         f = filament_by_id[filament_id]
         color = f.get("color", "#000000").lstrip("#").upper() + "FF"
         fil_type = f.get("type", "")
         tray_idx = f.get("tray_info_idx", "")
+        phys_slot = am[filament_id - 1]
         result["amsDetailMapping"].append(
             {
-                "ams": slot_idx,
-                "amsId": 0,
-                "slotId": slot_idx,
+                "ams": phys_slot,
+                "amsId": phys_slot // 4,
+                "slotId": phys_slot % 4,
                 "nozzleId": 0,
                 "sourceColor": color,
                 "targetColor": color,
@@ -460,12 +471,88 @@ def _build_ams_mapping(threemf_path: Path, plate_index: int = 1) -> dict:
                 "filamentId": tray_idx,
             }
         )
-        result["amsMapping"].append(slot_idx)
-        result["amsMapping2"].append({"amsId": 0, "slotId": slot_idx})
-        tray = f.get("tray_info_idx", "")
-        result["filamentSettingIds"].append(tray)
+        result["amsMapping2"].append({"amsId": phys_slot // 4, "slotId": phys_slot % 4})
+        result["filamentSettingIds"].append(tray_idx)
 
+    result["amsMapping"] = am
     return result
+
+
+def parse_ams_trays(status: dict) -> list[dict]:
+    """Extract physical AMS tray info from a printer status dict.
+
+    Returns a list of dicts (one per loaded tray) with keys:
+        phys_slot  — global slot index (amsId * 4 + slotId)
+        ams_id     — AMS unit index (0-based)
+        slot_id    — tray within AMS unit (0-based)
+        type       — filament type string, e.g. "PETG-CF"
+        color      — 6-char hex color without alpha, e.g. "F2754E"
+        tray_info_idx — Bambu filament ID, e.g. "GFG98"
+    """
+    trays = []
+    ams_data = status.get("ams", {})
+    for unit in ams_data.get("ams", []):
+        ams_id = int(unit.get("id", 0))
+        for tray in unit.get("tray", []):
+            slot_id = int(tray.get("id", 0))
+            fil_type = tray.get("tray_type", "")
+            if not fil_type:
+                continue  # empty tray
+            color_raw = tray.get("tray_color", "")
+            color = color_raw[:6] if len(color_raw) >= 6 else color_raw
+            trays.append(
+                {
+                    "phys_slot": ams_id * 4 + slot_id,
+                    "ams_id": ams_id,
+                    "slot_id": slot_id,
+                    "type": fil_type,
+                    "color": color,
+                    "tray_info_idx": tray.get("tray_info_idx", ""),
+                }
+            )
+    return trays
+
+
+def _build_ams_mapping_from_state(
+    filament_by_id: dict,
+    total_slots: int,
+    ams_trays: list[dict],
+) -> list[int]:
+    """Match virtual filament slots to physical AMS trays.
+
+    Returns ams_mapping list of length total_slots (255 for unused slots).
+    Matches first by filament type, then by color if multiple candidates.
+    Falls back to sequential slot 0, 1, 2… if no AMS state available.
+    """
+    am = [255] * total_slots
+    used = set()  # physical slots already assigned
+
+    for seq_idx, filament_id in enumerate(sorted(filament_by_id.keys())):
+        f = filament_by_id[filament_id]
+        fil_type = f.get("type", "")
+        color = f.get("color", "").lstrip("#").upper()
+
+        best = None
+        if ams_trays:
+            # Score candidates: 2 pts for type match, 1 pt for color match
+            candidates = [
+                (
+                    (2 if t["type"] == fil_type else 0) + (1 if t["color"] == color else 0),
+                    t,
+                )
+                for t in ams_trays
+                if t["phys_slot"] not in used
+            ]
+            candidates.sort(key=lambda x: -x[0])
+            if candidates and candidates[0][0] > 0:
+                best = candidates[0][1]
+
+        phys_slot = best["phys_slot"] if best else seq_idx
+        if best:
+            used.add(phys_slot)
+        am[filament_id - 1] = phys_slot
+
+    return am
 
 
 def _poll_task_status(

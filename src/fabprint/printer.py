@@ -331,9 +331,12 @@ def _send_cloud_bridge(
             "cloud-bridge mode requires serial. Set in [printer] config or BAMBU_SERIAL env var."
         )
 
-    # Check printer availability before sending
+    # Check printer availability before sending, and capture AMS state for mapping
+    ams_trays = None
     if not dry_run:
         try:
+            from fabprint.cloud import parse_ams_trays
+
             status = get_printer_status(serial)
             gcode_state = status.get("gcode_state", "")
             if gcode_state not in ("IDLE", "FINISH", "FAILED", ""):
@@ -343,6 +346,12 @@ def _send_cloud_bridge(
                 )
             if gcode_state:
                 print(f"  Printer ready (state: {gcode_state})")
+            ams_trays = parse_ams_trays(status)
+            if ams_trays:
+                log.debug(
+                    "AMS trays: %s",
+                    ", ".join(f"slot{t['phys_slot']}={t['type']}" for t in ams_trays),
+                )
         except RuntimeError as e:
             if "not ready" in str(e):
                 raise
@@ -366,6 +375,7 @@ def _send_cloud_bridge(
         device_id=serial,
         token_file=token_file,
         project_name=gcode_path.stem,
+        ams_trays=ams_trays,
     )
 
     status = result.get("result", "unknown")
