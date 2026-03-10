@@ -19,16 +19,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         libcurl4 \
+        python3 \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Download libbambu_networking.so (slicer plugin v02.05)
-ARG BAMBU_LIB_URL=https://public-cdn.bambulab.com/upgrade/studio/plugins/01.09.06.63/linux/bambu_networking_plugins.zip
-RUN curl -fSL -o /tmp/plugins.zip "$BAMBU_LIB_URL" \
-    && mkdir -p /tmp/bambu_plugin \
-    && cd /tmp/bambu_plugin \
-    && python3 -c "import zipfile; zipfile.ZipFile('/tmp/plugins.zip').extractall('.')" \
-    && rm /tmp/plugins.zip \
-    && ls -la /tmp/bambu_plugin/
+# Fetch libbambu_networking.so from Bambu's official API at build time.
+# The API returns a signed CDN URL for the current Linux plugin zip.
+# No redistribution of Bambu's proprietary binary — fetched from their servers.
+ARG BAMBU_SLICER_VERSION=02.05.00.00
+RUN mkdir -p /tmp/bambu_plugin \
+    && PLUGIN_URL=$(curl -fsSL \
+        -H "User-Agent: BambuStudio/${BAMBU_SLICER_VERSION}" \
+        -H "X-BBL-OS-Type: linux" \
+        "https://api.bambulab.com/v1/iot-service/api/slicer/resource?slicer/plugins/cloud=${BAMBU_SLICER_VERSION}" \
+        | python3 -c "import sys,json; r=json.load(sys.stdin)['resources']; print([x for x in r if 'plugins' in x['type']][0]['url'])") \
+    && curl -fsSL -o /tmp/plugins.zip "$PLUGIN_URL" \
+    && unzip -j /tmp/plugins.zip libbambu_networking.so -d /tmp/bambu_plugin/ \
+    && rm /tmp/plugins.zip
 
 # Download slicer TLS certificate (for MQTT to *.bambulab.com)
 RUN mkdir -p /tmp/bambu_agent/cert /tmp/bambu_agent/log /tmp/bambu_agent/config \

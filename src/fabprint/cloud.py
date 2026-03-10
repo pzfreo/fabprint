@@ -34,7 +34,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 BRIDGE_NAME = "bambu_cloud_bridge"
-DOCKER_IMAGE = "fabprint/cloud-bridge"
+DOCKER_IMAGE = "fabprint/fabprint-cloud-bridge"
 BASE_URL = "https://api.bambulab.com"
 
 # BambuConnect X.509 certificate ID and private key for signing print tasks.
@@ -137,8 +137,11 @@ def _run_bridge(
 
     Returns CompletedProcess. Raises RuntimeError if bridge not found.
     """
+    import platform
+
     bridge = _find_bridge()
-    use_docker = bridge is None
+    # On macOS the bridge binary can't load the Linux .so — always use Docker
+    use_docker = bridge is None or platform.system() == "Darwin"
 
     if use_docker:
         # Fall back to Docker
