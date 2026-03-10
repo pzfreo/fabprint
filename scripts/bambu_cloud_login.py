@@ -64,6 +64,7 @@ def login(email: str, password: str) -> str:
     data = resp.json()
 
     token = data.get("accessToken")
+    refresh_token = data.get("refreshToken", "")
     login_type = data.get("loginType", "")
 
     # Step 2: Handle verification code flow
@@ -86,6 +87,7 @@ def login(email: str, password: str) -> str:
         resp.raise_for_status()
         data = resp.json()
         token = data.get("accessToken")
+        refresh_token = data.get("refreshToken", "")
 
     # Step 3: Handle TFA flow
     if not token and data.get("tfaKey"):
@@ -101,26 +103,28 @@ def login(email: str, password: str) -> str:
         resp.raise_for_status()
         data = resp.json()
         token = data.get("accessToken")
+        refresh_token = data.get("refreshToken", "")
 
     if not token:
         print(f"\n  Login failed. Response: {json.dumps(data, indent=2)}")
         sys.exit(1)
 
-    return token
+    return token, refresh_token
 
 
-def get_user_id(token: str) -> str:
-    """Fetch user ID (needed for MQTT username)."""
+def get_user_profile(token: str) -> dict:
+    """Fetch user profile (uid, name, avatar)."""
     resp = requests.get(
         f"{API_BASE}/v1/design-user-service/my/preference",
         headers={**SLICER_HEADERS, "Authorization": f"Bearer {token}"},
     )
     resp.raise_for_status()
-    uid = resp.json().get("uid")
-    if not uid:
-        print(f"  Warning: Could not get user ID from profile")
-        return "unknown"
-    return str(uid)
+    data = resp.json()
+    return {
+        "uid": str(data.get("uid", "")),
+        "name": data.get("name", ""),
+        "avatar": data.get("avatar", ""),
+    }
 
 
 def get_devices(token: str) -> list[dict]:
@@ -149,8 +153,8 @@ def main():
             cached = json.loads(TOKEN_FILE.read_text())
             if cached.get("email") == email and cached.get("token"):
                 print(f"\n  Found cached token in {TOKEN_FILE}")
-                uid = get_user_id(cached["token"])
-                print(f"  Token is valid! User ID: {uid}")
+                profile = get_user_profile(cached["token"])
+                print(f"  Token is valid! User ID: {profile['uid']}")
 
                 refresh = input("  Refresh token anyway? [y/N]: ").strip().lower()
                 if refresh != "y":
@@ -162,15 +166,22 @@ def main():
 
     # Fresh login
     print(f"\n  Logging in...")
-    token = login(email, password)
-    uid = get_user_id(token)
+    token, refresh_token = login(email, password)
+    profile = get_user_profile(token)
 
-    # Save token
-    TOKEN_FILE.write_text(json.dumps({"token": token, "email": email}))
+    # Save token with all fields required by the bridge
+    TOKEN_FILE.write_text(json.dumps({
+        "token": token,
+        "refreshToken": refresh_token,
+        "email": email,
+        "uid": profile["uid"],
+        "name": profile["name"],
+        "avatar": profile["avatar"],
+    }))
     TOKEN_FILE.chmod(0o600)
 
     print(f"\n  Login successful!")
-    print(f"  User ID: {uid}")
+    print(f"  User ID: {profile['uid']}")
     print(f"  Token saved to: {TOKEN_FILE}")
 
     # Show devices as a bonus
