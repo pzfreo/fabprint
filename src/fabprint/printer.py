@@ -361,7 +361,7 @@ def _send_cloud_http(
         raise RuntimeError(
             "cloud-http mode is experimental and currently non-functional "
             "(request signing not yet solved — see docs/cloud-print-research.md).\n"
-            "Use mode = \"cloud-bridge\" in fabprint.toml, or pass --experimental "
+            'Use mode = "cloud-bridge" in fabprint.toml, or pass --experimental '
             "to run anyway."
         )
     from fabprint.cloud import cloud_print_http
