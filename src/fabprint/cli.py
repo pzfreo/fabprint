@@ -365,7 +365,7 @@ def _cmd_status(args: argparse.Namespace) -> None:
     if ams_trays:
         print("  AMS:")
         for t in ams_trays:
-            print(f"    slot {t['phys_slot']}  {t['type']:<12}  #{t['color']}")
+            print(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  #{t['color']}")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:
