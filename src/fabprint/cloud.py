@@ -438,20 +438,24 @@ def _build_ams_mapping(threemf_path: Path, plate_index: int = 1) -> dict:
     if not filament_by_id:
         return result
 
-    # Build mapping arrays using only filaments actually used in the plate.
-    # Using total_slots (all configured AMS slots) adds unused 255/255 entries
-    # that cause "Failed to get AMS mapping table" warnings on the printer.
-    for filament_id in sorted(filament_by_id.keys()):
-        slot_idx = filament_id - 1  # 1-based id → 0-based AMS slot
+    # amsMapping must have one entry per virtual filament slot (total_slots length),
+    # with 255 for unused slots. Physical AMS slots are assigned sequentially (0, 1, 2…)
+    # to the filaments actually used, so a single-filament print always maps to slot 0.
+    # (We don't have the physical AMS layout without querying the printer, so sequential
+    # assignment is the best approximation.)
+    am = [255] * total_slots
+    for seq_idx, filament_id in enumerate(sorted(filament_by_id.keys())):
         f = filament_by_id[filament_id]
         color = f.get("color", "#000000").lstrip("#").upper() + "FF"
         fil_type = f.get("type", "")
         tray_idx = f.get("tray_info_idx", "")
+        phys_slot = seq_idx  # sequential physical slot: 0, 1, 2…
+        am[filament_id - 1] = phys_slot
         result["amsDetailMapping"].append(
             {
-                "ams": slot_idx,
+                "ams": phys_slot,
                 "amsId": 0,
-                "slotId": slot_idx,
+                "slotId": phys_slot,
                 "nozzleId": 0,
                 "sourceColor": color,
                 "targetColor": color,
@@ -460,11 +464,10 @@ def _build_ams_mapping(threemf_path: Path, plate_index: int = 1) -> dict:
                 "filamentId": tray_idx,
             }
         )
-        result["amsMapping"].append(slot_idx)
-        result["amsMapping2"].append({"amsId": 0, "slotId": slot_idx})
-        tray = f.get("tray_info_idx", "")
-        result["filamentSettingIds"].append(tray)
+        result["amsMapping2"].append({"amsId": 0, "slotId": phys_slot})
+        result["filamentSettingIds"].append(tray_idx)
 
+    result["amsMapping"] = am
     return result
 
 
