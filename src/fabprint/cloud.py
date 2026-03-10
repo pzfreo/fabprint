@@ -435,52 +435,35 @@ def _build_ams_mapping(threemf_path: Path, plate_index: int = 1) -> dict:
         log.warning("Failed to parse 3MF for AMS mapping: %s", e)
         return result
 
-    if not total_slots:
+    if not filament_by_id:
         return result
 
-    # Build mapping arrays with one entry per filament slot
-    for slot_idx in range(total_slots):
-        filament_id = slot_idx + 1  # 1-based
-        f = filament_by_id.get(filament_id)
-        if f is not None:
-            color = f.get("color", "#000000").lstrip("#").upper() + "FF"
-            fil_type = f.get("type", "")
-            tray_idx = f.get("tray_info_idx", "")
-            result["amsDetailMapping"].append(
-                {
-                    "ams": slot_idx,
-                    "amsId": 0,
-                    "slotId": slot_idx,
-                    "nozzleId": 0,
-                    "sourceColor": color,
-                    "targetColor": color,
-                    "filamentType": fil_type,
-                    "targetFilamentType": fil_type,
-                    "filamentId": tray_idx,
-                }
-            )
-            result["amsMapping"].append(slot_idx)
-            result["amsMapping2"].append({"amsId": 0, "slotId": slot_idx})
-        else:
-            result["amsDetailMapping"].append(
-                {
-                    "ams": -1,
-                    "amsId": 255,
-                    "slotId": 255,
-                    "filamentId": "",
-                    "filamentType": "",
-                    "targetColor": "",
-                }
-            )
-            result["amsMapping"].append(-1)
-            result["amsMapping2"].append({"amsId": 255, "slotId": 255})
-
-        # filamentSettingIds: extract short ID from setting name or use tray_info_idx
-        if f is not None:
-            tray = f.get("tray_info_idx", "")
-            result["filamentSettingIds"].append(tray)
-        else:
-            result["filamentSettingIds"].append("")
+    # Build mapping arrays using only filaments actually used in the plate.
+    # Using total_slots (all configured AMS slots) adds unused 255/255 entries
+    # that cause "Failed to get AMS mapping table" warnings on the printer.
+    for filament_id in sorted(filament_by_id.keys()):
+        slot_idx = filament_id - 1  # 1-based id → 0-based AMS slot
+        f = filament_by_id[filament_id]
+        color = f.get("color", "#000000").lstrip("#").upper() + "FF"
+        fil_type = f.get("type", "")
+        tray_idx = f.get("tray_info_idx", "")
+        result["amsDetailMapping"].append(
+            {
+                "ams": slot_idx,
+                "amsId": 0,
+                "slotId": slot_idx,
+                "nozzleId": 0,
+                "sourceColor": color,
+                "targetColor": color,
+                "filamentType": fil_type,
+                "targetFilamentType": fil_type,
+                "filamentId": tray_idx,
+            }
+        )
+        result["amsMapping"].append(slot_idx)
+        result["amsMapping2"].append({"amsId": 0, "slotId": slot_idx})
+        tray = f.get("tray_info_idx", "")
+        result["filamentSettingIds"].append(tray)
 
     return result
 
