@@ -142,6 +142,13 @@ def _run_bridge(
     use_docker = bridge is None or platform.system() == "Darwin"
 
     if use_docker:
+        # Pull latest image first so progress is visible (not swallowed by capture_output).
+        print("  Checking for Docker image updates...", flush=True)
+        subprocess.run(
+            ["docker", "pull", DOCKER_IMAGE],
+            check=False,
+        )
+
         # Mount each input file individually using its realpath.
         # Directory mounts on macOS/Docker Desktop have persistent symlink and
         # permission issues; individual file mounts via /Users (which Docker
@@ -150,7 +157,6 @@ def _run_bridge(
             "docker",
             "run",
             "--rm",
-            "--pull=always",
             "--platform",
             "linux/amd64",
         ]
@@ -229,18 +235,12 @@ def cloud_print(
         raise FileNotFoundError(f"Token file not found: {token_file}")
 
     # Build AMS mapping from 3MF + live printer AMS state (if available).
-    # params.ams_mapping (MQTT format) stays [0,1,2,3] — the library uses this for the
-    # MQTT start_print command where index = virtual T slot, value = physical AMS slot.
-    # params.ams_mapping2 / ams_mapping_info populate the REST task body fields and must
-    # be full-length arrays (one entry per virtual slot) with 255/255 for unused slots,
-    # matching the exact format captured from BambuConnect v2.2.1.
+    # params.ams_mapping2 populates the REST task body's amsMapping2 field.
+    # params.ams_mapping_info is intentionally left empty — setting it causes the
+    # library to generate a conflicting task body and the server returns 403.
     ams_data = _build_ams_mapping(threemf_path, ams_trays=ams_trays)
     ams_mapping2_str = json.dumps(ams_data["amsMapping2"]) if ams_data["amsMapping2"] else ""
-    ams_mapping_info_str = (
-        json.dumps(ams_data["amsDetailMapping"]) if ams_data["amsDetailMapping"] else ""
-    )
     log.debug("AMS mapping2: %s", ams_mapping2_str)
-    log.debug("AMS mapping info: %s", ams_mapping_info_str)
 
     args = [
         "print",
@@ -254,8 +254,6 @@ def cloud_print(
     ]
     if ams_mapping2_str:
         args.extend(["--ams-mapping2", ams_mapping2_str])
-    if ams_mapping_info_str:
-        args.extend(["--ams-mapping-info", ams_mapping_info_str])
 
     # Auto-generate config-only 3MF if not provided.
     # The v02.05 library requires a separate config_filename (3MF without gcode).
