@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -144,6 +145,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     pin_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
 
+    # status subcommand
+    status_cmd = sub.add_parser("status", parents=[common], help="Query live printer status")
+    status_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -161,6 +166,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_slice(args)
     elif args.command == "print":
         _cmd_print(args)
+    elif args.command == "status":
+        _cmd_status(args)
     elif args.command == "profiles":
         _cmd_profiles(args)
 
@@ -321,6 +328,37 @@ def _cmd_print(args: argparse.Namespace) -> None:
         upload_only=args.upload_only,
         experimental=getattr(args, "experimental", False),
     )
+
+
+def _cmd_status(args: argparse.Namespace) -> None:
+    from fabprint.printer import get_printer_status
+
+    cfg = load_config(args.config)
+    if cfg.printer is None:
+        raise ValueError("No [printer] section in config.")
+
+    serial = cfg.printer.serial or os.environ.get("BAMBU_SERIAL")
+    if not serial:
+        raise ValueError("No serial in [printer] config or BAMBU_SERIAL env var.")
+
+    print(f"Querying printer {serial}...")
+    status = get_printer_status(serial)
+
+    state = status.get("gcode_state", "unknown")
+    percent = status.get("mc_percent", 0)
+    layer = status.get("layer_num", 0)
+    total_layers = status.get("total_layer_num", 0)
+    remaining = status.get("mc_remaining_time", 0)
+
+    print(f"  State:    {state}")
+    if state not in ("IDLE", "FINISH", "FAILED", ""):
+        print(f"  Progress: {percent}%", end="")
+        if total_layers:
+            print(f" (layer {layer}/{total_layers})", end="")
+        print()
+        if remaining:
+            h, m = divmod(int(remaining), 60)
+            print(f"  Remaining: {h}h {m}m" if h else f"  Remaining: {m}m")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:
