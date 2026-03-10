@@ -150,6 +150,7 @@ def _run_bridge(
             "docker",
             "run",
             "--rm",
+            "--pull=always",
             "--platform",
             "linux/amd64",
         ]
@@ -227,10 +228,19 @@ def cloud_print(
     if not token_file.exists():
         raise FileNotFoundError(f"Token file not found: {token_file}")
 
-    # Build AMS mapping from 3MF + live printer AMS state (if available)
+    # Build AMS mapping from 3MF + live printer AMS state (if available).
+    # params.ams_mapping (MQTT format) stays [0,1,2,3] — the library uses this for the
+    # MQTT start_print command where index = virtual T slot, value = physical AMS slot.
+    # params.ams_mapping2 / ams_mapping_info populate the REST task body fields and must
+    # be full-length arrays (one entry per virtual slot) with 255/255 for unused slots,
+    # matching the exact format captured from BambuConnect v2.2.1.
     ams_data = _build_ams_mapping(threemf_path, ams_trays=ams_trays)
-    ams_mapping_str = json.dumps(ams_data["amsMapping"]) if ams_data["amsMapping"] else "[0,1,2,3]"
-    log.debug("AMS mapping for bridge: %s", ams_mapping_str)
+    ams_mapping2_str = json.dumps(ams_data["amsMapping2"]) if ams_data["amsMapping2"] else ""
+    ams_mapping_info_str = (
+        json.dumps(ams_data["amsDetailMapping"]) if ams_data["amsDetailMapping"] else ""
+    )
+    log.debug("AMS mapping2: %s", ams_mapping2_str)
+    log.debug("AMS mapping info: %s", ams_mapping_info_str)
 
     args = [
         "print",
@@ -241,9 +251,11 @@ def cloud_print(
         project_name,
         "--timeout",
         str(timeout),
-        "--ams-mapping",
-        ams_mapping_str,
     ]
+    if ams_mapping2_str:
+        args.extend(["--ams-mapping2", ams_mapping2_str])
+    if ams_mapping_info_str:
+        args.extend(["--ams-mapping-info", ams_mapping_info_str])
 
     # Auto-generate config-only 3MF if not provided.
     # The v02.05 library requires a separate config_filename (3MF without gcode).
@@ -448,33 +460,65 @@ def _build_ams_mapping(
     if not filament_by_id:
         return result
 
-    # amsMapping: one entry per virtual slot (total_slots length), 255 for unused.
-    # Physical slot assignment uses live AMS state when available, otherwise sequential.
-    am = _build_ams_mapping_from_state(filament_by_id, total_slots, ams_trays or [])
+    # Physical slot assignment: use live AMS state when available, else sequential.
+    phys_by_id = _build_ams_mapping_from_state(filament_by_id, total_slots, ams_trays or [])
 
-    for filament_id in sorted(filament_by_id.keys()):
-        f = filament_by_id[filament_id]
-        color = f.get("color", "#000000").lstrip("#").upper() + "FF"
-        fil_type = f.get("type", "")
-        tray_idx = f.get("tray_info_idx", "")
-        phys_slot = am[filament_id - 1]
-        result["amsDetailMapping"].append(
-            {
-                "ams": phys_slot,
-                "amsId": phys_slot // 4,
-                "slotId": phys_slot % 4,
-                "nozzleId": 0,
-                "sourceColor": color,
-                "targetColor": color,
-                "filamentType": fil_type,
-                "targetFilamentType": fil_type,
-                "filamentId": tray_idx,
-            }
-        )
-        result["amsMapping2"].append({"amsId": phys_slot // 4, "slotId": phys_slot % 4})
-        result["filamentSettingIds"].append(tray_idx)
+    # Build a lookup from physical slot → actual AMS tray (for targetColor)
+    tray_by_phys = {t["phys_slot"]: t for t in (ams_trays or [])}
 
-    result["amsMapping"] = am
+    # All arrays are full-length (one entry per virtual slot), matching BambuConnect's format.
+    # Unused slots get sentinel values: -1 / {255,255} / "" — not just the used filaments.
+    detail = []
+    mapping = []
+    mapping2 = []
+    setting_ids = []
+    for slot_idx in range(total_slots):
+        filament_id = slot_idx + 1
+        f = filament_by_id.get(filament_id)
+        if f is not None:
+            source_color = f.get("color", "#000000").lstrip("#").upper() + "FF"
+            fil_type = f.get("type", "")
+            tray_idx = f.get("tray_info_idx", "")
+            phys_slot = phys_by_id[slot_idx]  # 0-based physical slot
+            # targetColor = actual AMS color; falls back to sourceColor if unknown
+            actual_tray = tray_by_phys.get(phys_slot)
+            target_color = (actual_tray["color"] + "FF") if actual_tray else source_color
+            detail.append(
+                {
+                    "ams": phys_slot,
+                    "amsId": phys_slot // 4,
+                    "slotId": phys_slot % 4,
+                    "nozzleId": 0,
+                    "sourceColor": source_color,
+                    "targetColor": target_color,
+                    "filamentType": fil_type,
+                    "targetFilamentType": fil_type,
+                    "filamentId": tray_idx,
+                }
+            )
+            mapping.append(phys_slot)
+            mapping2.append({"amsId": phys_slot // 4, "slotId": phys_slot % 4})
+            setting_ids.append(tray_idx)
+        else:
+            # Unused virtual slot — sentinel values matching BambuConnect capture
+            detail.append(
+                {
+                    "ams": -1,
+                    "amsId": 255,
+                    "slotId": 255,
+                    "filamentId": "",
+                    "filamentType": "",
+                    "targetColor": "",
+                }
+            )
+            mapping.append(-1)
+            mapping2.append({"amsId": 255, "slotId": 255})
+            setting_ids.append("")
+
+    result["amsDetailMapping"] = detail
+    result["amsMapping"] = mapping
+    result["amsMapping2"] = mapping2
+    result["filamentSettingIds"] = setting_ids
     return result
 
 
