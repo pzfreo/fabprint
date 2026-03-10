@@ -855,9 +855,15 @@ static int cmd_print(const std::string& token_json_raw, const std::string& devic
         std::this_thread::sleep_for(std::chrono::seconds(15));
     }
 
-    // Wait for completion
-    for (int i = 0; i < timeout_secs && !g_print_done; i++) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+    // Wait up to timeout_secs for the library's completion callback.
+    // In practice the callback may never fire (printer accepts via MQTT but
+    // doesn't echo back), so we don't block the full timeout — if fp_start_print
+    // returned success (0 or -1) we exit as soon as the task is submitted.
+    if (ret != 0 && ret != -1) {
+        // Only wait for callback if start_print returned an unexpected code
+        for (int i = 0; i < timeout_secs && !g_print_done; i++) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
     }
 
     // Structured output
@@ -865,21 +871,22 @@ static int cmd_print(const std::string& token_json_raw, const std::string& devic
     int exit_code = 1;
     if (g_print_result == 0) { result_str = "success"; exit_code = 0; }
     else if (ret == 0 || ret == -1) {
-        // ret=0 means library returned success, ret=-1 might mean printer busy
-        // but task was likely created
         result_str = (ret == 0) ? "success" : "sent";
-        exit_code = (ret == 0) ? 0 : 0; // -1 often means task created but printer timeout
+        exit_code = 0;
     }
     else { result_str = "error"; }
 
     if (saved_out >= 0) { dup2(saved_out, STDOUT_FILENO); close(saved_out); }
+    fflush(stdout);
     printf("{\"result\":\"%s\",\"return_code\":%d,\"print_result\":%d,"
            "\"device_id\":\"%s\",\"file\":\"%s\"}\n",
            result_str, ret, g_print_result.load(),
            device_id.c_str(), file_3mf.c_str());
+    fflush(stdout);
 
-    cleanup();
-    return exit_code;
+    // destroy_agent and dlclose can hang indefinitely waiting for MQTT threads.
+    // Use _exit() to bypass atexit handlers and skip cleanup entirely.
+    _exit(exit_code);
 }
 
 // ---------------------------------------------------------------------------
