@@ -277,10 +277,17 @@ def cloud_print(
                 pass
 
     if result.stderr:
-        log.debug("Bridge stderr: %s", result.stderr.strip())
+        # Always show stderr on non-zero exit so errors are visible without --verbose
+        if result.returncode != 0:
+            log.warning("Bridge stderr:\n%s", result.stderr.strip())
+        else:
+            log.debug("Bridge stderr: %s", result.stderr.strip())
 
     try:
-        return json.loads(result.stdout.strip())
+        data = json.loads(result.stdout.strip())
+        if data.get("return_code", 0) != 0 and result.stderr:
+            log.warning("Bridge stderr:\n%s", result.stderr.strip())
+        return data
     except json.JSONDecodeError:
         raise RuntimeError(
             f"Bridge returned non-JSON output (exit {result.returncode}): "
