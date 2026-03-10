@@ -234,13 +234,10 @@ def cloud_print(
     if not token_file.exists():
         raise FileNotFoundError(f"Token file not found: {token_file}")
 
-    # Build AMS mapping from 3MF + live printer AMS state (if available).
-    # params.ams_mapping2 populates the REST task body's amsMapping2 field.
-    # params.ams_mapping_info is intentionally left empty — setting it causes the
-    # library to generate a conflicting task body and the server returns 403.
-    ams_data = _build_ams_mapping(threemf_path, ams_trays=ams_trays)
-    ams_mapping2_str = json.dumps(ams_data["amsMapping2"]) if ams_data["amsMapping2"] else ""
-    log.debug("AMS mapping2: %s", ams_mapping2_str)
+    # Note: params.ams_mapping, ams_mapping2, ams_mapping_info are left at bridge defaults.
+    # Passing non-empty values for these params changes the library's internal behaviour
+    # in ways that cause hangs or 403 errors. The library handles AMS mapping internally
+    # once it subscribes to MQTT and receives the printer's AMS state.
 
     args = [
         "print",
@@ -252,8 +249,6 @@ def cloud_print(
         "--timeout",
         str(timeout),
     ]
-    if ams_mapping2_str:
-        args.extend(["--ams-mapping2", ams_mapping2_str])
 
     # Auto-generate config-only 3MF if not provided.
     # The v02.05 library requires a separate config_filename (3MF without gcode).
