@@ -11,7 +11,7 @@
 
 FROM --platform=linux/amd64 ubuntu:24.04
 
-LABEL org.opencontainers.image.description="Bambu Lab cloud print bridge (headless)"
+LABEL org.opencontainers.image.description="Bambu Lab cloud print bridge (headless, libbambu_networking v02.05.00.56)"
 
 # Build tools + runtime deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -21,14 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcurl4 \
     && rm -rf /var/lib/apt/lists/*
 
-# Download libbambu_networking.so (slicer plugin v02.05)
-ARG BAMBU_LIB_URL=https://public-cdn.bambulab.com/upgrade/studio/plugins/01.09.06.63/linux/bambu_networking_plugins.zip
-RUN curl -fSL -o /tmp/plugins.zip "$BAMBU_LIB_URL" \
-    && mkdir -p /tmp/bambu_plugin \
-    && cd /tmp/bambu_plugin \
-    && python3 -c "import zipfile; zipfile.ZipFile('/tmp/plugins.zip').extractall('.')" \
-    && rm /tmp/plugins.zip \
-    && ls -la /tmp/bambu_plugin/
+# Copy bundled libbambu_networking.so (slicer plugin v02.05.00.56)
+# Source: https://public-cdn.bblmw.com/upgrade/studio/plugins/02.05.00.56/8b2ace6050/linux_02.05.00.56.zip
+# (Bambu CDN URLs expire/rotate; .so is bundled to ensure reproducible builds)
+COPY scripts/libbambu_networking.so /tmp/bambu_plugin/libbambu_networking.so
 
 # Download slicer TLS certificate (for MQTT to *.bambulab.com)
 RUN mkdir -p /tmp/bambu_agent/cert /tmp/bambu_agent/log /tmp/bambu_agent/config \
