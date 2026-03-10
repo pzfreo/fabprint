@@ -410,7 +410,7 @@ def _build_ams_mapping(threemf_path: Path, plate_index: int = 1) -> dict:
                 ps = json.loads(z.read("Metadata/project_settings.config"))
                 filament_colour = ps.get("filament_colour", [])
                 total_slots = len(filament_colour)
-                filament_setting_ids = ps.get("filament_settings_id", [])
+                filament_setting_ids = ps.get("filament_settings_id", [])  # noqa: F841
 
             # Get plate filament usage from slice_info.config
             filament_by_id = {}
@@ -481,7 +481,7 @@ def _build_ams_mapping(threemf_path: Path, plate_index: int = 1) -> dict:
 
 
 def _poll_task_status(
-    session: "requests.Session",
+    session: requests.Session,  # noqa: F821
     task_id: int,
     device_id: str = "",
     *,
