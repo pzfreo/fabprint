@@ -82,9 +82,7 @@ def _get_private_key():
     if _bambu_private_key is None:
         from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-        _bambu_private_key = load_pem_private_key(
-            BAMBU_PRIVATE_KEY_PEM.encode(), password=None
-        )
+        _bambu_private_key = load_pem_private_key(BAMBU_PRIVATE_KEY_PEM.encode(), password=None)
     return _bambu_private_key
 
 
@@ -149,8 +147,11 @@ def _run_bridge(
         # permission issues; individual file mounts via /Users (which Docker
         # Desktop always shares) are more reliable.
         cmd = [
-            "docker", "run", "--rm",
-            "--platform", "linux/amd64",
+            "docker",
+            "run",
+            "--rm",
+            "--platform",
+            "linux/amd64",
         ]
         docker_args = []
         for arg in args:
@@ -445,28 +446,32 @@ def _build_ams_mapping(threemf_path: Path, plate_index: int = 1) -> dict:
             color = f.get("color", "#000000").lstrip("#").upper() + "FF"
             fil_type = f.get("type", "")
             tray_idx = f.get("tray_info_idx", "")
-            result["amsDetailMapping"].append({
-                "ams": slot_idx,
-                "amsId": 0,
-                "slotId": slot_idx,
-                "nozzleId": 0,
-                "sourceColor": color,
-                "targetColor": color,
-                "filamentType": fil_type,
-                "targetFilamentType": fil_type,
-                "filamentId": tray_idx,
-            })
+            result["amsDetailMapping"].append(
+                {
+                    "ams": slot_idx,
+                    "amsId": 0,
+                    "slotId": slot_idx,
+                    "nozzleId": 0,
+                    "sourceColor": color,
+                    "targetColor": color,
+                    "filamentType": fil_type,
+                    "targetFilamentType": fil_type,
+                    "filamentId": tray_idx,
+                }
+            )
             result["amsMapping"].append(slot_idx)
             result["amsMapping2"].append({"amsId": 0, "slotId": slot_idx})
         else:
-            result["amsDetailMapping"].append({
-                "ams": -1,
-                "amsId": 255,
-                "slotId": 255,
-                "filamentId": "",
-                "filamentType": "",
-                "targetColor": "",
-            })
+            result["amsDetailMapping"].append(
+                {
+                    "ams": -1,
+                    "amsId": 255,
+                    "slotId": 255,
+                    "filamentId": "",
+                    "filamentType": "",
+                    "targetColor": "",
+                }
+            )
             result["amsMapping"].append(-1)
             result["amsMapping2"].append({"amsId": 255, "slotId": 255})
 
@@ -505,7 +510,9 @@ def _poll_task_status(
                 if task_status != 1:  # No longer pending
                     log.info(
                         "Task %s status changed to %s (failedType=%s)",
-                        task_id, task_status, task.get("failedType", 0),
+                        task_id,
+                        task_status,
+                        task.get("failedType", 0),
                     )
                     return task
         except Exception as e:
@@ -522,12 +529,18 @@ def _poll_task_status(
                             pj = dev.get("print_job", "")
                             log.debug(
                                 "Task %s poll %d/%d: task_status=%s, printer=%s (job=%s)",
-                                task_id, attempt + 1, max_polls, task_status, ps, pj,
+                                task_id,
+                                attempt + 1,
+                                max_polls,
+                                task_status,
+                                ps,
+                                pj,
                             )
                             if str(pj) == str(task_id) and ps in ("PREPARE", "RUNNING"):
                                 log.info(
                                     "Task %s dispatched! Printer is %s",
-                                    task_id, ps,
+                                    task_id,
+                                    ps,
                                 )
                                 return {
                                     "status": 2 if ps == "RUNNING" else 1,
@@ -540,7 +553,10 @@ def _poll_task_status(
         else:
             log.debug(
                 "Task %s poll %d/%d: task_status=%s",
-                task_id, attempt + 1, max_polls, task_status,
+                task_id,
+                attempt + 1,
+                max_polls,
+                task_status,
             )
 
         if attempt < max_polls - 1:
@@ -593,8 +609,7 @@ def cloud_print_http(
         import requests
     except ImportError:
         raise RuntimeError(
-            "Pure Python cloud print requires 'requests'. "
-            "Install with: pip install fabprint[cloud]"
+            "Pure Python cloud print requires 'requests'. Install with: pip install fabprint[cloud]"
         )
 
     if not threemf_path.exists():
@@ -620,9 +635,7 @@ def cloud_print_http(
 
     def _check(resp: "requests.Response", step: str) -> dict:
         if not resp.ok:
-            raise RuntimeError(
-                f"Cloud HTTP {step} failed ({resp.status_code}): {resp.text[:300]}"
-            )
+            raise RuntimeError(f"Cloud HTTP {step} failed ({resp.status_code}): {resp.text[:300]}")
         return resp.json()
 
     # Step 1: Create project
@@ -792,9 +805,7 @@ def cloud_print_http(
     log.info("Task %s final status: %s", task_id, status_name)
 
     if status_code == 4:
-        log.error(
-            "Task FAILED: failedType=%s", final_status.get("failedType", "unknown")
-        )
+        log.error("Task FAILED: failedType=%s", final_status.get("failedType", "unknown"))
 
     return {
         "result": "success" if status_code in (1, 2, 3) else "failed",
