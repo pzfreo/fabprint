@@ -144,46 +144,37 @@ def _run_bridge(
     use_docker = bridge is None or platform.system() == "Darwin"
 
     if use_docker:
-        # Copy input files to a staging dir so Docker sees plain Linux paths.
-        # Bind-mounting macOS paths (e.g. /var/folders/...) into a Rosetta
-        # container triggers ENOSYS for statx() inside boost::filesystem.
-        import shutil
-        import tempfile
+        # Mount each input file individually using its realpath.
+        # Directory mounts on macOS/Docker Desktop have persistent symlink and
+        # permission issues; individual file mounts via /Users (which Docker
+        # Desktop always shares) are more reliable.
+        cmd = [
+            "docker", "run", "--rm",
+            "--platform", "linux/amd64",
+        ]
+        docker_args = []
+        for arg in args:
+            if os.path.exists(arg):
+                real = os.path.realpath(arg)
+                container_path = f"/input/{os.path.basename(real)}"
+                cmd.extend(["-v", f"{real}:{container_path}:ro"])
+                docker_args.append(container_path)
+            else:
+                docker_args.append(arg)
 
-        # Resolve symlinks: on macOS /tmp -> /private/tmp and /var/folders ->
-        # /private/var/folders. Docker Desktop shares /private, not the symlinks.
-        staging = os.path.realpath(tempfile.mkdtemp(prefix="fabprint_bridge_"))
-        os.chmod(staging, 0o755)
-        try:
-            docker_args = []
-            for arg in args:
-                if os.path.exists(arg):
-                    dst = os.path.join(staging, os.path.basename(arg))
-                    shutil.copy2(arg, dst)
-                    os.chmod(dst, 0o644)  # Docker runs as different user
-                    docker_args.append(f"/data/{os.path.basename(arg)}")
-                else:
-                    docker_args.append(arg)
+        cmd.append(DOCKER_IMAGE)
+        cmd.extend(docker_args)
 
-            cmd = [
-                "docker", "run", "--rm",
-                "--platform", "linux/amd64",
-                "-v", f"{staging}:/data",
-                DOCKER_IMAGE,
-            ] + docker_args
+        if verbose:
+            cmd.append("-v")
 
-            if verbose:
-                cmd.append("-v")
-
-            log.debug("Running: %s", " ".join(cmd))
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
+        log.debug("Running: %s", " ".join(cmd))
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
         return result
     else:
         cmd = [bridge] + args
