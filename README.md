@@ -184,7 +184,8 @@ fabprint print <config> --gcode output/plate_1.gcode  # Send pre-sliced gcode
 fabprint print <config> --upload-only  # Upload without starting print
 fabprint login                    # Login to Bambu Cloud and cache token
 fabprint watch                    # Live dashboard for all printers
-fabprint status <config>          # Query printer status (single printer)
+fabprint status                   # Query status of all printers
+fabprint status --serial 01P...  # Query a specific printer
 fabprint profiles list            # List available slicer profiles
 fabprint profiles pin <config>    # Pin profiles for reproducible builds
 ```
