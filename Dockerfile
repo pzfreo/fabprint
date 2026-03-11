@@ -1,8 +1,8 @@
 # Multi-stage build: OrcaSlicer CLI + fabprint
 #
 # Usage:
-#   docker build --build-arg ORCA_VERSION=2.3.1 -t fabprint:orca-2.3.1 .
-#   docker run --rm -v "$PWD:/project" fabprint:orca-2.3.1 slice fabprint.toml
+#   docker build --build-arg ORCA_VERSION=2.3.1 -t fabprint/fabprint:2.3.1 .
+#   docker run --rm -v "$PWD:/project" fabprint/fabprint:2.3.1 slice fabprint.toml
 
 # ---------------------------------------------------------------------------
 # Stage 1: Extract OrcaSlicer from AppImage (x86_64 only)

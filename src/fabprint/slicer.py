@@ -17,7 +17,7 @@ from fabprint.profiles import resolve_profile_data
 
 log = logging.getLogger(__name__)
 
-DOCKERHUB_REPO = "pzfreo/fabprint-orca"
+DOCKERHUB_REPO = "fabprint/fabprint"
 DEFAULT_DOCKER_IMAGE = f"{DOCKERHUB_REPO}:latest"
 
 

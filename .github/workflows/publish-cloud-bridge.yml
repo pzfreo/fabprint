@@ -81,8 +81,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            pzfreo/fabprint-cloud-bridge:latest
-            pzfreo/fabprint-cloud-bridge:${{ steps.version.outputs.version }}
+            fabprint/cloud-bridge:latest
+            fabprint/cloud-bridge:${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -95,8 +95,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            pzfreo/fabprint-orca:latest
-            pzfreo/fabprint-orca:${{ steps.version.outputs.version }}
+            fabprint/fabprint:latest
+            fabprint/fabprint:${{ steps.version.outputs.version }}
           build-args: ORCA_VERSION=2.3.1
           cache-from: type=gha
           cache-to: type=gha,mode=max
