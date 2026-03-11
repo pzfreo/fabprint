@@ -434,24 +434,30 @@ def _fix_sliced_3mf(path: Path) -> None:
         # Generate placeholder thumbnails
         thumb = _generate_plate_thumbnail(256, 256)
         thumb_small = _generate_plate_thumbnail(128, 128)
-        existing_files = set(zin.namelist())
+        # Thumbnail files to always replace — OrcaSlicer writes empty/broken
+        # thumbnails in headless environments (no OpenGL), so always use ours.
+        thumbnail_overrides = {
+            "Metadata/plate_1.png": thumb,
+            "Metadata/plate_no_light_1.png": thumb,
+            "Metadata/plate_1_small.png": thumb_small,
+        }
 
         # Rewrite the zip
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
             for item in zin.infolist():
-                if item.filename == "Metadata/project_settings.config":
+                if item.filename in thumbnail_overrides:
+                    pass  # replaced below
+                elif item.filename == "Metadata/project_settings.config":
                     zout.writestr(item, json.dumps(ps, indent=4))
                 elif item.filename == "Metadata/model_settings.config" and ms_patched:
                     zout.writestr(item, ms_patched)
                 else:
                     zout.writestr(item, zin.read(item.filename))
 
-            # Add thumbnails if not already present
-            if "Metadata/plate_1.png" not in existing_files:
-                zout.writestr("Metadata/plate_1.png", thumb)
-            if "Metadata/plate_1_small.png" not in existing_files:
-                zout.writestr("Metadata/plate_1_small.png", thumb_small)
+            # Always write generated thumbnails (replace OrcaSlicer's broken ones)
+            for fname, data in thumbnail_overrides.items():
+                zout.writestr(fname, data)
 
     path.write_bytes(buf.getvalue())
     log.info("Patched sliced 3mf for Bambu Connect compatibility")
