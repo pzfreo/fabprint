@@ -359,8 +359,38 @@ def _cmd_status(args: argparse.Namespace) -> None:
     total_layers = status.get("total_layer_num", 0)
     remaining = status.get("mc_remaining_time", 0)
 
+    # Print stage descriptions (from Bambu firmware mc_print_stage values)
+    _PRINT_STAGES = {
+        "0": "printing",
+        "1": "auto bed leveling",
+        "2": "heatbed preheating",
+        "3": "sweeping XY mech mode",
+        "4": "changing filament",
+        "5": "M400 pause",
+        "6": "filament runout pause",
+        "7": "heating hotend",
+        "8": "calibrating extrusion",
+        "9": "scanning bed surface",
+        "10": "inspecting first layer",
+        "11": "identifying build plate type",
+        "12": "calibrating micro lidar",
+        "13": "homing toolhead",
+        "14": "cleaning nozzle tip",
+        "17": "calibrating extrusion flow",
+        "18": "vibration compensation",
+        "19": "motor noise calibration",
+    }
+
     print(f"  State:    {state}")
+
+    task_name = status.get("subtask_name", "")
+    if task_name:
+        print(f"  Task:     {task_name}")
+
     if state not in ("IDLE", "FINISH", "FAILED", ""):
+        stage = _PRINT_STAGES.get(str(status.get("mc_print_stage", "")), "")
+        if stage:
+            print(f"  Stage:    {stage}")
         print(f"  Progress: {percent}%", end="")
         if total_layers:
             print(f" (layer {layer}/{total_layers})", end="")
@@ -369,13 +399,30 @@ def _cmd_status(args: argparse.Namespace) -> None:
             h, m = divmod(int(remaining), 60)
             print(f"  Remaining: {h}h {m}m" if h else f"  Remaining: {m}m")
 
+    # Temperatures
+    nozzle = status.get("nozzle_temper", 0)
+    nozzle_target = status.get("nozzle_target_temper", 0)
+    bed = status.get("bed_temper", 0)
+    bed_target = status.get("bed_target_temper", 0)
+    nozzle_str = f"{nozzle:.0f}°C"
+    if nozzle_target:
+        nozzle_str += f" → {nozzle_target:.0f}°C"
+    bed_str = f"{bed:.0f}°C"
+    if bed_target:
+        bed_str += f" → {bed_target:.0f}°C"
+    print(f"  Nozzle:   {nozzle_str}")
+    print(f"  Bed:      {bed_str}")
+
     ams_trays = parse_ams_trays(status)
     if ams_trays:
         tray_now_raw = int(status.get("ams", {}).get("tray_now", 255))
         print("  AMS:")
         for t in ams_trays:
             active = " <-- printing" if t["phys_slot"] == tray_now_raw else ""
-            print(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  #{t['color']}{active}")
+            c = t["color"]
+            r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+            swatch = f"\033[48;2;{r};{g};{b}m  \033[0m"
+            print(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  {swatch} #{c}{active}")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:
