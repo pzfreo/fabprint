@@ -264,6 +264,8 @@ def cloud_print(
         )
         tmp_config.write(config_bytes)
         tmp_config.close()
+        if ams_trays:
+            _patch_config_3mf_ams_colors(Path(tmp_config.name), threemf_path, ams_trays)
         args.extend(["--config-3mf", tmp_config.name])
         log.debug("Auto-generated config 3MF: %s (%d bytes)", tmp_config.name, len(config_bytes))
 
@@ -365,6 +367,98 @@ def cloud_cancel(
         raise RuntimeError(
             f"Bridge returned non-JSON output (exit {result.returncode}): {result.stdout[:200]}"
         )
+
+
+def _patch_config_3mf_ams_colors(
+    config_path: Path,
+    source_3mf: Path,
+    ams_trays: list[dict],
+) -> None:
+    """Patch filament colors in the config 3MF to match actual AMS tray colors.
+
+    The library matches virtual filament slots to AMS trays by type+color.
+    If the gcode was sliced with a default/generic filament color that doesn't
+    match the AMS tray color, the library's matching fails and the printer
+    shows "Failed to get AMS mapping table". This patches slice_info.config
+    and project_settings.config so colors match the physical AMS trays.
+    """
+    try:
+        with zipfile.ZipFile(config_path, "r") as z:
+            file_data = {name: z.read(name) for name in z.namelist()}
+    except Exception as e:
+        log.debug("Could not read config 3MF for color patching: %s", e)
+        return
+
+    if "Metadata/slice_info.config" not in file_data:
+        return
+
+    try:
+        root = ET.fromstring(file_data["Metadata/slice_info.config"])
+    except Exception as e:
+        log.debug("Could not parse slice_info.config: %s", e)
+        return
+
+    plate_el = root.find("plate")
+    if plate_el is None:
+        return
+
+    filament_by_id = {}
+    for f in plate_el.findall("filament"):
+        fid = int(f.get("id", "1"))
+        filament_by_id[fid] = f
+
+    if not filament_by_id:
+        return
+
+    total_slots = max(filament_by_id.keys())
+    phys_by_id = _build_ams_mapping_from_state(filament_by_id, total_slots, ams_trays)
+    tray_by_phys = {t["phys_slot"]: t for t in ams_trays}
+
+    # Patch color attributes in slice_info.config
+    changed = False
+    for f in plate_el.findall("filament"):
+        fid = int(f.get("id", "1"))
+        if fid - 1 < len(phys_by_id):
+            phys_slot = phys_by_id[fid - 1]
+            tray = tray_by_phys.get(phys_slot)
+            if tray and phys_slot != 255:
+                new_color = "#" + tray["color"]
+                if f.get("color", "") != new_color:
+                    log.debug(
+                        "Patching filament %d color: %s → %s (AMS slot %d %s)",
+                        fid, f.get("color", ""), new_color, phys_slot, tray["type"],
+                    )
+                    f.set("color", new_color)
+                    changed = True
+
+    if not changed:
+        return
+
+    file_data["Metadata/slice_info.config"] = ET.tostring(root, encoding="unicode").encode()
+
+    # Also patch project_settings.config filament_colour array
+    if "Metadata/project_settings.config" in file_data:
+        try:
+            ps = json.loads(file_data["Metadata/project_settings.config"])
+            colours = list(ps.get("filament_colour", []))
+            for fid in sorted(filament_by_id.keys()):
+                idx = fid - 1
+                if idx < len(colours) and idx < len(phys_by_id):
+                    phys_slot = phys_by_id[idx]
+                    tray = tray_by_phys.get(phys_slot)
+                    if tray and phys_slot != 255:
+                        colours[idx] = "#" + tray["color"]
+            ps["filament_colour"] = colours
+            file_data["Metadata/project_settings.config"] = json.dumps(ps).encode()
+        except Exception as e:
+            log.debug("Could not patch project_settings.config colours: %s", e)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+        for name, data in file_data.items():
+            zout.writestr(name, data)
+    config_path.write_bytes(buf.getvalue())
+    log.debug("Patched config 3MF filament colors to match AMS trays")
 
 
 def _strip_gcode_from_3mf(path: Path) -> bytes:
