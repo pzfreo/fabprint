@@ -142,12 +142,15 @@ def _run_bridge(
     use_docker = bridge is None or platform.system() == "Darwin"
 
     if use_docker:
-        # Pull latest image first so progress is visible (not swallowed by capture_output).
-        print("  Checking for Docker image updates...", flush=True)
-        subprocess.run(
+        # Pull latest image quietly — only log on actual update.
+        pull = subprocess.run(
             ["docker", "pull", DOCKER_IMAGE],
+            capture_output=True,
+            text=True,
             check=False,
         )
+        if pull.returncode == 0 and "Downloaded newer image" in pull.stdout:
+            log.info("Updated Docker image %s", DOCKER_IMAGE)
 
         # Mount each input file individually using its realpath.
         # Directory mounts on macOS/Docker Desktop have persistent symlink and
