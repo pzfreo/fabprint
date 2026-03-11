@@ -369,7 +369,10 @@ def _cmd_status(args: argparse.Namespace) -> None:
         print("  AMS:")
         for t in ams_trays:
             active = " <-- printing" if t["phys_slot"] == tray_now_raw else ""
-            print(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  #{t['color']}{active}")
+            c = t["color"]
+            r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+            swatch = f"\033[48;2;{r};{g};{b}m  \033[0m"
+            print(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  {swatch} #{c}{active}")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:
