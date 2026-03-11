@@ -34,7 +34,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 BRIDGE_NAME = "bambu_cloud_bridge"
-DOCKER_IMAGE = "fabprint/fabprint-cloud-bridge"
+DOCKER_IMAGE = "pzfreo/fabprint-cloud-bridge"
 BASE_URL = "https://api.bambulab.com"
 
 # BambuConnect X.509 certificate ID and private key for signing print tasks.
