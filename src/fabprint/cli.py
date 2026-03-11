@@ -398,7 +398,11 @@ def _cmd_status(args: argparse.Namespace) -> None:
         print(f"  Task:     {task_name}")
 
     if state not in ("IDLE", "FINISH", "FAILED", ""):
-        stage = _PRINT_STAGES.get(str(status.get("mc_print_stage", "")), "")
+        stage_id = str(status.get("mc_print_stage", ""))
+        if layer and int(layer) > 0:
+            stage = "printing"
+        else:
+            stage = _PRINT_STAGES.get(stage_id, "")
         if stage:
             print(f"  Stage:    {stage}")
         print(f"  Progress: {percent}%", end="")
@@ -469,7 +473,14 @@ def _render_printer(status: dict, name: str, serial: str) -> list[str]:
         lines.append(f"  Task:     {task_name}")
 
     if state not in ("IDLE", "FINISH", "FAILED", ""):
-        stage = _PRINT_STAGES.get(str(status.get("mc_print_stage", "")), "")
+        layer = status.get("layer_num", 0)
+        stage_id = str(status.get("mc_print_stage", ""))
+        # mc_print_stage doesn't update reliably during printing —
+        # override with "printing" when we have layer progress.
+        if layer and int(layer) > 0:
+            stage = "printing"
+        else:
+            stage = _PRINT_STAGES.get(stage_id, "")
         if stage:
             lines.append(f"  Stage:    {stage}")
         percent = status.get("mc_percent", 0)
