@@ -252,15 +252,11 @@ def cloud_print(
     if ams_trays:
         ams_data = _build_ams_mapping(threemf_path, ams_trays=ams_trays)
         raw = ams_data["amsMapping"]
-        if raw:
-            # Strip trailing 255s (unused slots) to keep the array compact,
-            # but keep leading 255s so slot indices stay correct.
-            bridge_mapping = raw[:]
-            while bridge_mapping and bridge_mapping[-1] == 255:
-                bridge_mapping.pop()
-            if bridge_mapping and any(v != 255 for v in bridge_mapping):
-                args.extend(["--ams-mapping", json.dumps(bridge_mapping)])
-                log.debug("AMS slot mapping: %s", bridge_mapping)
+        if raw and any(v >= 0 for v in raw):
+            # Pass full mapping including -1 sentinels for unused slots,
+            # matching BambuConnect's format: e.g. [-1, -1, 2, -1, -1]
+            args.extend(["--ams-mapping", json.dumps(raw)])
+            log.debug("AMS slot mapping: %s", raw)
 
     # Auto-generate config-only 3MF if not provided.
     # The v02.05 library requires a separate config_filename (3MF without gcode).
@@ -567,12 +563,6 @@ def _build_ams_mapping(
     if not filament_by_id:
         return result
 
-    # Cap at highest used filament id — OrcaSlicer may define extra default
-    # slots (e.g. 5 for P1S) that duplicate the last loaded filament.
-    max_loaded = max(filament_by_id.keys())
-    if total_slots > max_loaded:
-        total_slots = max_loaded
-
     log.debug(
         "3MF filament slots: plate=%s, total=%d, settings=%s",
         list(filament_by_id.keys()),
@@ -583,19 +573,11 @@ def _build_ams_mapping(
     # Physical slot assignment: use live AMS state when available, else sequential.
     phys_by_id = _build_ams_mapping_from_state(filament_by_id, total_slots, ams_trays or [])
 
-    # Build lookups from physical slot and filament type → AMS tray
+    # Build lookup from physical slot → AMS tray for targetColor resolution
     tray_by_phys = {t["phys_slot"]: t for t in (ams_trays or [])}
-    # Group AMS trays by type for matching against filament setting names
-    tray_by_type: dict[str, list[dict]] = {}
-    for t in ams_trays or []:
-        typ = t.get("type", "")
-        if typ:
-            tray_by_type.setdefault(typ, []).append(t)
-    # Sort type keys longest-first so "PETG-CF" matches before "PLA" etc.
-    type_keys_sorted = sorted(tray_by_type.keys(), key=len, reverse=True)
 
     # All arrays are full-length (one entry per virtual slot), matching BambuConnect's format.
-    # Unused slots get sentinel values: -1 / {255,255} / "" — not just the used filaments.
+    # Unused slots get sentinel -1 / {255,255} / "" — matching BC's captured payload.
     detail = []
     mapping = []
     mapping2 = []
@@ -628,53 +610,20 @@ def _build_ams_mapping(
             mapping2.append({"amsId": phys_slot // 4, "slotId": phys_slot % 4})
             setting_ids.append(tray_idx)
         else:
-            # Slot not used on this plate — try matching via filament_settings_id
-            # (e.g. "Generic ABS @base") so loaded-but-unused filaments still get
-            # correct physical slots. Without this, single-material prints produce
-            # an incomplete mapping that triggers "Failed to get AMS mapping table".
-            n = len(filament_setting_ids)
-            setting_id = filament_setting_ids[slot_idx] if slot_idx < n else ""
-            # Match by finding which AMS tray type appears in the setting name
-            tray = None
-            if setting_id:
-                for typ in type_keys_sorted:
-                    if typ in setting_id:
-                        candidates = tray_by_type[typ]
-                        tray = candidates[0]
-                        break
-            if tray:
-                phys_slot = tray["phys_slot"]
-                target_color = tray["color"] + "FF"
-                detail.append(
-                    {
-                        "ams": phys_slot,
-                        "amsId": phys_slot // 4,
-                        "slotId": phys_slot % 4,
-                        "nozzleId": 0,
-                        "sourceColor": target_color,
-                        "targetColor": target_color,
-                        "filamentType": tray.get("type", ""),
-                        "targetFilamentType": tray.get("type", ""),
-                        "filamentId": setting_id,
-                    }
-                )
-                mapping.append(phys_slot)
-                mapping2.append({"amsId": phys_slot // 4, "slotId": phys_slot % 4})
-                setting_ids.append(setting_id)
-            else:
-                detail.append(
-                    {
-                        "ams": -1,
-                        "amsId": 255,
-                        "slotId": 255,
-                        "filamentId": "",
-                        "filamentType": "",
-                        "targetColor": "",
-                    }
-                )
-                mapping.append(255)
-                mapping2.append({"amsId": 255, "slotId": 255})
-                setting_ids.append("")
+            # Unused slot — use -1 sentinel matching BambuConnect's format.
+            detail.append(
+                {
+                    "ams": -1,
+                    "amsId": 255,
+                    "slotId": 255,
+                    "filamentId": "",
+                    "filamentType": "",
+                    "targetColor": "",
+                }
+            )
+            mapping.append(-1)
+            mapping2.append({"amsId": 255, "slotId": 255})
+            setting_ids.append("")
 
     result["amsDetailMapping"] = detail
     result["amsMapping"] = mapping
@@ -725,11 +674,11 @@ def _build_ams_mapping_from_state(
 ) -> list[int]:
     """Match virtual filament slots to physical AMS trays.
 
-    Returns ams_mapping list of length total_slots (255 for unused slots).
+    Returns ams_mapping list of length total_slots (-1 for unused slots).
     Matches first by filament type, then by color if multiple candidates.
     Falls back to sequential slot 0, 1, 2… if no AMS state available.
     """
-    am = [255] * total_slots
+    am = [-1] * total_slots
     used = set()  # physical slots already assigned
 
     for seq_idx, filament_id in enumerate(sorted(filament_by_id.keys())):
