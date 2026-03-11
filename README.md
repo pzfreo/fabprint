@@ -138,14 +138,16 @@ Credentials can also be set via environment variables, which override config val
 
 ### `[slicer.slots]`
 
-Pin filaments to specific AMS slots. Useful for direct-feed filaments (e.g. TPU) that bypass the AMS:
+Map slot numbers to filament profiles. Useful when you need specific slot placement (e.g. direct feed) or when parts reference slots by number:
 
 ```toml
 [slicer.slots]
-"Generic TPU @base" = 5  # direct feed (slot 5 on P1S)
+1 = "Generic PLA @base"
+3 = "Generic PETG-CF @base"
+5 = "Generic TPU @base"        # direct feed (bypass AMS)
 ```
 
-Filaments not listed in `[slicer.slots]` are auto-assigned to the next free slot.
+Parts can then use `filament = 3` to target a specific slot, or `filament = "Generic PLA @base"` to let the slicer pick. String-referenced filaments not in the slots map are auto-assigned to the next free slot.
 
 ### `[slicer.overrides]`
 

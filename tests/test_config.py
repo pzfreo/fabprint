@@ -560,16 +560,16 @@ filament = ""
         load_config(path)
 
 
-# --- slicer.slots ---
+# --- slicer.slots (slot → profile) ---
 
 
-def test_slots_pin_to_direct_feed(tmp_path):
-    """Pin TPU to slot 5 (direct feed), PLA auto-assigned to slot 1."""
+def test_slots_direct_feed(tmp_path):
+    """Slot map: TPU on slot 5 (direct feed), PLA auto-assigned to slot 1."""
     path = _write_toml(
         tmp_path,
         """
 [slicer.slots]
-"Generic TPU @base" = 5
+5 = "Generic TPU @base"
 
 [[parts]]
 file = "frame.stl"
@@ -583,74 +583,82 @@ filament = "Generic TPU @base"
     )
     cfg = load_config(path)
     assert cfg.parts[0].filament == 1  # PLA auto-assigned
-    assert cfg.parts[1].filament == 5  # TPU pinned
+    assert cfg.parts[1].filament == 5  # TPU from slots map
     assert cfg.slicer.filaments[0] == "Generic PLA @base"
     assert cfg.slicer.filaments[4] == "Generic TPU @base"
     assert len(cfg.slicer.filaments) == 5
-    # Gaps filled with first filament
-    assert cfg.slicer.filaments[1] == "Generic PLA @base"
 
 
-def test_slots_single_filament_pinned(tmp_path):
-    """Single filament pinned to slot 5."""
+def test_slots_int_ref_with_map(tmp_path):
+    """Integer filament ref resolved via slots map (case 1: 'use slot 3')."""
     path = _write_toml(
         tmp_path,
         """
 [slicer.slots]
-"Generic TPU @base" = 5
+1 = "Generic PLA @base"
+3 = "Generic PETG-CF @base"
+
+[[parts]]
+file = "frame.stl"
+filament = 3
+""",
+        create_files=["frame.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 3
+    assert cfg.slicer.filaments[0] == "Generic PLA @base"
+    assert cfg.slicer.filaments[2] == "Generic PETG-CF @base"
+
+
+def test_slots_mixed_int_and_string(tmp_path):
+    """Mix int + string refs when slots map covers the int refs."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer.slots]
+3 = "Generic PETG-CF @base"
+5 = "Generic TPU @base"
+
+[[parts]]
+file = "frame.stl"
+filament = 3
 
 [[parts]]
 file = "insert.stl"
 filament = "Generic TPU @base"
 """,
-        create_files=["insert.stl"],
+        create_files=["frame.stl", "insert.stl"],
     )
     cfg = load_config(path)
-    assert cfg.parts[0].filament == 5
-    assert len(cfg.slicer.filaments) == 5
-    assert cfg.slicer.filaments[4] == "Generic TPU @base"
+    assert cfg.parts[0].filament == 3
+    assert cfg.parts[1].filament == 5
 
 
-def test_slots_no_conflict_with_auto(tmp_path):
-    """Pinned slot doesn't collide with auto-assigned slots."""
+def test_slots_int_ref_not_in_map(tmp_path):
+    """Integer ref to a slot not in the map -> error."""
     path = _write_toml(
         tmp_path,
         """
 [slicer.slots]
-"Generic PETG-CF @base" = 3
+1 = "Generic PLA @base"
 
 [[parts]]
-file = "a.stl"
-filament = "Generic PLA @base"
-
-[[parts]]
-file = "b.stl"
-filament = "Generic ASA @base"
-
-[[parts]]
-file = "c.stl"
-filament = "Generic PETG-CF @base"
+file = "frame.stl"
+filament = 3
 """,
-        create_files=["a.stl", "b.stl", "c.stl"],
+        create_files=["frame.stl"],
     )
-    cfg = load_config(path)
-    assert cfg.parts[0].filament == 1  # PLA
-    assert cfg.parts[1].filament == 2  # ASA
-    assert cfg.parts[2].filament == 3  # PETG-CF pinned
-    assert cfg.slicer.filaments == [
-        "Generic PLA @base",
-        "Generic ASA @base",
-        "Generic PETG-CF @base",
-    ]
+    with pytest.raises(ValueError, match="slot 3 not defined"):
+        load_config(path)
 
 
-def test_slots_unused_filament_error(tmp_path):
-    """Slot pinning a filament not used by any part -> error."""
+def test_slots_bad_slot_number(tmp_path):
+    """Slot number must be >= 1."""
     path = _write_toml(
         tmp_path,
         """
 [slicer.slots]
-"Generic ABS @base" = 3
+0 = "Generic PLA @base"
 
 [[parts]]
 file = "cube.stl"
@@ -658,23 +666,31 @@ filament = "Generic PLA @base"
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="not used by any part"):
+    with pytest.raises(ValueError, match="slot must be >= 1"):
         load_config(path)
 
 
-def test_slots_bad_value(tmp_path):
-    """Slot value must be a positive integer."""
+def test_slots_duplicate_profile(tmp_path):
+    """Same profile in two slots — parts can target specific slot by int."""
     path = _write_toml(
         tmp_path,
         """
 [slicer.slots]
-"Generic PLA @base" = 0
+1 = "Generic PETG-CF @base"
+3 = "Generic PETG-CF @base"
 
 [[parts]]
-file = "cube.stl"
-filament = "Generic PLA @base"
+file = "frame.stl"
+filament = 1
+
+[[parts]]
+file = "cover.stl"
+filament = 3
 """,
-        create_files=["cube.stl"],
+        create_files=["frame.stl", "cover.stl"],
     )
-    with pytest.raises(ValueError, match="positive integer"):
-        load_config(path)
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 1
+    assert cfg.parts[1].filament == 3
+    assert cfg.slicer.filaments[0] == "Generic PETG-CF @base"
+    assert cfg.slicer.filaments[2] == "Generic PETG-CF @base"
