@@ -383,7 +383,10 @@ def _send_cloud_bridge(
     status = result.get("result", "unknown")
     if status in ("success", "sent"):
         print(f"  Print job sent to {serial}")
-        print("  If the printer shows 'Failed to get AMS mapping table', press Resume on the touchscreen.")
+        print(
+            "  If the printer shows 'Failed to get AMS mapping table',"
+            " press Resume on the touchscreen."
+        )
     else:
         raise RuntimeError(f"Cloud print failed: {result}")
 
