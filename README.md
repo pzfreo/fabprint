@@ -19,10 +19,10 @@ Headless 3D print pipeline: arrange parts on a build plate, slice to gcode, and 
 Requires Python 3.11+.
 
 ```bash
-pip install .
+pip install fabprint
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
+Or from source with [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
@@ -31,11 +31,10 @@ uv sync
 Optional extras:
 
 ```bash
-pip install ".[lan]"    # LAN printing (bambulabs-api)
-pip install ".[cloud]"  # Bambu Cloud API (experimental)
-pip install ".[step]"   # STEP file support (build123d)
-pip install ".[all]"    # Everything
-pip install ".[dev]"    # pytest + ruff
+pip install "fabprint[lan]"    # LAN printing (bambulabs-api)
+pip install "fabprint[cloud]"  # Bambu Cloud API (experimental)
+pip install "fabprint[step]"   # STEP file support (build123d)
+pip install "fabprint[all]"    # Everything
 ```
 
 ## Quick start
@@ -170,7 +169,7 @@ Common bed types: `"Cool Plate"`, `"Engineering Plate"`, `"High Temp Plate"`, `"
 | `copies`   | `int`      | `1`          | Number of copies                     |
 | `orient`   | `string`   | `"flat"`     | `"flat"`, `"upright"`, or `"side"`   |
 | `rotate`   | `[x,y,z]`  | —            | Custom rotation in degrees (overrides `orient`) |
-| `filament` | `int`      | `1`          | AMS filament slot (1-indexed)        |
+| `filament` | `int\|string` | `1`       | Filament profile name or slot index  |
 | `scale`    | `float`    | `1.0`        | Uniform scale factor                 |
 
 ## CLI commands
@@ -183,6 +182,9 @@ fabprint print <config>           # Arrange, slice, and send to printer
 fabprint print <config> --dry-run # Do everything except send to printer
 fabprint print <config> --gcode output/plate_1.gcode  # Send pre-sliced gcode
 fabprint print <config> --upload-only  # Upload without starting print
+fabprint login                    # Login to Bambu Cloud and cache token
+fabprint watch                    # Live dashboard for all printers
+fabprint status <config>          # Query printer status (single printer)
 fabprint profiles list            # List available slicer profiles
 fabprint profiles pin <config>    # Pin profiles for reproducible builds
 ```
