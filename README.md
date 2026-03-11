@@ -136,6 +136,17 @@ Credentials can also be set via environment variables, which override config val
 | `process`   | `string`   | —         | Process profile name                   |
 | `filaments` | `[string]` | —         | Filament profiles (auto-derived from parts if omitted) |
 
+### `[slicer.slots]`
+
+Pin filaments to specific AMS slots. Useful for direct-feed filaments (e.g. TPU) that bypass the AMS:
+
+```toml
+[slicer.slots]
+"Generic TPU @base" = 5  # direct feed (slot 5 on P1S)
+```
+
+Filaments not listed in `[slicer.slots]` are auto-assigned to the next free slot.
+
 ### `[slicer.overrides]`
 
 Key-value pairs applied on top of the process profile:

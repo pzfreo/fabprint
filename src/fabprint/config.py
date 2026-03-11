@@ -22,6 +22,7 @@ class SlicerConfig:
     printer: str | None = None
     process: str | None = None
     filaments: list[str] = field(default_factory=list)
+    slots: dict[str, int] = field(default_factory=dict)  # filament name → slot (1-indexed)
     overrides: dict[str, object] = field(default_factory=dict)
 
 
@@ -72,12 +73,17 @@ def load_config(path: Path) -> FabprintConfig:
 
     # Slicer config
     slicer_raw = raw.get("slicer", {})
+    slots_raw = slicer_raw.get("slots", {})
+    for name, slot in slots_raw.items():
+        if not isinstance(slot, int) or slot < 1:
+            raise ValueError(f"slicer.slots['{name}']: slot must be a positive integer, got {slot}")
     slicer = SlicerConfig(
         engine=slicer_raw.get("engine", "bambu"),
         version=slicer_raw.get("version"),
         printer=slicer_raw.get("printer"),
         process=slicer_raw.get("process"),
         filaments=slicer_raw.get("filaments", []),
+        slots=slots_raw,
         overrides=slicer_raw.get("overrides", {}),
     )
     if slicer.engine not in ("bambu", "orca"):
@@ -146,15 +152,49 @@ def load_config(path: Path) -> FabprintConfig:
     else:
         # String filament references — resolve to indices
         if not slicer.filaments:
-            # Auto-derive filaments list from unique names, preserving order
-            seen: dict[str, int] = {}
+            # Auto-derive filaments list, respecting [slicer.slots] pinning
+            unique_names: list[str] = []
             for raw_fil in raw_filaments:
-                if isinstance(raw_fil, str) and raw_fil not in seen:
-                    seen[raw_fil] = len(seen) + 1  # 1-indexed
-            slicer.filaments = list(seen.keys())
+                if isinstance(raw_fil, str) and raw_fil not in unique_names:
+                    unique_names.append(raw_fil)
 
-        # Build name → index lookup
-        fil_index = {name: idx + 1 for idx, name in enumerate(slicer.filaments)}
+            if slicer.slots:
+                # Place pinned filaments at their slots, auto-assign the rest
+                pinned_slots: set[int] = set()
+                fil_to_slot: dict[str, int] = {}
+                for name, slot in slicer.slots.items():
+                    if name not in unique_names:
+                        raise ValueError(f"slicer.slots['{name}']: filament not used by any part")
+                    fil_to_slot[name] = slot
+                    pinned_slots.add(slot)
+
+                # Auto-assign unpinned filaments to next free slot
+                next_slot = 1
+                for name in unique_names:
+                    if name not in fil_to_slot:
+                        while next_slot in pinned_slots:
+                            next_slot += 1
+                        fil_to_slot[name] = next_slot
+                        pinned_slots.add(next_slot)
+                        next_slot += 1
+
+                # Build the filaments list, filling gaps with the first filament
+                max_slot = max(fil_to_slot.values())
+                slot_to_name = {v: k for k, v in fil_to_slot.items()}
+                first_name = unique_names[0]
+                slicer.filaments = [slot_to_name.get(s, first_name) for s in range(1, max_slot + 1)]
+            else:
+                slicer.filaments = unique_names
+
+        # Build name → index lookup (use slot mapping if available,
+        # otherwise first occurrence — avoids gap-filler duplicates)
+        if slicer.slots:
+            fil_index = fil_to_slot
+        else:
+            fil_index = {}
+            for idx, name in enumerate(slicer.filaments):
+                if name not in fil_index:
+                    fil_index[name] = idx + 1
 
         for i, raw_fil in enumerate(raw_filaments):
             if isinstance(raw_fil, str):
