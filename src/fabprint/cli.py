@@ -8,6 +8,7 @@ import os
 import sys
 from pathlib import Path
 
+from fabprint import __version__
 from fabprint.arrange import arrange
 from fabprint.config import FabprintConfig, load_config
 from fabprint.loader import extract_paint_colors, load_mesh
@@ -20,6 +21,7 @@ def main(argv: list[str] | None = None) -> None:
         prog="fabprint",
         description="Headless 3D print pipeline: arrange, slice, and print",
     )
+    parser.add_argument("--version", action="version", version=f"fabprint {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     # Shared args for subcommands
