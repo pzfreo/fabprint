@@ -358,6 +358,29 @@ def cloud_tasks(
         )
 
 
+def cloud_list_devices(token_file: Path) -> list[dict]:
+    """List bound printers via Bambu Cloud REST API.
+
+    Returns a list of device dicts with keys like dev_id, name, online,
+    dev_product_name, dev_model_name.
+    """
+    import requests
+
+    token_data = json.loads(token_file.read_text())
+    token = token_data.get("token") or token_data.get("accessToken")
+    if not token:
+        raise ValueError("No token found in token file")
+
+    resp = requests.get(
+        f"{BASE_URL}/v1/iot-service/api/user/bind",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("devices", [])
+
+
 def cloud_cancel(
     device_id: str,
     token_file: Path,
