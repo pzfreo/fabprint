@@ -563,6 +563,12 @@ def _build_ams_mapping(
     if not filament_by_id:
         return result
 
+    # Cap at highest used filament id — OrcaSlicer may define extra default
+    # slots (e.g. 5 for P1S) that duplicate the last loaded filament.
+    max_loaded = max(filament_by_id.keys())
+    if total_slots > max_loaded:
+        total_slots = max_loaded
+
     log.debug(
         "3MF filament slots: plate=%s, total=%d, settings=%s",
         list(filament_by_id.keys()), total_slots, filament_setting_ids,

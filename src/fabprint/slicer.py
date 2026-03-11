@@ -185,8 +185,11 @@ def _slice_via_docker(
         "-v",
         f"{output_dir}:/work/output",
         "--entrypoint",
-        "orca-slicer",
+        "xvfb-run",
         image,
+        "-a",
+        "--server-args=-screen 0 1024x768x24",
+        "orca-slicer",
     ]
 
     if settings_arg:
@@ -431,16 +434,23 @@ def _fix_sliced_3mf(path: Path) -> None:
                         f'    <metadata key="{key}" value="{val}"/>\n  </plate>',
                     )
 
-        # Generate placeholder thumbnails
-        thumb = _generate_plate_thumbnail(256, 256)
-        thumb_small = _generate_plate_thumbnail(128, 128)
-        # Thumbnail files to always replace — OrcaSlicer writes empty/broken
-        # thumbnails in headless environments (no OpenGL), so always use ours.
-        thumbnail_overrides = {
-            "Metadata/plate_1.png": thumb,
-            "Metadata/plate_no_light_1.png": thumb,
-            "Metadata/plate_1_small.png": thumb_small,
+        # Check if OrcaSlicer generated valid thumbnails (requires Xvfb).
+        # A valid PNG is > 1KB; broken headless ones are empty or tiny.
+        _THUMB_MIN_SIZE = 1024
+        thumbnail_overrides: dict[str, bytes] = {}
+        thumb_files = {
+            "Metadata/plate_1.png": (256, 256),
+            "Metadata/plate_no_light_1.png": (256, 256),
+            "Metadata/plate_1_small.png": (128, 128),
         }
+        for fname, (w, h) in thumb_files.items():
+            try:
+                existing = zin.read(fname)
+                if len(existing) >= _THUMB_MIN_SIZE:
+                    continue  # OrcaSlicer generated a valid thumbnail
+            except KeyError:
+                pass
+            thumbnail_overrides[fname] = _generate_plate_thumbnail(w, h)
 
         # Rewrite the zip
         buf = io.BytesIO()
