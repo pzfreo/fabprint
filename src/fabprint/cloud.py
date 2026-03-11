@@ -276,17 +276,14 @@ def cloud_print(
             except OSError:
                 pass
 
-    if result.stderr:
-        # Always show stderr on non-zero exit so errors are visible without --verbose
-        if result.returncode != 0:
-            log.warning("Bridge stderr:\n%s", result.stderr.strip())
-        else:
-            log.debug("Bridge stderr: %s", result.stderr.strip())
-
     try:
         data = json.loads(result.stdout.strip())
-        if data.get("return_code", 0) != 0 and result.stderr:
-            log.warning("Bridge stderr:\n%s", result.stderr.strip())
+        # Only warn on stderr when the result is actually an error (not "success"/"sent")
+        if result.stderr:
+            if data.get("result") not in ("success", "sent"):
+                log.warning("Bridge stderr:\n%s", result.stderr.strip())
+            else:
+                log.debug("Bridge stderr:\n%s", result.stderr.strip())
         return data
     except json.JSONDecodeError:
         raise RuntimeError(
