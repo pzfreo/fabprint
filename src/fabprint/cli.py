@@ -152,6 +152,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     pin_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
 
+    # login subcommand
+    login_cmd = sub.add_parser(
+        "login", parents=[common], help="Login to Bambu Cloud and cache token"
+    )
+    login_cmd.add_argument("--email", type=str, default=None, help="Bambu account email")
+    login_cmd.add_argument("--password", type=str, default=None, help="Bambu account password")
+
     # status subcommand
     status_cmd = sub.add_parser("status", parents=[common], help="Query live printer status")
     status_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
@@ -181,6 +188,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_slice(args)
     elif args.command == "print":
         _cmd_print(args)
+    elif args.command == "login":
+        _cmd_login(args)
     elif args.command == "status":
         _cmd_status(args)
     elif args.command == "watch":
@@ -346,6 +355,12 @@ def _cmd_print(args: argparse.Namespace) -> None:
         experimental=getattr(args, "experimental", False),
         skip_ams_mapping=getattr(args, "no_ams_mapping", False),
     )
+
+
+def _cmd_login(args: argparse.Namespace) -> None:
+    from fabprint.auth import cloud_login
+
+    cloud_login(email=args.email, password=args.password)
 
 
 def _cmd_status(args: argparse.Namespace) -> None:
