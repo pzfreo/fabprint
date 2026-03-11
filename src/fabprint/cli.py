@@ -548,12 +548,8 @@ def _cmd_watch(args: argparse.Namespace) -> None:
 
     try:
         while True:
+            t0 = time.monotonic()
             output_lines = []
-            now = time.strftime("%H:%M:%S")
-            output_lines.append(
-                f"fabprint watch  {now}  (refresh every {interval}s, Ctrl-C to quit)"
-            )
-            output_lines.append("")
 
             for serial in serials:
                 name = printer_names[serial]
@@ -565,12 +561,17 @@ def _cmd_watch(args: argparse.Namespace) -> None:
                     output_lines.append(f"  \033[31merror: {e}\033[0m")
                 output_lines.append("")
 
+            elapsed = time.monotonic() - t0
+            now = time.strftime("%H:%M:%S")
+            header = f"fabprint watch  {now}  (polled in {elapsed:.0f}s, Ctrl-C to quit)"
+
             # Clear screen and print
             sys.stdout.write("\033[2J\033[H")
-            sys.stdout.write("\n".join(output_lines))
+            sys.stdout.write(header + "\n\n" + "\n".join(output_lines))
             sys.stdout.flush()
 
-            time.sleep(interval)
+            sleep_time = max(1, interval - elapsed)
+            time.sleep(sleep_time)
     except KeyboardInterrupt:
         print("\n")
 
