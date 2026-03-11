@@ -136,6 +136,19 @@ Credentials can also be set via environment variables, which override config val
 | `process`   | `string`   | —         | Process profile name                   |
 | `filaments` | `[string]` | —         | Filament profiles (auto-derived from parts if omitted) |
 
+### `[slicer.slots]`
+
+Map slot numbers to filament profiles. Useful when you need specific slot placement (e.g. direct feed) or when parts reference slots by number:
+
+```toml
+[slicer.slots]
+1 = "Generic PLA @base"
+3 = "Generic PETG-CF @base"
+5 = "Generic TPU @base"        # direct feed (bypass AMS)
+```
+
+Parts can then use `filament = 3` to target a specific slot, or `filament = "Generic PLA @base"` to let the slicer pick. String-referenced filaments not in the slots map are auto-assigned to the next free slot.
+
 ### `[slicer.overrides]`
 
 Key-value pairs applied on top of the process profile:

@@ -558,3 +558,139 @@ filament = ""
     )
     with pytest.raises(ValueError, match="empty"):
         load_config(path)
+
+
+# --- slicer.slots (slot → profile) ---
+
+
+def test_slots_direct_feed(tmp_path):
+    """Slot map: TPU on slot 5 (direct feed), PLA auto-assigned to slot 1."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer.slots]
+5 = "Generic TPU @base"
+
+[[parts]]
+file = "frame.stl"
+filament = "Generic PLA @base"
+
+[[parts]]
+file = "insert.stl"
+filament = "Generic TPU @base"
+""",
+        create_files=["frame.stl", "insert.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 1  # PLA auto-assigned
+    assert cfg.parts[1].filament == 5  # TPU from slots map
+    assert cfg.slicer.filaments[0] == "Generic PLA @base"
+    assert cfg.slicer.filaments[4] == "Generic TPU @base"
+    assert len(cfg.slicer.filaments) == 5
+
+
+def test_slots_int_ref_with_map(tmp_path):
+    """Integer filament ref resolved via slots map (case 1: 'use slot 3')."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer.slots]
+1 = "Generic PLA @base"
+3 = "Generic PETG-CF @base"
+
+[[parts]]
+file = "frame.stl"
+filament = 3
+""",
+        create_files=["frame.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 3
+    assert cfg.slicer.filaments[0] == "Generic PLA @base"
+    assert cfg.slicer.filaments[2] == "Generic PETG-CF @base"
+
+
+def test_slots_mixed_int_and_string(tmp_path):
+    """Mix int + string refs when slots map covers the int refs."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer.slots]
+3 = "Generic PETG-CF @base"
+5 = "Generic TPU @base"
+
+[[parts]]
+file = "frame.stl"
+filament = 3
+
+[[parts]]
+file = "insert.stl"
+filament = "Generic TPU @base"
+""",
+        create_files=["frame.stl", "insert.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 3
+    assert cfg.parts[1].filament == 5
+
+
+def test_slots_int_ref_not_in_map(tmp_path):
+    """Integer ref to a slot not in the map -> error."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer.slots]
+1 = "Generic PLA @base"
+
+[[parts]]
+file = "frame.stl"
+filament = 3
+""",
+        create_files=["frame.stl"],
+    )
+    with pytest.raises(ValueError, match="slot 3 not defined"):
+        load_config(path)
+
+
+def test_slots_bad_slot_number(tmp_path):
+    """Slot number must be >= 1."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer.slots]
+0 = "Generic PLA @base"
+
+[[parts]]
+file = "cube.stl"
+filament = "Generic PLA @base"
+""",
+        create_files=["cube.stl"],
+    )
+    with pytest.raises(ValueError, match="slot must be >= 1"):
+        load_config(path)
+
+
+def test_slots_duplicate_profile(tmp_path):
+    """Same profile in two slots — parts can target specific slot by int."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer.slots]
+1 = "Generic PETG-CF @base"
+3 = "Generic PETG-CF @base"
+
+[[parts]]
+file = "frame.stl"
+filament = 1
+
+[[parts]]
+file = "cover.stl"
+filament = 3
+""",
+        create_files=["frame.stl", "cover.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 1
+    assert cfg.parts[1].filament == 3
+    assert cfg.slicer.filaments[0] == "Generic PETG-CF @base"
+    assert cfg.slicer.filaments[2] == "Generic PETG-CF @base"

@@ -22,6 +22,7 @@ class SlicerConfig:
     printer: str | None = None
     process: str | None = None
     filaments: list[str] = field(default_factory=list)
+    slots: dict[int, str] = field(default_factory=dict)  # slot (1-indexed) → profile name
     overrides: dict[str, object] = field(default_factory=dict)
 
 
@@ -72,12 +73,24 @@ def load_config(path: Path) -> FabprintConfig:
 
     # Slicer config
     slicer_raw = raw.get("slicer", {})
+    slots_parsed: dict[int, str] = {}
+    for key, profile in slicer_raw.get("slots", {}).items():
+        try:
+            slot_num = int(key)
+        except (TypeError, ValueError):
+            raise ValueError(f"slicer.slots: key '{key}' must be an integer slot number")
+        if slot_num < 1:
+            raise ValueError(f"slicer.slots: slot must be >= 1, got {slot_num}")
+        if not isinstance(profile, str) or not profile.strip():
+            raise ValueError(f"slicer.slots[{slot_num}]: profile name must be a non-empty string")
+        slots_parsed[slot_num] = profile
     slicer = SlicerConfig(
         engine=slicer_raw.get("engine", "bambu"),
         version=slicer_raw.get("version"),
         printer=slicer_raw.get("printer"),
         process=slicer_raw.get("process"),
         filaments=slicer_raw.get("filaments", []),
+        slots=slots_parsed,
         overrides=slicer_raw.get("overrides", {}),
     )
     if slicer.engine not in ("bambu", "orca"):
@@ -134,27 +147,48 @@ def load_config(path: Path) -> FabprintConfig:
     has_string_filaments = any(isinstance(f, str) for f in raw_filaments)
     has_int_filaments = any(isinstance(f, int) for f in raw_filaments)
 
-    if has_string_filaments and has_int_filaments and not slicer.filaments:
+    if has_string_filaments and has_int_filaments and not slicer.filaments and not slicer.slots:
         raise ValueError(
-            "Cannot mix filament names and indices without an explicit [slicer].filaments list"
+            "Cannot mix filament names and indices without [slicer].filaments or [slicer.slots]"
         )
 
-    if has_int_filaments and not has_string_filaments:
-        # All integers — backward compatible, no resolution needed
+    if has_int_filaments and not has_string_filaments and not slicer.slots:
+        # All integers, no slots map — backward compatible, no resolution needed
         for i, raw_fil in enumerate(raw_filaments):
             parts[i].filament = raw_fil
     else:
-        # String filament references — resolve to indices
         if not slicer.filaments:
-            # Auto-derive filaments list from unique names, preserving order
-            seen: dict[str, int] = {}
-            for raw_fil in raw_filaments:
-                if isinstance(raw_fil, str) and raw_fil not in seen:
-                    seen[raw_fil] = len(seen) + 1  # 1-indexed
-            slicer.filaments = list(seen.keys())
+            # Auto-derive filaments list from string refs + slots map
+            # Seed with slots map entries (slot → profile)
+            slot_to_name: dict[int, str] = dict(slicer.slots)
+            used_slots: set[int] = set(slot_to_name.keys())
 
-        # Build name → index lookup
-        fil_index = {name: idx + 1 for idx, name in enumerate(slicer.filaments)}
+            # Collect unique string filament names from parts
+            unique_names: list[str] = []
+            for raw_fil in raw_filaments:
+                if isinstance(raw_fil, str) and raw_fil not in unique_names:
+                    unique_names.append(raw_fil)
+
+            # Auto-assign string filaments not already pinned via slots
+            next_slot = 1
+            for name in unique_names:
+                if name not in slot_to_name.values():
+                    while next_slot in used_slots:
+                        next_slot += 1
+                    slot_to_name[next_slot] = name
+                    used_slots.add(next_slot)
+                    next_slot += 1
+
+            # Build the filaments list, filling gaps with the first profile
+            max_slot = max(slot_to_name.keys())
+            first_name = slot_to_name[min(slot_to_name.keys())]
+            slicer.filaments = [slot_to_name.get(s, first_name) for s in range(1, max_slot + 1)]
+
+        # Build name → index lookup (first occurrence for name-based refs)
+        fil_index: dict[str, int] = {}
+        for idx, name in enumerate(slicer.filaments):
+            if name not in fil_index:
+                fil_index[name] = idx + 1
 
         for i, raw_fil in enumerate(raw_filaments):
             if isinstance(raw_fil, str):
@@ -165,6 +199,11 @@ def load_config(path: Path) -> FabprintConfig:
                     )
                 parts[i].filament = fil_index[raw_fil]
             else:
+                # Integer slot ref — validate against slots map if present
+                if slicer.slots and raw_fil not in slicer.slots:
+                    raise ValueError(
+                        f"parts[{i}]: filament slot {raw_fil} not defined in [slicer.slots]"
+                    )
                 parts[i].filament = raw_fil
 
     # Printer config (optional)
