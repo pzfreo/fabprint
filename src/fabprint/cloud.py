@@ -210,6 +210,7 @@ def cloud_print(
     timeout: int = 180,
     verbose: bool = False,
     ams_trays: list[dict] | None = None,
+    skip_ams_mapping: bool = False,
 ) -> dict:
     """Start a cloud print job.
 
@@ -249,14 +250,14 @@ def cloud_print(
     # "Failed to get AMS mapping table" dialog. Without this the bridge
     # defaults to [0,1,2,3] (identity) which is wrong when AMS tray order
     # differs from gcode filament order.
-    if ams_trays:
+    if ams_trays and not skip_ams_mapping:
         ams_data = _build_ams_mapping(threemf_path, ams_trays=ams_trays)
         raw = ams_data["amsMapping"]
         if raw and any(v >= 0 for v in raw):
-            # Pass full mapping including -1 sentinels for unused slots,
-            # matching BambuConnect's format: e.g. [-1, -1, 2, -1, -1]
             args.extend(["--ams-mapping", json.dumps(raw)])
             log.debug("AMS slot mapping: %s", raw)
+    elif skip_ams_mapping:
+        log.info("AMS mapping skipped (--no-ams-mapping), using bridge default [0,1,2,3]")
 
     # Auto-generate config-only 3MF if not provided.
     # The v02.05 library requires a separate config_filename (3MF without gcode).

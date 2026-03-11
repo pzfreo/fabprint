@@ -79,7 +79,9 @@ def test_send_print_cloud_bridge_dispatches(tmp_path):
 
     with patch("fabprint.printer._send_cloud_bridge") as mock_send:
         send_print(gcode, config, dry_run=True)
-        mock_send.assert_called_once_with(gcode, serial="SN123", dry_run=True, verbose=False)
+        mock_send.assert_called_once_with(
+            gcode, serial="SN123", dry_run=True, verbose=False, skip_ams_mapping=False
+        )
 
 
 def test_send_print_lan_missing_ip():
