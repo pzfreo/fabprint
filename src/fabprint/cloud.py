@@ -256,6 +256,10 @@ def cloud_print(
         if raw and any(v >= 0 for v in raw):
             args.extend(["--ams-mapping", json.dumps(raw)])
             log.debug("AMS slot mapping: %s", raw)
+        raw2 = ams_data["amsMapping2"]
+        if raw2:
+            args.extend(["--ams-mapping2", json.dumps(raw2)])
+            log.debug("AMS slot mapping2: %s", raw2)
     elif skip_ams_mapping:
         log.info("AMS mapping skipped (--no-ams-mapping), using bridge default [0,1,2,3]")
 
@@ -608,7 +612,7 @@ def _build_ams_mapping(
                 }
             )
             mapping.append(phys_slot)
-            mapping2.append({"amsId": phys_slot // 4, "slotId": phys_slot % 4})
+            mapping2.append({"ams_id": phys_slot // 4, "slot_id": phys_slot % 4})
             setting_ids.append(tray_idx)
         else:
             # Unused slot — use -1 sentinel matching BambuConnect's format.
@@ -623,7 +627,7 @@ def _build_ams_mapping(
                 }
             )
             mapping.append(-1)
-            mapping2.append({"amsId": 255, "slotId": 255})
+            mapping2.append({"ams_id": 255, "slot_id": 255})
             setting_ids.append("")
 
     result["amsDetailMapping"] = detail
