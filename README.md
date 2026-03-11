@@ -2,6 +2,14 @@
 
 Headless 3D print pipeline: arrange parts on a build plate, slice to gcode, and send to a Bambu Lab printer — all from a TOML config file.
 
+## Why fabprint
+
+Code-CAD tools like [build123d](https://github.com/gumyr/build123d) let you define physical parts in Python — parametric, testable, and version-controlled. But the moment you need to print, the workflow breaks: open a slicer GUI, drag in your files, fiddle with settings, hit print. None of that is reproducible or tracked.
+
+fabprint closes that gap. A TOML file declares your parts, filaments, and slicer settings. The CLI arranges, slices, and sends to the printer. Everything is text, everything goes in git, and the same config produces the same print every time.
+
+Software engineering spent decades borrowing rigour from physical manufacturing — assembly lines, quality gates, repeatable builds. fabprint brings those ideas full circle: version-controlled configs, reproducible builds, and command-line deployments for the physical world.
+
 ## Features
 
 - **Multi-format input** — STL, 3MF, and STEP files
