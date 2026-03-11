@@ -160,8 +160,12 @@ def main(argv: list[str] | None = None) -> None:
     login_cmd.add_argument("--password", type=str, default=None, help="Bambu account password")
 
     # status subcommand
-    status_cmd = sub.add_parser("status", parents=[common], help="Query live printer status")
-    status_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
+    status_cmd = sub.add_parser(
+        "status", parents=[common], help="Query printer status (all or by serial)"
+    )
+    status_cmd.add_argument(
+        "--serial", type=str, default=None, help="Printer serial (default: all printers)"
+    )
 
     # watch subcommand
     watch_cmd = sub.add_parser(
@@ -364,94 +368,33 @@ def _cmd_login(args: argparse.Namespace) -> None:
 
 
 def _cmd_status(args: argparse.Namespace) -> None:
-    from fabprint.cloud import parse_ams_trays
-    from fabprint.printer import get_printer_status
+    from fabprint.cloud import cloud_list_devices, cloud_status
 
-    cfg = load_config(args.config)
-    if cfg.printer is None:
-        raise ValueError("No [printer] section in config.")
+    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
+    token_file = Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
+    if not token_file.exists():
+        print(f"Token file not found: {token_file}")
+        print("Run 'fabprint login' first.")
+        sys.exit(1)
 
-    serial = cfg.printer.serial or os.environ.get("BAMBU_SERIAL")
-    if not serial:
-        raise ValueError("No serial in [printer] config or BAMBU_SERIAL env var.")
+    if args.serial:
+        serials = [(args.serial, args.serial)]
+    else:
+        devices = cloud_list_devices(token_file)
+        if not devices:
+            print("No printers found.")
+            return
+        serials = [(d["dev_id"], d.get("name", d["dev_id"])) for d in devices]
 
-    print(f"Querying printer {serial}...")
-    status = get_printer_status(serial)
-
-    state = status.get("gcode_state", "unknown")
-    percent = status.get("mc_percent", 0)
-    layer = status.get("layer_num", 0)
-    total_layers = status.get("total_layer_num", 0)
-    remaining = status.get("mc_remaining_time", 0)
-
-    # Print stage descriptions (from Bambu firmware mc_print_stage values)
-    _PRINT_STAGES = {
-        "0": "printing",
-        "1": "auto bed leveling",
-        "2": "heatbed preheating",
-        "3": "sweeping XY mech mode",
-        "4": "changing filament",
-        "5": "M400 pause",
-        "6": "filament runout pause",
-        "7": "heating hotend",
-        "8": "calibrating extrusion",
-        "9": "scanning bed surface",
-        "10": "inspecting first layer",
-        "11": "identifying build plate type",
-        "12": "calibrating micro lidar",
-        "13": "homing toolhead",
-        "14": "cleaning nozzle tip",
-        "17": "calibrating extrusion flow",
-        "18": "vibration compensation",
-        "19": "motor noise calibration",
-    }
-
-    print(f"  State:    {state}")
-
-    task_name = status.get("subtask_name", "")
-    if task_name:
-        print(f"  Task:     {task_name}")
-
-    if state not in ("IDLE", "FINISH", "FAILED", ""):
-        stage_id = str(status.get("mc_print_stage", ""))
-        if layer and int(layer) > 0:
-            stage = "printing"
-        else:
-            stage = _PRINT_STAGES.get(stage_id, "")
-        if stage:
-            print(f"  Stage:    {stage}")
-        print(f"  Progress: {percent}%", end="")
-        if total_layers:
-            print(f" (layer {layer}/{total_layers})", end="")
+    for serial, name in serials:
+        print(f"\033[1m{name}\033[0m  ({serial})")
+        try:
+            status = cloud_status(serial, token_file)
+            for line in _render_printer(status, name, serial):
+                print(line)
+        except Exception as e:
+            print(f"  \033[31merror: {e}\033[0m")
         print()
-        if remaining:
-            h, m = divmod(int(remaining), 60)
-            print(f"  Remaining: {h}h {m}m" if h else f"  Remaining: {m}m")
-
-    # Temperatures
-    nozzle = status.get("nozzle_temper", 0)
-    nozzle_target = status.get("nozzle_target_temper", 0)
-    bed = status.get("bed_temper", 0)
-    bed_target = status.get("bed_target_temper", 0)
-    nozzle_str = f"{nozzle:.0f}°C"
-    if nozzle_target:
-        nozzle_str += f" → {nozzle_target:.0f}°C"
-    bed_str = f"{bed:.0f}°C"
-    if bed_target:
-        bed_str += f" → {bed_target:.0f}°C"
-    print(f"  Nozzle:   {nozzle_str}")
-    print(f"  Bed:      {bed_str}")
-
-    ams_trays = parse_ams_trays(status)
-    if ams_trays:
-        tray_now_raw = int(status.get("ams", {}).get("tray_now", 255))
-        print("  AMS:")
-        for t in ams_trays:
-            active = " <-- printing" if t["phys_slot"] == tray_now_raw else ""
-            c = t["color"]
-            r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
-            swatch = f"\033[48;2;{r};{g};{b}m  \033[0m"
-            print(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  {swatch} #{c}{active}")
 
 
 def _render_printer(status: dict, name: str, serial: str) -> list[str]:
