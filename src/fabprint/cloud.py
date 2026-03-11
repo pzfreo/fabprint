@@ -253,9 +253,9 @@ def cloud_print(
         ams_data = _build_ams_mapping(threemf_path, ams_trays=ams_trays)
         raw = ams_data["amsMapping"]
         if raw:
-            # Normalise: -1 ("not on this plate") → 255 (Bambu unused-slot sentinel)
-            # then strip trailing 255s to keep the array compact.
-            bridge_mapping = [255 if v == -1 else v for v in raw]
+            # Strip trailing 255s (unused slots) to keep the array compact,
+            # but keep leading 255s so slot indices stay correct.
+            bridge_mapping = raw[:]
             while bridge_mapping and bridge_mapping[-1] == 255:
                 bridge_mapping.pop()
             if bridge_mapping and any(v != 255 for v in bridge_mapping):
@@ -536,7 +536,7 @@ def _build_ams_mapping(
                 ps = json.loads(z.read("Metadata/project_settings.config"))
                 filament_colour = ps.get("filament_colour", [])
                 total_slots = len(filament_colour)
-                filament_setting_ids = ps.get("filament_settings_id", [])  # noqa: F841
+                filament_setting_ids = ps.get("filament_settings_id", [])
 
             # Get plate filament usage from slice_info.config
             filament_by_id = {}
@@ -566,8 +566,9 @@ def _build_ams_mapping(
     # Physical slot assignment: use live AMS state when available, else sequential.
     phys_by_id = _build_ams_mapping_from_state(filament_by_id, total_slots, ams_trays or [])
 
-    # Build a lookup from physical slot → actual AMS tray (for targetColor)
+    # Build lookups from physical slot and tray_info_idx → AMS tray
     tray_by_phys = {t["phys_slot"]: t for t in (ams_trays or [])}
+    tray_by_idx = {t["tray_info_idx"]: t for t in (ams_trays or []) if t.get("tray_info_idx")}
 
     # All arrays are full-length (one entry per virtual slot), matching BambuConnect's format.
     # Unused slots get sentinel values: -1 / {255,255} / "" — not just the used filaments.
@@ -603,20 +604,46 @@ def _build_ams_mapping(
             mapping2.append({"amsId": phys_slot // 4, "slotId": phys_slot % 4})
             setting_ids.append(tray_idx)
         else:
-            # Unused virtual slot — sentinel values matching BambuConnect capture
-            detail.append(
-                {
-                    "ams": -1,
-                    "amsId": 255,
-                    "slotId": 255,
-                    "filamentId": "",
-                    "filamentType": "",
-                    "targetColor": "",
-                }
-            )
-            mapping.append(-1)
-            mapping2.append({"amsId": 255, "slotId": 255})
-            setting_ids.append("")
+            # Slot not used on this plate — try matching via filament_settings_id
+            # (tray_info_idx) so loaded-but-unused filaments still get correct
+            # physical slots. Without this, single-material prints produce an
+            # incomplete mapping that triggers "Failed to get AMS mapping table".
+            n = len(filament_setting_ids)
+            setting_id = filament_setting_ids[slot_idx] if slot_idx < n else ""
+            tray = tray_by_idx.get(setting_id) if setting_id else None
+            if tray:
+                phys_slot = tray["phys_slot"]
+                target_color = tray["color"] + "FF"
+                detail.append(
+                    {
+                        "ams": phys_slot,
+                        "amsId": phys_slot // 4,
+                        "slotId": phys_slot % 4,
+                        "nozzleId": 0,
+                        "sourceColor": target_color,
+                        "targetColor": target_color,
+                        "filamentType": tray.get("type", ""),
+                        "targetFilamentType": tray.get("type", ""),
+                        "filamentId": setting_id,
+                    }
+                )
+                mapping.append(phys_slot)
+                mapping2.append({"amsId": phys_slot // 4, "slotId": phys_slot % 4})
+                setting_ids.append(setting_id)
+            else:
+                detail.append(
+                    {
+                        "ams": -1,
+                        "amsId": 255,
+                        "slotId": 255,
+                        "filamentId": "",
+                        "filamentType": "",
+                        "targetColor": "",
+                    }
+                )
+                mapping.append(255)
+                mapping2.append({"amsId": 255, "slotId": 255})
+                setting_ids.append("")
 
     result["amsDetailMapping"] = detail
     result["amsMapping"] = mapping

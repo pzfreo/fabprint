@@ -345,7 +345,21 @@ def _send_cloud_bridge(
                     f"Printer is not ready (state: {gcode_state}). "
                     "Wait for current job to finish or cancel it first."
                 )
-            if gcode_state:
+            if gcode_state == "FAILED":
+                # Clear the failed state before sending a new print — otherwise
+                # the printer shows "Failed to get AMS mapping table" and
+                # auto-cancels the new job.
+                from fabprint.cloud import cloud_cancel
+
+                print("  Printer in FAILED state — sending stop to clear it...")
+                try:
+                    cloud_cancel(serial, token_file)
+                    import time
+
+                    time.sleep(3)
+                except Exception as e:
+                    log.debug("Cancel before print failed (continuing anyway): %s", e)
+            elif gcode_state:
                 print(f"  Printer ready (state: {gcode_state})")
             ams_trays = parse_ams_trays(status)
             if ams_trays:
