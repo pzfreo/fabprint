@@ -203,6 +203,72 @@ def _run_bridge(
     return result
 
 
+class PersistentBridge:
+    """Keep a Docker container running for repeated bridge commands.
+
+    Usage::
+
+        with PersistentBridge(token_file) as bridge:
+            status = bridge.status(device_id)
+    """
+
+    def __init__(self, token_file: Path) -> None:
+        self._token_file = token_file.resolve()
+        self._container_id: str | None = None
+
+    def __enter__(self) -> PersistentBridge:
+        real_token = str(self._token_file)
+        cmd = [
+            "docker",
+            "run",
+            "-d",
+            "--platform",
+            "linux/amd64",
+            "-v",
+            f"{real_token}:/input/token.json:ro",
+            "--entrypoint",
+            "sleep",
+            DOCKER_IMAGE,
+            "infinity",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        self._container_id = result.stdout.strip()[:12]
+        log.debug("Started persistent bridge container: %s", self._container_id)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._container_id:
+            subprocess.run(
+                ["docker", "rm", "-f", self._container_id],
+                capture_output=True,
+                check=False,
+            )
+            log.debug("Stopped persistent bridge container: %s", self._container_id)
+            self._container_id = None
+
+    def status(self, device_id: str, *, timeout: int = 60) -> dict:
+        """Query printer status via the running container."""
+        cmd = [
+            "docker",
+            "exec",
+            self._container_id,
+            "bambu_cloud_bridge",
+            "status",
+            device_id,
+            "/input/token.json",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        try:
+            data = json.loads(result.stdout.strip())
+            return data.get("print", data)
+        except json.JSONDecodeError:
+            if result.returncode == 2:
+                raise RuntimeError(f"No status received from printer {device_id}")
+            raise RuntimeError(
+                f"Bridge returned non-JSON (exit {result.returncode}): {result.stdout[:200]}"
+            )
+
+
 def cloud_print(
     threemf_path: Path,
     device_id: str,
