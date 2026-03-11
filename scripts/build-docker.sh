@@ -42,11 +42,13 @@ case "$TARGET" in
     cloud-bridge)
         PUSH="${2:-}"
         IMAGE="fabprint/cloud-bridge:latest"
+        BNL_TOKEN="${BNL_TOKEN:-$(gh auth token 2>/dev/null || true)}"
 
         echo "Building ${IMAGE} ..."
         docker build \
             --platform linux/amd64 \
             -f Dockerfile.cloud-bridge \
+            --build-arg "BNL_TOKEN=${BNL_TOKEN}" \
             -t "${IMAGE}" \
             .
 
