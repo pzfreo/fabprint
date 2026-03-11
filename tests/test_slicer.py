@@ -80,12 +80,12 @@ def test_apply_overrides():
 
 
 def test_docker_image_default():
-    assert _docker_image() == "pzfreo/fabprint-orca:latest"
+    assert _docker_image() == "fabprint/fabprint:latest"
 
 
 def test_docker_image_versioned():
-    assert _docker_image("2.3.1") == "pzfreo/fabprint-orca:2.3.1"
-    assert _docker_image("2.3.2") == "pzfreo/fabprint-orca:2.3.2"
+    assert _docker_image("2.3.1") == "fabprint/fabprint:2.3.1"
+    assert _docker_image("2.3.2") == "fabprint/fabprint:2.3.2"
 
 
 # --- _has_docker_image ---
@@ -240,7 +240,7 @@ def test_slice_plate_docker_fallback(tmp_path):
 
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == "docker"
-    assert "pzfreo/fabprint-orca:latest" in cmd
+    assert "fabprint/fabprint:latest" in cmd
 
 
 def test_slice_plate_docker_explicit(tmp_path):
@@ -266,7 +266,7 @@ def test_slice_plate_docker_explicit(tmp_path):
 
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == "docker"
-    assert "pzfreo/fabprint-orca:latest" in cmd
+    assert "fabprint/fabprint:latest" in cmd
 
 
 def test_slice_plate_docker_version(tmp_path):
@@ -292,7 +292,7 @@ def test_slice_plate_docker_version(tmp_path):
 
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == "docker"
-    assert "pzfreo/fabprint-orca:2.3.1" in cmd
+    assert "fabprint/fabprint:2.3.1" in cmd
 
 
 def test_slice_plate_docker_image_missing(tmp_path):
