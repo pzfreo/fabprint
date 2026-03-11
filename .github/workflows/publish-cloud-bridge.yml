@@ -2,34 +2,55 @@ name: Publish cloud-bridge image
 
 on:
   push:
-    branches: [cloud-print-test, main]
-    paths:
-      - Dockerfile.cloud-bridge
-      - scripts/bambu_cloud_bridge.cpp
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
-      - name: Read version
+      - name: Bump patch version
         id: version
         run: |
-          VERSION=$(python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['version'])")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          OLD=$(python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['version'])")
+          IFS='.' read -r maj min patch <<< "$OLD"
+          NEW="$maj.$min.$((patch + 1))"
+          sed -i "s/version = \"$OLD\"/version = \"$NEW\"/" pyproject.toml
+          sed -i "s/__version__ = \"$OLD\"/__version__ = \"$NEW\"/" src/fabprint/__init__.py
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml src/fabprint/__init__.py
+          git commit -m "Bump version to $NEW [skip ci]"
+          git push
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+
+      - name: Check if Docker image rebuild needed
+        id: bridge_changed
+        run: |
+          git diff ${{ github.sha }}^1 ${{ github.sha }} --name-only \
+            | grep -qE 'Dockerfile\.cloud-bridge|scripts/bambu_cloud_bridge\.cpp' \
+            && echo "changed=true" >> "$GITHUB_OUTPUT" \
+            || echo "changed=false" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
+        if: steps.bridge_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx
+        if: steps.bridge_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
+        if: steps.bridge_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/build-push-action@v6
         with:
           context: .

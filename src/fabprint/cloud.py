@@ -251,9 +251,16 @@ def cloud_print(
     # differs from gcode filament order.
     if ams_trays:
         ams_data = _build_ams_mapping(threemf_path, ams_trays=ams_trays)
-        if ams_data["amsMapping"]:
-            args.extend(["--ams-mapping", json.dumps(ams_data["amsMapping"])])
-            log.debug("AMS slot mapping: %s", ams_data["amsMapping"])
+        raw = ams_data["amsMapping"]
+        if raw:
+            # Normalise: -1 ("not on this plate") → 255 (Bambu unused-slot sentinel)
+            # then strip trailing 255s to keep the array compact.
+            bridge_mapping = [255 if v == -1 else v for v in raw]
+            while bridge_mapping and bridge_mapping[-1] == 255:
+                bridge_mapping.pop()
+            if bridge_mapping and any(v != 255 for v in bridge_mapping):
+                args.extend(["--ams-mapping", json.dumps(bridge_mapping)])
+                log.debug("AMS slot mapping: %s", bridge_mapping)
 
     # Auto-generate config-only 3MF if not provided.
     # The v02.05 library requires a separate config_filename (3MF without gcode).
