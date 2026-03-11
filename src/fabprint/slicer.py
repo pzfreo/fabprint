@@ -17,7 +17,8 @@ from fabprint.profiles import resolve_profile_data
 
 log = logging.getLogger(__name__)
 
-DEFAULT_DOCKER_IMAGE = "fabprint:latest"
+DOCKERHUB_REPO = "pzfreo/fabprint-orca"
+DEFAULT_DOCKER_IMAGE = f"{DOCKERHUB_REPO}:latest"
 
 
 def _slicer_paths() -> dict[str, Path]:
@@ -44,9 +45,9 @@ SLICER_PATHS = _slicer_paths()
 
 
 def _docker_image(version: str | None = None) -> str:
-    """Return the Docker image name for a given OrcaSlicer version."""
+    """Return the Docker Hub image name for a given OrcaSlicer version."""
     if version:
-        return f"fabprint:orca-{version}"
+        return f"{DOCKERHUB_REPO}:{version}"
     return DEFAULT_DOCKER_IMAGE
 
 
@@ -139,8 +140,8 @@ def _check_slicer_version(
         )
 
 
-def _has_docker(image: str) -> bool:
-    """Check if Docker is available and the given image exists."""
+def _has_docker_image(image: str) -> bool:
+    """Check if the given Docker image exists locally."""
     try:
         r = subprocess.run(
             ["docker", "image", "inspect", image],
@@ -150,6 +151,32 @@ def _has_docker(image: str) -> bool:
         return r.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+
+
+def _pull_docker_image(image: str) -> bool:
+    """Pull a Docker image from the registry. Returns True on success."""
+    log.info("Pulling Docker image %s ...", image)
+    print(f"  Pulling Docker image {image} ...")
+    try:
+        r = subprocess.run(
+            ["docker", "pull", image],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if r.returncode == 0:
+            return True
+        log.debug("docker pull failed: %s", r.stderr.strip())
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return False
+
+
+def _ensure_docker_image(image: str) -> bool:
+    """Ensure a Docker image is available locally, pulling if needed."""
+    if _has_docker_image(image):
+        return True
+    return _pull_docker_image(image)
 
 
 def _slice_via_docker(
@@ -515,17 +542,17 @@ def slice_plate(
         try:
             slicer = find_slicer(engine)
         except FileNotFoundError:
-            if _has_docker(image):
+            if _ensure_docker_image(image):
                 log.info("Slicer not found locally, falling back to Docker (%s)", image)
                 use_docker = True
             else:
                 raise
 
-    if use_docker and not _has_docker(image):
+    if use_docker and not _ensure_docker_image(image):
         raise FileNotFoundError(
-            f"Docker image '{image}' not found. "
-            f"Build it with: docker build --build-arg "
-            f"ORCA_VERSION={docker_version or 'X.Y.Z'} -t {image} ."
+            f"Docker image '{image}' not found locally or on Docker Hub. "
+            f"Check your Docker login or build locally with: docker build "
+            f"--build-arg ORCA_VERSION={docker_version or 'X.Y.Z'} -t {image} ."
         )
 
     # Detect and verify slicer version

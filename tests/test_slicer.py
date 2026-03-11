@@ -9,7 +9,7 @@ from fabprint.slicer import (
     SLICER_PATHS,
     _apply_overrides,
     _docker_image,
-    _has_docker,
+    _has_docker_image,
     _slice_via_docker,
     find_slicer,
     parse_gcode_stats,
@@ -80,21 +80,21 @@ def test_apply_overrides():
 
 
 def test_docker_image_default():
-    assert _docker_image() == "fabprint:latest"
+    assert _docker_image() == "pzfreo/fabprint-orca:latest"
 
 
 def test_docker_image_versioned():
-    assert _docker_image("2.3.1") == "fabprint:orca-2.3.1"
-    assert _docker_image("2.3.2") == "fabprint:orca-2.3.2"
+    assert _docker_image("2.3.1") == "pzfreo/fabprint-orca:2.3.1"
+    assert _docker_image("2.3.2") == "pzfreo/fabprint-orca:2.3.2"
 
 
-# --- _has_docker ---
+# --- _has_docker_image ---
 
 
-def test_has_docker_true():
+def test_has_docker_image_true():
     mock_result = MagicMock(returncode=0)
     with patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run:
-        assert _has_docker("fabprint:orca-2.3.1") is True
+        assert _has_docker_image("fabprint:orca-2.3.1") is True
         mock_run.assert_called_once_with(
             ["docker", "image", "inspect", "fabprint:orca-2.3.1"],
             capture_output=True,
@@ -102,15 +102,15 @@ def test_has_docker_true():
         )
 
 
-def test_has_docker_false_no_image():
+def test_has_docker_image_false_no_image():
     mock_result = MagicMock(returncode=1)
     with patch("fabprint.slicer.subprocess.run", return_value=mock_result):
-        assert _has_docker("fabprint:orca-2.3.1") is False
+        assert _has_docker_image("fabprint:orca-2.3.1") is False
 
 
-def test_has_docker_false_no_docker():
+def test_has_docker_image_false_no_docker():
     with patch("fabprint.slicer.subprocess.run", side_effect=FileNotFoundError):
-        assert _has_docker("fabprint:orca-2.3.1") is False
+        assert _has_docker_image("fabprint:orca-2.3.1") is False
 
 
 # --- _slice_via_docker ---
@@ -227,7 +227,7 @@ def test_slice_plate_docker_fallback(tmp_path):
 
     with (
         patch("fabprint.slicer.find_slicer", side_effect=FileNotFoundError("not found")),
-        patch("fabprint.slicer._has_docker", return_value=True),
+        patch("fabprint.slicer._ensure_docker_image", return_value=True),
         patch("fabprint.slicer.resolve_profile_data", side_effect=_mock_resolve),
         patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run,
     ):
@@ -240,7 +240,7 @@ def test_slice_plate_docker_fallback(tmp_path):
 
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == "docker"
-    assert "fabprint:latest" in cmd
+    assert "pzfreo/fabprint-orca:latest" in cmd
 
 
 def test_slice_plate_docker_explicit(tmp_path):
@@ -252,7 +252,7 @@ def test_slice_plate_docker_explicit(tmp_path):
     mock_result = MagicMock(returncode=0, stdout="", stderr="")
 
     with (
-        patch("fabprint.slicer._has_docker", return_value=True),
+        patch("fabprint.slicer._ensure_docker_image", return_value=True),
         patch("fabprint.slicer.resolve_profile_data", side_effect=_mock_resolve),
         patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run,
     ):
@@ -266,7 +266,7 @@ def test_slice_plate_docker_explicit(tmp_path):
 
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == "docker"
-    assert "fabprint:latest" in cmd
+    assert "pzfreo/fabprint-orca:latest" in cmd
 
 
 def test_slice_plate_docker_version(tmp_path):
@@ -278,7 +278,7 @@ def test_slice_plate_docker_version(tmp_path):
     mock_result = MagicMock(returncode=0, stdout="", stderr="")
 
     with (
-        patch("fabprint.slicer._has_docker", return_value=True),
+        patch("fabprint.slicer._ensure_docker_image", return_value=True),
         patch("fabprint.slicer.resolve_profile_data", side_effect=_mock_resolve),
         patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run,
     ):
@@ -292,7 +292,7 @@ def test_slice_plate_docker_version(tmp_path):
 
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == "docker"
-    assert "fabprint:orca-2.3.1" in cmd
+    assert "pzfreo/fabprint-orca:2.3.1" in cmd
 
 
 def test_slice_plate_docker_image_missing(tmp_path):
@@ -301,7 +301,7 @@ def test_slice_plate_docker_image_missing(tmp_path):
     input_3mf.write_text("fake")
 
     with (
-        patch("fabprint.slicer._has_docker", return_value=False),
+        patch("fabprint.slicer._ensure_docker_image", return_value=False),
     ):
         with pytest.raises(FileNotFoundError, match="Docker image.*not found"):
             slice_plate(

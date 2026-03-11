@@ -1,4 +1,4 @@
-name: Publish cloud-bridge image
+name: Publish packages and Docker images
 
 on:
   push:
@@ -32,11 +32,19 @@ jobs:
           git push
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
 
-      - name: Check if Docker image rebuild needed
+      - name: Check if cloud-bridge Docker rebuild needed
         id: bridge_changed
         run: |
           git diff ${{ github.sha }}^1 ${{ github.sha }} --name-only \
             | grep -qE 'Dockerfile\.cloud-bridge|scripts/bambu_cloud_bridge\.cpp' \
+            && echo "changed=true" >> "$GITHUB_OUTPUT" \
+            || echo "changed=false" >> "$GITHUB_OUTPUT"
+
+      - name: Check if OrcaSlicer Docker rebuild needed
+        id: orca_changed
+        run: |
+          git diff ${{ github.sha }}^1 ${{ github.sha }} --name-only \
+            | grep -qE '^Dockerfile$|src/fabprint/slicer\.py' \
             && echo "changed=true" >> "$GITHUB_OUTPUT" \
             || echo "changed=false" >> "$GITHUB_OUTPUT"
 
@@ -54,17 +62,17 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
 
       - name: Log in to Docker Hub
-        if: steps.bridge_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.bridge_changed.outputs.changed == 'true' || steps.orca_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        if: steps.bridge_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        if: steps.bridge_changed.outputs.changed == 'true' || steps.orca_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build and push cloud-bridge
         if: steps.bridge_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         uses: docker/build-push-action@v6
         with:
@@ -73,8 +81,22 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            fabprint/fabprint-cloud-bridge:latest
-            fabprint/fabprint-cloud-bridge:${{ steps.version.outputs.version }}
-            fabprint/fabprint-cloud-bridge:${{ github.sha }}
+            pzfreo/fabprint-cloud-bridge:latest
+            pzfreo/fabprint-cloud-bridge:${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push OrcaSlicer image
+        if: steps.orca_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            pzfreo/fabprint-orca:latest
+            pzfreo/fabprint-orca:${{ steps.version.outputs.version }}
+          build-args: ORCA_VERSION=2.3.1
           cache-from: type=gha
           cache-to: type=gha,mode=max
