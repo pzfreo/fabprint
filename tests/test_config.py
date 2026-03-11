@@ -409,3 +409,152 @@ scale = -1.0
     )
     with pytest.raises(ValueError, match="scale"):
         load_config(path)
+
+
+# --- filament by name ---
+
+
+def test_filament_by_name_auto_derive(tmp_path):
+    """String filament, no explicit list -> auto-derived."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+filament = "Generic PETG-CF @base"
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.slicer.filaments == ["Generic PETG-CF @base"]
+    assert cfg.parts[0].filament == 1
+
+
+def test_filament_by_name_multi_material(tmp_path):
+    """Multiple parts with different filaments -> correct ordering."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "frame.stl"
+filament = "Generic PETG-CF @base"
+
+[[parts]]
+file = "cover.stl"
+filament = "Generic PLA @base"
+""",
+        create_files=["frame.stl", "cover.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.slicer.filaments == ["Generic PETG-CF @base", "Generic PLA @base"]
+    assert cfg.parts[0].filament == 1
+    assert cfg.parts[1].filament == 2
+
+
+def test_filament_by_name_dedup(tmp_path):
+    """Multiple parts, same filament name -> single entry in derived list."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "a.stl"
+filament = "Generic PLA @base"
+
+[[parts]]
+file = "b.stl"
+filament = "Generic PLA @base"
+""",
+        create_files=["a.stl", "b.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.slicer.filaments == ["Generic PLA @base"]
+    assert cfg.parts[0].filament == 1
+    assert cfg.parts[1].filament == 1
+
+
+def test_filament_by_name_explicit_list(tmp_path):
+    """String filament with explicit list -> resolved to index."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer]
+filaments = ["Generic PLA @base", "Generic PETG-CF @base"]
+
+[[parts]]
+file = "cube.stl"
+filament = "Generic PETG-CF @base"
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 2
+
+
+def test_filament_by_name_not_in_list(tmp_path):
+    """String filament not in explicit list -> error."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer]
+filaments = ["Generic PLA @base"]
+
+[[parts]]
+file = "cube.stl"
+filament = "Generic ABS @base"
+""",
+        create_files=["cube.stl"],
+    )
+    with pytest.raises(ValueError, match="not in"):
+        load_config(path)
+
+
+def test_filament_mixed_int_string_no_list(tmp_path):
+    """Mixed int + string without explicit list -> error."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "a.stl"
+filament = 1
+
+[[parts]]
+file = "b.stl"
+filament = "Generic PLA @base"
+""",
+        create_files=["a.stl", "b.stl"],
+    )
+    with pytest.raises(ValueError, match="Cannot mix"):
+        load_config(path)
+
+
+def test_filament_int_backward_compat(tmp_path):
+    """Integer filament with explicit list -> works as before."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer]
+filaments = ["Generic PLA @base", "Generic PETG-CF @base"]
+
+[[parts]]
+file = "cube.stl"
+filament = 2
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 2
+
+
+def test_filament_empty_name(tmp_path):
+    """Empty filament name -> error."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+filament = ""
+""",
+        create_files=["cube.stl"],
+    )
+    with pytest.raises(ValueError, match="empty"):
+        load_config(path)

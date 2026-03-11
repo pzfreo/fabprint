@@ -44,7 +44,8 @@ pip install ".[dev]"    # pytest + ruff
 
 ```toml
 [printer]
-mode = "bambu-connect"
+mode = "cloud-bridge"
+serial = "01P00A..."
 
 [plate]
 size = [256, 256]
@@ -54,7 +55,6 @@ padding = 5.0
 engine = "orca"
 printer = "Bambu Lab P1S 0.4 nozzle"
 process = "0.20mm Standard @BBL X1C"
-filaments = ["Generic PLA @base", "Generic PLA @base", "Generic PETG-CF @base"]
 
 [slicer.overrides]
 enable_support = 1
@@ -63,14 +63,16 @@ curr_bed_type = "Textured PEI Plate"
 [[parts]]
 file = "frame.stl"
 copies = 1
-filament = 3           # PETG-CF in AMS slot 3
+filament = "Generic PETG-CF @base"
 
 [[parts]]
 file = "wheel.stl"
 copies = 5
 orient = "upright"
-filament = 3
+filament = "Generic PETG-CF @base"
 ```
+
+Parts reference filament profiles by name — no need to manually number AMS slots. The filament list is auto-derived from what parts use. For multi-material prints with explicit slot ordering, you can still set `[slicer].filaments` directly.
 
 2. Generate a build plate:
 
@@ -132,7 +134,7 @@ Credentials can also be set via environment variables, which override config val
 | `version`   | `string`   | —         | Required OrcaSlicer version (e.g. `"2.3.1"`) |
 | `printer`   | `string`   | —         | Printer profile name                   |
 | `process`   | `string`   | —         | Process profile name                   |
-| `filaments` | `[string]` | —         | Filament profiles (one per AMS slot)   |
+| `filaments` | `[string]` | —         | Filament profiles (auto-derived from parts if omitted) |
 
 ### `[slicer.overrides]`
 
