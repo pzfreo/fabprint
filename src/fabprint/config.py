@@ -31,7 +31,7 @@ class PartConfig:
     copies: int = 1
     orient: str = "flat"
     rotate: list[float] | None = None  # [rx, ry, rz] in degrees, overrides orient
-    filament: int = 1  # AMS slot (1-indexed)
+    filament: int = 1  # slicer filament slot (1-indexed), resolved from name or int
     scale: float = 1.0  # uniform scale factor
 
 
@@ -83,12 +83,13 @@ def load_config(path: Path) -> FabprintConfig:
     if slicer.engine not in ("bambu", "orca"):
         raise ValueError(f"slicer.engine must be 'bambu' or 'orca', got '{slicer.engine}'")
 
-    # Parts
+    # Parts — first pass: parse everything except filament resolution
     parts_raw = raw.get("parts", [])
     if not parts_raw:
         raise ValueError("At least one [[parts]] entry is required")
 
     parts = []
+    raw_filaments: list[int | str] = []  # preserve raw filament values for resolution
     for i, p in enumerate(parts_raw):
         if "file" not in p:
             raise ValueError(f"parts[{i}]: 'file' is required")
@@ -101,9 +102,15 @@ def load_config(path: Path) -> FabprintConfig:
         copies = int(p.get("copies", 1))
         if copies < 1:
             raise ValueError(f"parts[{i}]: copies must be >= 1, got {copies}")
-        filament = int(p.get("filament", 1))
-        if filament < 1:
-            raise ValueError(f"parts[{i}]: filament must be >= 1, got {filament}")
+        raw_fil = p.get("filament", 1)
+        if isinstance(raw_fil, str):
+            if not raw_fil.strip():
+                raise ValueError(f"parts[{i}]: filament name must not be empty")
+        else:
+            raw_fil = int(raw_fil)
+            if raw_fil < 1:
+                raise ValueError(f"parts[{i}]: filament must be >= 1, got {raw_fil}")
+        raw_filaments.append(raw_fil)
         rotate = p.get("rotate")
         if rotate is not None:
             if not isinstance(rotate, list) or len(rotate) != 3:
@@ -118,10 +125,47 @@ def load_config(path: Path) -> FabprintConfig:
                 copies=copies,
                 orient=orient,
                 rotate=rotate,
-                filament=filament,
+                filament=1,  # placeholder, resolved below
                 scale=scale,
             )
         )
+
+    # Resolve filament names → slot indices
+    has_string_filaments = any(isinstance(f, str) for f in raw_filaments)
+    has_int_filaments = any(isinstance(f, int) for f in raw_filaments)
+
+    if has_string_filaments and has_int_filaments and not slicer.filaments:
+        raise ValueError(
+            "Cannot mix filament names and indices without an explicit [slicer].filaments list"
+        )
+
+    if has_int_filaments and not has_string_filaments:
+        # All integers — backward compatible, no resolution needed
+        for i, raw_fil in enumerate(raw_filaments):
+            parts[i].filament = raw_fil
+    else:
+        # String filament references — resolve to indices
+        if not slicer.filaments:
+            # Auto-derive filaments list from unique names, preserving order
+            seen: dict[str, int] = {}
+            for raw_fil in raw_filaments:
+                if isinstance(raw_fil, str) and raw_fil not in seen:
+                    seen[raw_fil] = len(seen) + 1  # 1-indexed
+            slicer.filaments = list(seen.keys())
+
+        # Build name → index lookup
+        fil_index = {name: idx + 1 for idx, name in enumerate(slicer.filaments)}
+
+        for i, raw_fil in enumerate(raw_filaments):
+            if isinstance(raw_fil, str):
+                if raw_fil not in fil_index:
+                    raise ValueError(
+                        f"parts[{i}]: filament '{raw_fil}' not in "
+                        f"[slicer].filaments {slicer.filaments}"
+                    )
+                parts[i].filament = fil_index[raw_fil]
+            else:
+                parts[i].filament = raw_fil
 
     # Printer config (optional)
     printer = None
