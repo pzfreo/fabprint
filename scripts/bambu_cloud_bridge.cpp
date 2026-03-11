@@ -774,6 +774,9 @@ static int cmd_print(const std::string& token_json_raw, const std::string& devic
             } else if (msg.find("gcode_state") != std::string::npos &&
                        msg.find("PREPARE") != std::string::npos) {
                 vlog("  PREPARING: %s\n", msg.substr(0, 500).c_str());
+            } else if (msg.find("\"ams\"") != std::string::npos) {
+                // Log full AMS state (pushall response) — needed to diagnose mapping issues
+                vlog("  AMS_STATE: %s\n", msg.c_str());
             } else {
                 vlog("  mqtt: %s\n", msg.substr(0, 200).c_str());
             }
