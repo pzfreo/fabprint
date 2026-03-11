@@ -438,7 +438,11 @@ def _patch_config_3mf_ams_colors(
                 if f.get("color", "") != new_color:
                     log.debug(
                         "Patching filament %d color: %s → %s (AMS slot %d %s)",
-                        fid, f.get("color", ""), new_color, phys_slot, tray["type"],
+                        fid,
+                        f.get("color", ""),
+                        new_color,
+                        phys_slot,
+                        tray["type"],
                     )
                     f.set("color", new_color)
                     changed = True
@@ -571,7 +575,9 @@ def _build_ams_mapping(
 
     log.debug(
         "3MF filament slots: plate=%s, total=%d, settings=%s",
-        list(filament_by_id.keys()), total_slots, filament_setting_ids,
+        list(filament_by_id.keys()),
+        total_slots,
+        filament_setting_ids,
     )
 
     # Physical slot assignment: use live AMS state when available, else sequential.
@@ -581,7 +587,7 @@ def _build_ams_mapping(
     tray_by_phys = {t["phys_slot"]: t for t in (ams_trays or [])}
     # Group AMS trays by type for matching against filament setting names
     tray_by_type: dict[str, list[dict]] = {}
-    for t in (ams_trays or []):
+    for t in ams_trays or []:
         typ = t.get("type", "")
         if typ:
             tray_by_type.setdefault(typ, []).append(t)
