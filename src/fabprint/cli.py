@@ -483,17 +483,27 @@ def _render_printer(status: dict, name: str, serial: str) -> list[str]:
             stage = _PRINT_STAGES.get(stage_id, "")
         if stage:
             lines.append(f"  Stage:    {stage}")
-        percent = status.get("mc_percent", 0)
+        percent = int(status.get("mc_percent", 0))
         layer = status.get("layer_num", 0)
         total_layers = status.get("total_layer_num", 0)
-        progress = f"  Progress: {percent}%"
+
+        # Progress bar
+        bar_width = 30
+        filled = int(bar_width * percent / 100)
+        bar = "\u2588" * filled + "\u2591" * (bar_width - filled)
+        progress = f"  Progress: [{bar}] {percent}%"
         if total_layers:
             progress += f" (layer {layer}/{total_layers})"
         lines.append(progress)
-        remaining = status.get("mc_remaining_time", 0)
+
+        remaining = int(status.get("mc_remaining_time", 0))
         if remaining:
-            h, m = divmod(int(remaining), 60)
-            lines.append(f"  Remaining: {h}h {m}m" if h else f"  Remaining: {m}m")
+            import time as _time
+
+            h, m = divmod(remaining, 60)
+            eta = _time.strftime("%H:%M", _time.localtime(_time.time() + remaining * 60))
+            time_str = f"{h}h {m}m" if h else f"{m}m"
+            lines.append(f"  ETA:      {time_str} remaining (done ~{eta})")
 
     nozzle = status.get("nozzle_temper", 0)
     nozzle_target = status.get("nozzle_target_temper", 0)
@@ -526,7 +536,7 @@ def _cmd_watch(args: argparse.Namespace) -> None:
     """Live dashboard showing all bound printers."""
     import time
 
-    from fabprint.cloud import cloud_list_devices, cloud_status
+    from fabprint.cloud import PersistentBridge, cloud_list_devices
 
     token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
     token_file = Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
@@ -546,34 +556,35 @@ def _cmd_watch(args: argparse.Namespace) -> None:
     serials = [d["dev_id"] for d in devices]
     print(f"Found {len(serials)} printer(s): {', '.join(printer_names.values())}")
 
-    try:
-        while True:
-            t0 = time.monotonic()
-            output_lines = []
+    with PersistentBridge(token_file) as bridge:
+        try:
+            while True:
+                t0 = time.monotonic()
+                output_lines = []
 
-            for serial in serials:
-                name = printer_names[serial]
-                output_lines.append(f"\033[1m{name}\033[0m  ({serial})")
-                try:
-                    status = cloud_status(serial, token_file)
-                    output_lines.extend(_render_printer(status, name, serial))
-                except Exception as e:
-                    output_lines.append(f"  \033[31merror: {e}\033[0m")
-                output_lines.append("")
+                for serial in serials:
+                    name = printer_names[serial]
+                    output_lines.append(f"\033[1m{name}\033[0m  ({serial})")
+                    try:
+                        status = bridge.status(serial)
+                        output_lines.extend(_render_printer(status, name, serial))
+                    except Exception as e:
+                        output_lines.append(f"  \033[31merror: {e}\033[0m")
+                    output_lines.append("")
 
-            elapsed = time.monotonic() - t0
-            now = time.strftime("%H:%M:%S")
-            header = f"fabprint watch  {now}  (polled in {elapsed:.0f}s, Ctrl-C to quit)"
+                elapsed = time.monotonic() - t0
+                now = time.strftime("%H:%M:%S")
+                header = f"fabprint watch  {now}  (polled in {elapsed:.1f}s, Ctrl-C to quit)"
 
-            # Clear screen and print
-            sys.stdout.write("\033[2J\033[H")
-            sys.stdout.write(header + "\n\n" + "\n".join(output_lines))
-            sys.stdout.flush()
+                # Clear screen and print
+                sys.stdout.write("\033[2J\033[H")
+                sys.stdout.write(header + "\n\n" + "\n".join(output_lines))
+                sys.stdout.flush()
 
-            sleep_time = max(1, interval - elapsed)
-            time.sleep(sleep_time)
-    except KeyboardInterrupt:
-        print("\n")
+                sleep_time = max(1, interval - elapsed)
+                time.sleep(sleep_time)
+        except KeyboardInterrupt:
+            print("\n")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:
