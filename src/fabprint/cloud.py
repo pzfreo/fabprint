@@ -563,12 +563,24 @@ def _build_ams_mapping(
     if not filament_by_id:
         return result
 
+    log.debug(
+        "3MF filament slots: plate=%s, total=%d, settings=%s",
+        list(filament_by_id.keys()), total_slots, filament_setting_ids,
+    )
+
     # Physical slot assignment: use live AMS state when available, else sequential.
     phys_by_id = _build_ams_mapping_from_state(filament_by_id, total_slots, ams_trays or [])
 
-    # Build lookups from physical slot and tray_info_idx → AMS tray
+    # Build lookups from physical slot and filament type → AMS tray
     tray_by_phys = {t["phys_slot"]: t for t in (ams_trays or [])}
-    tray_by_idx = {t["tray_info_idx"]: t for t in (ams_trays or []) if t.get("tray_info_idx")}
+    # Group AMS trays by type for matching against filament setting names
+    tray_by_type: dict[str, list[dict]] = {}
+    for t in (ams_trays or []):
+        typ = t.get("type", "")
+        if typ:
+            tray_by_type.setdefault(typ, []).append(t)
+    # Sort type keys longest-first so "PETG-CF" matches before "PLA" etc.
+    type_keys_sorted = sorted(tray_by_type.keys(), key=len, reverse=True)
 
     # All arrays are full-length (one entry per virtual slot), matching BambuConnect's format.
     # Unused slots get sentinel values: -1 / {255,255} / "" — not just the used filaments.
@@ -605,12 +617,19 @@ def _build_ams_mapping(
             setting_ids.append(tray_idx)
         else:
             # Slot not used on this plate — try matching via filament_settings_id
-            # (tray_info_idx) so loaded-but-unused filaments still get correct
-            # physical slots. Without this, single-material prints produce an
-            # incomplete mapping that triggers "Failed to get AMS mapping table".
+            # (e.g. "Generic ABS @base") so loaded-but-unused filaments still get
+            # correct physical slots. Without this, single-material prints produce
+            # an incomplete mapping that triggers "Failed to get AMS mapping table".
             n = len(filament_setting_ids)
             setting_id = filament_setting_ids[slot_idx] if slot_idx < n else ""
-            tray = tray_by_idx.get(setting_id) if setting_id else None
+            # Match by finding which AMS tray type appears in the setting name
+            tray = None
+            if setting_id:
+                for typ in type_keys_sorted:
+                    if typ in setting_id:
+                        candidates = tray_by_type[typ]
+                        tray = candidates[0]
+                        break
             if tray:
                 phys_slot = tray["phys_slot"]
                 target_color = tray["color"] + "FF"
