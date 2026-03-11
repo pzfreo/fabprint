@@ -309,6 +309,7 @@ def _send_cloud_bridge(
     serial: str | None = None,
     dry_run: bool = False,
     verbose: bool = False,
+    skip_ams_mapping: bool = False,
 ) -> None:
     """Send gcode to printer via the bambu_cloud_bridge binary.
 
@@ -392,6 +393,7 @@ def _send_cloud_bridge(
         project_name=gcode_path.stem,
         ams_trays=ams_trays,
         verbose=verbose,
+        skip_ams_mapping=skip_ams_mapping,
     )
 
     status = result.get("result", "unknown")
@@ -483,6 +485,7 @@ def send_print(
     dry_run: bool = False,
     upload_only: bool = False,
     experimental: bool = False,
+    skip_ams_mapping: bool = False,
 ) -> None:
     """Send gcode to a Bambu Lab printer.
 
@@ -526,6 +529,7 @@ def send_print(
             serial=creds["serial"],
             dry_run=dry_run,
             verbose=log.isEnabledFor(logging.DEBUG),
+            skip_ams_mapping=skip_ams_mapping,
         )
 
     elif creds["mode"] == "cloud-http":

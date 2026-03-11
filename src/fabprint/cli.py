@@ -101,6 +101,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Enable experimental printer modes (e.g. cloud-http, which lacks request signing)",
     )
     print_cmd.add_argument(
+        "--no-ams-mapping",
+        action="store_true",
+        help="Skip AMS mapping and use bridge default [0,1,2,3] (diagnostic)",
+    )
+    print_cmd.add_argument(
         "--docker",
         action="store_true",
         help="Force slicing via Docker (even if local slicer is available)",
@@ -329,6 +334,7 @@ def _cmd_print(args: argparse.Namespace) -> None:
         dry_run=args.dry_run,
         upload_only=args.upload_only,
         experimental=getattr(args, "experimental", False),
+        skip_ams_mapping=getattr(args, "no_ams_mapping", False),
     )
 
 
