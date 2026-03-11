@@ -156,6 +156,14 @@ def main(argv: list[str] | None = None) -> None:
     status_cmd = sub.add_parser("status", parents=[common], help="Query live printer status")
     status_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
 
+    # watch subcommand
+    watch_cmd = sub.add_parser(
+        "watch", parents=[common], help="Live dashboard for all printers (no config needed)"
+    )
+    watch_cmd.add_argument(
+        "--interval", type=int, default=10, help="Refresh interval in seconds (default: 10)"
+    )
+
     args = parser.parse_args(argv)
 
     if args.command is None:
@@ -175,6 +183,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_print(args)
     elif args.command == "status":
         _cmd_status(args)
+    elif args.command == "watch":
+        _cmd_watch(args)
     elif args.command == "profiles":
         _cmd_profiles(args)
 
@@ -388,7 +398,11 @@ def _cmd_status(args: argparse.Namespace) -> None:
         print(f"  Task:     {task_name}")
 
     if state not in ("IDLE", "FINISH", "FAILED", ""):
-        stage = _PRINT_STAGES.get(str(status.get("mc_print_stage", "")), "")
+        stage_id = str(status.get("mc_print_stage", ""))
+        if layer and int(layer) > 0:
+            stage = "printing"
+        else:
+            stage = _PRINT_STAGES.get(stage_id, "")
         if stage:
             print(f"  Stage:    {stage}")
         print(f"  Progress: {percent}%", end="")
@@ -423,6 +437,143 @@ def _cmd_status(args: argparse.Namespace) -> None:
             r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
             swatch = f"\033[48;2;{r};{g};{b}m  \033[0m"
             print(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  {swatch} #{c}{active}")
+
+
+def _render_printer(status: dict, name: str, serial: str) -> list[str]:
+    """Render a single printer's status as lines of text."""
+    from fabprint.cloud import parse_ams_trays
+
+    _PRINT_STAGES = {
+        "0": "printing",
+        "1": "auto bed leveling",
+        "2": "heatbed preheating",
+        "3": "sweeping XY mech mode",
+        "4": "changing filament",
+        "5": "M400 pause",
+        "6": "filament runout pause",
+        "7": "heating hotend",
+        "8": "calibrating extrusion",
+        "9": "scanning bed surface",
+        "10": "inspecting first layer",
+        "11": "identifying build plate type",
+        "12": "calibrating micro lidar",
+        "13": "homing toolhead",
+        "14": "cleaning nozzle tip",
+        "17": "calibrating extrusion flow",
+        "18": "vibration compensation",
+        "19": "motor noise calibration",
+    }
+
+    lines: list[str] = []
+    state = status.get("gcode_state", "unknown")
+    lines.append(f"  State:    {state}")
+
+    task_name = status.get("subtask_name", "")
+    if task_name:
+        lines.append(f"  Task:     {task_name}")
+
+    if state not in ("IDLE", "FINISH", "FAILED", ""):
+        layer = status.get("layer_num", 0)
+        stage_id = str(status.get("mc_print_stage", ""))
+        # mc_print_stage doesn't update reliably during printing —
+        # override with "printing" when we have layer progress.
+        if layer and int(layer) > 0:
+            stage = "printing"
+        else:
+            stage = _PRINT_STAGES.get(stage_id, "")
+        if stage:
+            lines.append(f"  Stage:    {stage}")
+        percent = status.get("mc_percent", 0)
+        layer = status.get("layer_num", 0)
+        total_layers = status.get("total_layer_num", 0)
+        progress = f"  Progress: {percent}%"
+        if total_layers:
+            progress += f" (layer {layer}/{total_layers})"
+        lines.append(progress)
+        remaining = status.get("mc_remaining_time", 0)
+        if remaining:
+            h, m = divmod(int(remaining), 60)
+            lines.append(f"  Remaining: {h}h {m}m" if h else f"  Remaining: {m}m")
+
+    nozzle = status.get("nozzle_temper", 0)
+    nozzle_target = status.get("nozzle_target_temper", 0)
+    bed = status.get("bed_temper", 0)
+    bed_target = status.get("bed_target_temper", 0)
+    nozzle_str = f"{nozzle:.0f}\u00b0C"
+    if nozzle_target:
+        nozzle_str += f" \u2192 {nozzle_target:.0f}\u00b0C"
+    bed_str = f"{bed:.0f}\u00b0C"
+    if bed_target:
+        bed_str += f" \u2192 {bed_target:.0f}\u00b0C"
+    lines.append(f"  Nozzle:   {nozzle_str}")
+    lines.append(f"  Bed:      {bed_str}")
+
+    ams_trays = parse_ams_trays(status)
+    if ams_trays:
+        tray_now_raw = int(status.get("ams", {}).get("tray_now", 255))
+        lines.append("  AMS:")
+        for t in ams_trays:
+            active = " <-- printing" if t["phys_slot"] == tray_now_raw else ""
+            c = t["color"]
+            r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+            swatch = f"\033[48;2;{r};{g};{b}m  \033[0m"
+            lines.append(f"    slot {t['phys_slot'] + 1}  {t['type']:<12}  {swatch} #{c}{active}")
+
+    return lines
+
+
+def _cmd_watch(args: argparse.Namespace) -> None:
+    """Live dashboard showing all bound printers."""
+    import time
+
+    from fabprint.cloud import cloud_list_devices, cloud_status
+
+    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
+    token_file = Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
+    if not token_file.exists():
+        print(f"Token file not found: {token_file}")
+        print("Run 'python scripts/bambu_cloud_login.py' first, or set BAMBU_TOKEN_FILE.")
+        sys.exit(1)
+    interval = args.interval
+
+    print("Discovering printers...")
+    devices = cloud_list_devices(token_file)
+    if not devices:
+        print("No printers found.")
+        return
+
+    printer_names = {d["dev_id"]: d.get("name", d["dev_id"]) for d in devices}
+    serials = [d["dev_id"] for d in devices]
+    print(f"Found {len(serials)} printer(s): {', '.join(printer_names.values())}")
+
+    try:
+        while True:
+            t0 = time.monotonic()
+            output_lines = []
+
+            for serial in serials:
+                name = printer_names[serial]
+                output_lines.append(f"\033[1m{name}\033[0m  ({serial})")
+                try:
+                    status = cloud_status(serial, token_file)
+                    output_lines.extend(_render_printer(status, name, serial))
+                except Exception as e:
+                    output_lines.append(f"  \033[31merror: {e}\033[0m")
+                output_lines.append("")
+
+            elapsed = time.monotonic() - t0
+            now = time.strftime("%H:%M:%S")
+            header = f"fabprint watch  {now}  (polled in {elapsed:.0f}s, Ctrl-C to quit)"
+
+            # Clear screen and print
+            sys.stdout.write("\033[2J\033[H")
+            sys.stdout.write(header + "\n\n" + "\n".join(output_lines))
+            sys.stdout.flush()
+
+            sleep_time = max(1, interval - elapsed)
+            time.sleep(sleep_time)
+    except KeyboardInterrupt:
+        print("\n")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:
