@@ -205,6 +205,7 @@ fabprint print <config>           # Arrange, slice, and send to printer
 fabprint print <config> --dry-run # Do everything except send to printer
 fabprint print <config> --gcode output/plate_1.gcode  # Send pre-sliced gcode
 fabprint print <config> --upload-only  # Upload without starting print
+fabprint gcode-info output/plate_1.gcode  # Analyze extruder usage per layer
 fabprint login                    # Login to Bambu Cloud and cache token
 fabprint watch                    # Live dashboard for all printers
 fabprint status                   # Query status of all printers
