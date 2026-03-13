@@ -35,6 +35,8 @@ class PartConfig:
     filament: int = 1  # slicer filament slot (1-indexed), resolved from name or int
     scale: float = 1.0  # uniform scale factor
     object_filaments: dict[str, int] = field(default_factory=dict)  # 3MF object → slot
+    object: str | None = None  # select named object from multi-object 3MF
+    sequence: int = 1  # print order for sequential printing
 
 
 @dataclass
@@ -152,6 +154,15 @@ def load_config(path: Path) -> FabprintConfig:
         scale = float(p.get("scale", 1.0))
         if scale <= 0:
             raise ValueError(f"parts[{i}]: scale must be > 0, got {scale}")
+        obj_name = p.get("object")
+        if obj_name is not None:
+            if not isinstance(obj_name, str) or not obj_name.strip():
+                raise ValueError(f"parts[{i}]: object must be a non-empty string")
+            if obj_fils_raw:
+                raise ValueError(f"parts[{i}]: cannot use both 'object' and [parts.filaments]")
+        sequence = int(p.get("sequence", 1))
+        if sequence < 1:
+            raise ValueError(f"parts[{i}]: sequence must be >= 1, got {sequence}")
         parts.append(
             PartConfig(
                 file=file_path,
@@ -160,6 +171,8 @@ def load_config(path: Path) -> FabprintConfig:
                 rotate=rotate,
                 filament=1,  # placeholder, resolved below
                 scale=scale,
+                object=obj_name,
+                sequence=sequence,
             )
         )
 

@@ -803,3 +803,115 @@ filament = "Generic PLA @base"
     )
     cfg = load_config(path)
     assert cfg.parts[0].object_filaments == {}
+
+
+# --- object selection and sequence ---
+
+
+def test_object_selection(tmp_path):
+    """Parts can select a named object from a multi-object 3MF."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "widget.3mf"
+object = "inlay"
+filament = 1
+
+[[parts]]
+file = "widget.3mf"
+object = "body"
+filament = 2
+""",
+        create_files=["widget.3mf"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].object == "inlay"
+    assert cfg.parts[1].object == "body"
+
+
+def test_object_empty_string(tmp_path):
+    """Object must be a non-empty string."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "widget.3mf"
+object = ""
+""",
+        create_files=["widget.3mf"],
+    )
+    with pytest.raises(ValueError, match="object must be a non-empty string"):
+        load_config(path)
+
+
+def test_object_and_filaments_mutual_exclusion(tmp_path):
+    """Cannot use both 'object' and [parts.filaments]."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "widget.3mf"
+object = "inlay"
+
+[parts.filaments]
+inlay = 1
+body = 2
+""",
+        create_files=["widget.3mf"],
+    )
+    with pytest.raises(ValueError, match="cannot use both 'object' and"):
+        load_config(path)
+
+
+def test_sequence_default(tmp_path):
+    """Sequence defaults to 1."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].sequence == 1
+
+
+def test_sequence_explicit(tmp_path):
+    """Parts can specify a sequence number for sequential printing."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "widget.3mf"
+object = "inlay"
+filament = 1
+sequence = 1
+
+[[parts]]
+file = "widget.3mf"
+object = "body"
+filament = 2
+sequence = 2
+""",
+        create_files=["widget.3mf"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].sequence == 1
+    assert cfg.parts[1].sequence == 2
+
+
+def test_sequence_invalid(tmp_path):
+    """Sequence must be >= 1."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+sequence = 0
+""",
+        create_files=["cube.stl"],
+    )
+    with pytest.raises(ValueError, match="sequence must be >= 1"):
+        load_config(path)

@@ -128,6 +128,12 @@ def main(argv: list[str] | None = None) -> None:
         default=1,
         help="AMS slot for --filament-type (default: 1)",
     )
+    print_cmd.add_argument(
+        "--sequence",
+        type=int,
+        default=None,
+        help="Print only this sequence number (for sequential printing configs)",
+    )
 
     # profiles subcommand
     profiles_cmd = sub.add_parser("profiles", parents=[common], help="List or pin slicer profiles")
@@ -210,27 +216,102 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_profiles(args)
 
 
-def _generate_plate(
-    args: argparse.Namespace, output: Path
-) -> tuple[FabprintConfig, list[int], bool]:
-    """Shared logic: load config, orient, arrange, optionally view, export 3MF.
+def _load_parts(cfg: FabprintConfig, global_scale: float | None = None):
+    """Load and prepare meshes from config parts.
 
-    Returns (config, filament_ids, has_paint_colors).
+    For parts with 'object' set, loads a specific named object from a multi-object
+    3MF. Parts from the same file are grouped: a combined mesh is used for
+    arrangement so that objects maintain their relative positions.
+
+    Returns (meshes, names, filament_ids, has_paint_colors, part_info, part_sequences).
+    part_sequences is a parallel list of sequence numbers for each mesh.
     """
-    cfg = load_config(args.config)
+    import trimesh as _trimesh
 
     meshes = []
     names = []
     filament_ids = []
+    part_sequences = []
     has_paint_colors = False
-    part_info = []  # (name, copies, filament, scale, w, d, h) per unique part
-    global_scale = getattr(args, "scale", None)
-    for part in cfg.parts:
-        is_group = bool(part.object_filaments)
+    part_info = []
+
+    # Group parts by source file for object-selection parts
+    # so they share the same arrangement position
+    file_groups: dict[Path, list[int]] = {}  # file → list of part indices
+    for i, part in enumerate(cfg.parts):
+        if part.object:
+            file_groups.setdefault(part.file, []).append(i)
+
+    # Track which parts are handled via file groups
+    grouped_parts: set[int] = set()
+    for indices in file_groups.values():
+        if len(indices) > 1:
+            grouped_parts.update(indices)
+
+    # Process file groups (multiple object-selection parts from the same 3MF)
+    processed_files: set[Path] = set()
+    for file_path, part_indices in file_groups.items():
+        if len(part_indices) < 2 or file_path in processed_files:
+            continue
+        processed_files.add(file_path)
+
+        # Load all objects from the 3MF
+        all_objects = dict(load_3mf_objects(file_path))
+        group_parts = [cfg.parts[i] for i in part_indices]
+        scale = group_parts[0].scale * global_scale if global_scale else group_parts[0].scale
+
+        # Build sub-meshes for each part in the group, tagged with sequence
+        sub_meshes = []
+        for part in group_parts:
+            if part.object not in all_objects:
+                raise ValueError(
+                    f"Object '{part.object}' not found in {file_path}. "
+                    f"Available: {list(all_objects.keys())}"
+                )
+            obj_mesh = all_objects[part.object].copy()
+            if scale != 1.0:
+                obj_mesh.apply_scale(scale)
+            obj_mesh.metadata["filament_id"] = part.filament
+            obj_mesh.metadata["sequence"] = part.sequence
+            sub_meshes.append((part.object, obj_mesh))
+
+        # Combine for arrangement
+        combined = _trimesh.util.concatenate([m for _, m in sub_meshes])
+        combined.metadata["filament_id"] = group_parts[0].filament
+        combined.metadata["group_objects"] = sub_meshes
+        combined.metadata["original_bounds_min"] = combined.bounds[0][:2].copy()
+        w, d, h = combined.extents
+
+        copies = group_parts[0].copies
+        part_info.append((file_path.stem, copies, group_parts[0].filament, scale, w, d, h))
+        for i in range(copies):
+            meshes.append(combined.copy())
+            suffix = f"_{i + 1}" if copies > 1 else ""
+            names.append(f"{file_path.stem}{suffix}")
+            filament_ids.append(group_parts[0].filament)
+            part_sequences.append(0)  # 0 = group with mixed sequences, handled in build
+
+    # Process remaining parts (non-grouped)
+    for i, part in enumerate(cfg.parts):
+        if i in grouped_parts:
+            continue
+
         scale = part.scale * global_scale if global_scale else part.scale
 
-        if is_group:
-            # Multi-object 3MF: load individual objects, combine for packing
+        if part.object:
+            # Single object selection (not grouped with other parts)
+            all_objects = dict(load_3mf_objects(part.file))
+            if part.object not in all_objects:
+                raise ValueError(
+                    f"Object '{part.object}' not found in {part.file}. "
+                    f"Available: {list(all_objects.keys())}"
+                )
+            mesh = all_objects[part.object].copy()
+            if scale != 1.0:
+                mesh.apply_scale(scale)
+            mesh.metadata["filament_id"] = part.filament
+        elif part.object_filaments:
+            # Multi-object 3MF with per-object filaments (multi-material)
             objects = load_3mf_objects(part.file)
             sub_meshes = []
             for obj_name, obj_mesh in objects:
@@ -240,36 +321,43 @@ def _generate_plate(
                 obj_mesh.metadata["filament_id"] = fil_id
                 sub_meshes.append((obj_name, obj_mesh))
 
-            import trimesh as _trimesh
-
-            combined = _trimesh.util.concatenate([m for _, m in sub_meshes])
-            combined.metadata["filament_id"] = part.filament
-            combined.metadata["group_objects"] = sub_meshes
-            combined.metadata["original_bounds_min"] = combined.bounds[0][:2].copy()
-            w, d, h = combined.extents
-            part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
-            for i in range(part.copies):
-                meshes.append(combined.copy())
-                suffix = f"_{i + 1}" if part.copies > 1 else ""
-                names.append(f"{part.file.stem}{suffix}")
-                filament_ids.append(part.filament)
+            mesh = _trimesh.util.concatenate([m for _, m in sub_meshes])
+            mesh.metadata["filament_id"] = part.filament
+            mesh.metadata["group_objects"] = sub_meshes
+            mesh.metadata["original_bounds_min"] = mesh.bounds[0][:2].copy()
         else:
             base_mesh = load_mesh(part.file)
-            oriented = orient_mesh(base_mesh, part.orient, part.rotate)
+            mesh = orient_mesh(base_mesh, part.orient, part.rotate)
             if scale != 1.0:
-                oriented.apply_scale(scale)
-            oriented.metadata["filament_id"] = part.filament
+                mesh.apply_scale(scale)
+            mesh.metadata["filament_id"] = part.filament
             paint_colors = extract_paint_colors(part.file)
             if paint_colors:
-                oriented.metadata["paint_colors"] = paint_colors
+                mesh.metadata["paint_colors"] = paint_colors
                 has_paint_colors = True
-            w, d, h = oriented.extents
-            part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
-            for i in range(part.copies):
-                meshes.append(oriented.copy())
-                suffix = f"_{i + 1}" if part.copies > 1 else ""
-                names.append(f"{part.file.stem}{suffix}")
-                filament_ids.append(part.filament)
+
+        w, d, h = mesh.extents
+        part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
+        for c in range(part.copies):
+            meshes.append(mesh.copy())
+            suffix = f"_{c + 1}" if part.copies > 1 else ""
+            names.append(f"{part.file.stem}{suffix}")
+            filament_ids.append(part.filament)
+            part_sequences.append(part.sequence)
+
+    return meshes, names, filament_ids, has_paint_colors, part_info, part_sequences
+
+
+def _generate_plate(
+    args: argparse.Namespace, output: Path
+) -> tuple[FabprintConfig, list[int], bool]:
+    """Shared logic: load config, orient, arrange, optionally view, export 3MF.
+
+    Returns (config, filament_ids, has_paint_colors).
+    """
+    cfg = load_config(args.config)
+    global_scale = getattr(args, "scale", None)
+    meshes, names, filament_ids, has_paint_colors, part_info, _ = _load_parts(cfg, global_scale)
 
     _print_summary(part_info, len(meshes), cfg.plate.size)
 
@@ -283,6 +371,79 @@ def _generate_plate(
     scene = build_plate(placements, cfg.plate.size)
     export_plate(scene, output)
     return cfg, filament_ids, has_paint_colors
+
+
+def _generate_sequential_plates(
+    args: argparse.Namespace, output_prefix: Path
+) -> list[tuple[int, Path, FabprintConfig, list[int], bool]]:
+    """Generate one plate per sequence, all sharing the same arrangement.
+
+    Returns list of (seq_num, plate_path, config, filament_ids, has_paint_colors).
+    """
+    cfg = load_config(args.config)
+    global_scale = getattr(args, "scale", None)
+    meshes, names, filament_ids, has_paint_colors, part_info, part_sequences = _load_parts(
+        cfg, global_scale
+    )
+
+    _print_summary(part_info, len(meshes), cfg.plate.size)
+
+    placements = arrange(meshes, names, cfg.plate.size, cfg.plate.padding)
+
+    sequences = sorted(set(s for s in part_sequences if s > 0))
+    # Also collect sequences from group sub-objects
+    for p in placements:
+        group = p.mesh.metadata.get("group_objects")
+        if group:
+            for _, obj_mesh in group:
+                seq = obj_mesh.metadata.get("sequence", 1)
+                if seq not in sequences:
+                    sequences.append(seq)
+    sequences = sorted(set(sequences))
+
+    results = []
+    for seq_num in sequences:
+        plate_path = output_prefix.parent / f"{output_prefix.stem}_seq{seq_num}.3mf"
+
+        # Filter placements for this sequence
+        seq_placements = []
+        for pi, p in enumerate(placements):
+            group = p.mesh.metadata.get("group_objects")
+            if group:
+                # Filter group to only this sequence's objects
+                seq_objects = [(n, m) for n, m in group if m.metadata.get("sequence", 1) == seq_num]
+                if seq_objects:
+                    import trimesh as _trimesh
+
+                    # Create a new combined mesh with only this sequence's objects
+                    combined = _trimesh.util.concatenate([m for _, m in seq_objects])
+                    combined.metadata["filament_id"] = seq_objects[0][1].metadata["filament_id"]
+                    combined.metadata["group_objects"] = seq_objects
+                    combined.metadata["original_bounds_min"] = p.mesh.metadata.get(
+                        "original_bounds_min"
+                    )
+
+                    from fabprint.arrange import Placement
+
+                    seq_placements.append(Placement(mesh=combined, name=p.name, x=p.x, y=p.y))
+            else:
+                # Non-grouped part: include if sequence matches
+                if part_sequences[pi] == seq_num:
+                    seq_placements.append(p)
+
+        if not seq_placements:
+            continue
+
+        scene = build_plate(seq_placements, cfg.plate.size)
+        export_plate(scene, plate_path)
+
+        seq_fil_ids = []
+        for p in seq_placements:
+            seq_fil_ids.append(p.mesh.metadata.get("filament_id", 1))
+
+        results.append((seq_num, plate_path, cfg, seq_fil_ids, has_paint_colors))
+
+    return results
 
 
 def _print_summary(
@@ -302,10 +463,23 @@ def _print_summary(
     print(f"\nPlate: {total} parts on {plate_size[0]:.0f}x{plate_size[1]:.0f}mm")
 
 
+def _has_sequences(cfg: FabprintConfig) -> bool:
+    """Check if config uses sequential printing (multiple distinct sequences)."""
+    sequences = {p.sequence for p in cfg.parts}
+    return len(sequences) > 1
+
+
 def _cmd_plate(args: argparse.Namespace) -> None:
-    output = args.output or Path("plate.3mf")
-    _generate_plate(args, output)
-    print(f"Plate exported to {output}")
+    cfg = load_config(args.config)
+    if _has_sequences(cfg):
+        output = args.output or Path("plate.3mf")
+        results = _generate_sequential_plates(args, output)
+        for seq_num, plate_path, *_ in results:
+            print(f"Sequence {seq_num}: {plate_path}")
+    else:
+        output = args.output or Path("plate.3mf")
+        _generate_plate(args, output)
+        print(f"Plate exported to {output}")
 
 
 def _do_slice(args: argparse.Namespace) -> Path:
@@ -360,8 +534,62 @@ def _do_slice(args: argparse.Namespace) -> Path:
     return output_dir
 
 
+def _do_slice_sequential(args: argparse.Namespace) -> list[tuple[int, Path]]:
+    """Slice each sequence separately. Returns list of (seq_num, output_dir)."""
+    from fabprint.slicer import parse_gcode_stats, slice_plate
+
+    plate_3mf = Path("plate.3mf")
+    results = _generate_sequential_plates(args, plate_3mf)
+
+    sliced = []
+    for seq_num, plate_path, cfg, filament_ids, has_paint_colors in results:
+        if args.filament_type:
+            filaments = [args.filament_type]
+            filament_ids = [args.filament_slot] * len(filament_ids)
+        elif has_paint_colors:
+            filaments = None
+        else:
+            filaments = cfg.slicer.filaments
+
+        seq_output_dir = (args.output_dir or Path("output")) / f"seq{seq_num}"
+        output_dir = slice_plate(
+            input_3mf=plate_path,
+            engine=cfg.slicer.engine,
+            output_dir=seq_output_dir,
+            printer=cfg.slicer.printer,
+            process=cfg.slicer.process,
+            filaments=filaments,
+            filament_ids=filament_ids,
+            overrides=cfg.slicer.overrides or None,
+            project_dir=cfg.base_dir,
+            docker=args.docker or args.docker_version is not None,
+            docker_version=args.docker_version,
+            required_version=cfg.slicer.version,
+        )
+        print(f"Sequence {seq_num}: sliced to {output_dir}")
+
+        stats = parse_gcode_stats(output_dir)
+        parts = []
+        if "filament_g" in stats:
+            parts.append(f"{stats['filament_g']:.1f}g filament")
+        elif "filament_cm3" in stats:
+            parts.append(f"{stats['filament_cm3']:.1f}cm3 filament")
+        if "print_time" in stats:
+            parts.append(f"estimated {stats['print_time']}")
+        if parts:
+            print(f"  {', '.join(parts)}")
+
+        sliced.append((seq_num, output_dir))
+
+    return sliced
+
+
 def _cmd_slice(args: argparse.Namespace) -> None:
-    _do_slice(args)
+    cfg = load_config(args.config)
+    if _has_sequences(cfg):
+        _do_slice_sequential(args)
+    else:
+        _do_slice(args)
 
 
 def _cmd_print(args: argparse.Namespace) -> None:
@@ -377,6 +605,39 @@ def _cmd_print(args: argparse.Namespace) -> None:
         gcode_path = args.gcode.resolve()
         if not gcode_path.exists():
             raise FileNotFoundError(f"Gcode file not found: {gcode_path}")
+        send_print(
+            gcode_path,
+            cfg.printer,
+            dry_run=args.dry_run,
+            upload_only=args.upload_only,
+            experimental=getattr(args, "experimental", False),
+            skip_ams_mapping=getattr(args, "no_ams_mapping", False),
+        )
+    elif _has_sequences(cfg):
+        # Sequential printing: slice all sequences, send only the requested one
+        seq = args.sequence
+        if seq is None:
+            raise ValueError(
+                "Config has multiple sequences. Use --sequence N to print one at a time."
+            )
+        sliced = _do_slice_sequential(args)
+        match = [d for s, d in sliced if s == seq]
+        if not match:
+            available = [s for s, _ in sliced]
+            raise ValueError(f"Sequence {seq} not found. Available: {available}")
+        gcode_files = list(match[0].glob("*.gcode"))
+        if not gcode_files:
+            raise RuntimeError(f"No gcode files found in {match[0]} for sequence {seq}")
+        gcode_path = gcode_files[0]
+        print(f"\nSending sequence {seq} to printer...")
+        send_print(
+            gcode_path,
+            cfg.printer,
+            dry_run=args.dry_run,
+            upload_only=args.upload_only,
+            experimental=getattr(args, "experimental", False),
+            skip_ams_mapping=getattr(args, "no_ams_mapping", False),
+        )
     else:
         # Full pipeline: arrange → slice → find gcode
         output_dir = _do_slice(args)
@@ -384,15 +645,14 @@ def _cmd_print(args: argparse.Namespace) -> None:
         if not gcode_files:
             raise RuntimeError(f"No gcode files found in {output_dir}")
         gcode_path = gcode_files[0]
-
-    send_print(
-        gcode_path,
-        cfg.printer,
-        dry_run=args.dry_run,
-        upload_only=args.upload_only,
-        experimental=getattr(args, "experimental", False),
-        skip_ams_mapping=getattr(args, "no_ams_mapping", False),
-    )
+        send_print(
+            gcode_path,
+            cfg.printer,
+            dry_run=args.dry_run,
+            upload_only=args.upload_only,
+            experimental=getattr(args, "experimental", False),
+            skip_ams_mapping=getattr(args, "no_ams_mapping", False),
+        )
 
 
 def _cmd_gcode_info(args: argparse.Namespace) -> None:
