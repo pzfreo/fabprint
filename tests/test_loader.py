@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import trimesh
 
-from fabprint.loader import extract_paint_colors, load_mesh
+from fabprint.loader import extract_paint_colors, load_3mf_objects, load_mesh
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -104,3 +104,91 @@ def test_extract_paint_colors_stl():
 def test_extract_paint_colors_nonexistent(tmp_path):
     """Returns None for non-existent file."""
     assert extract_paint_colors(tmp_path / "nope.3mf") is None
+
+
+# --- load_3mf_objects ---
+
+
+def _make_multi_object_3mf(path, objects, transforms=None):
+    """Create a 3MF with multiple named objects.
+
+    objects: list of (name, trimesh.Trimesh)
+    transforms: optional dict of name → 12-float transform string
+    """
+    ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+    ET.register_namespace("", ns)
+
+    model = ET.Element(f"{{{ns}}}model", attrib={"unit": "millimeter"})
+    resources = ET.SubElement(model, f"{{{ns}}}resources")
+    build = ET.SubElement(model, f"{{{ns}}}build")
+
+    for i, (name, mesh) in enumerate(objects, start=1):
+        obj = ET.SubElement(resources, f"{{{ns}}}object", id=str(i), name=name, type="model")
+        mesh_elem = ET.SubElement(obj, f"{{{ns}}}mesh")
+        verts_elem = ET.SubElement(mesh_elem, f"{{{ns}}}vertices")
+        for v in mesh.vertices:
+            ET.SubElement(verts_elem, f"{{{ns}}}vertex", x=str(v[0]), y=str(v[1]), z=str(v[2]))
+        tris_elem = ET.SubElement(mesh_elem, f"{{{ns}}}triangles")
+        for f in mesh.faces:
+            ET.SubElement(tris_elem, f"{{{ns}}}triangle", v1=str(f[0]), v2=str(f[1]), v3=str(f[2]))
+        item_attrib = {"objectid": str(i)}
+        if transforms and name in transforms:
+            item_attrib["transform"] = transforms[name]
+        ET.SubElement(build, f"{{{ns}}}item", **item_attrib)
+
+    xml_str = ET.tostring(model, encoding="unicode", xml_declaration=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("3D/3dmodel.model", xml_str)
+
+
+def test_load_3mf_objects_two_objects(tmp_path):
+    """Loads two named objects from a multi-object 3MF."""
+    path = tmp_path / "multi.3mf"
+    box1 = trimesh.creation.box(extents=[10, 10, 2])  # thin inlay
+    box2 = trimesh.creation.box(extents=[20, 20, 10])  # body
+    _make_multi_object_3mf(path, [("inlay", box1), ("body", box2)])
+
+    objects = load_3mf_objects(path)
+    assert len(objects) == 2
+    assert objects[0][0] == "inlay"
+    assert objects[1][0] == "body"
+    # Inlay should be ~10x10x2
+    assert abs(objects[0][1].extents[0] - 10.0) < 0.1
+    assert abs(objects[0][1].extents[2] - 2.0) < 0.1
+    # Body should be ~20x20x10
+    assert abs(objects[1][1].extents[0] - 20.0) < 0.1
+    assert abs(objects[1][1].extents[2] - 10.0) < 0.1
+
+
+def test_load_3mf_objects_preserves_position(tmp_path):
+    """Objects maintain their coordinate positions."""
+    path = tmp_path / "positioned.3mf"
+    box1 = trimesh.creation.box(extents=[5, 5, 1])
+    # Offset box2 by 10mm in X
+    box2 = trimesh.creation.box(extents=[5, 5, 5])
+    box2.apply_translation([10, 0, 0])
+    _make_multi_object_3mf(path, [("a", box1), ("b", box2)])
+
+    objects = load_3mf_objects(path)
+    # box2 center should be at x=10
+    b_center_x = (objects[1][1].bounds[0][0] + objects[1][1].bounds[1][0]) / 2
+    assert abs(b_center_x - 10.0) < 0.1
+
+
+def test_load_3mf_objects_nonexistent(tmp_path):
+    """Raises FileNotFoundError for missing file."""
+    with pytest.raises(FileNotFoundError):
+        load_3mf_objects(tmp_path / "nope.3mf")
+
+
+def test_load_3mf_objects_with_transform(tmp_path):
+    """Build-section transforms are applied to objects."""
+    path = tmp_path / "transformed.3mf"
+    box = trimesh.creation.box(extents=[10, 10, 10])
+    # Transform: identity rotation, translate by (50, 0, 0)
+    transform = "1 0 0 0 1 0 0 0 1 50 0 0"
+    _make_multi_object_3mf(path, [("box", box)], transforms={"box": transform})
+
+    objects = load_3mf_objects(path)
+    center_x = (objects[0][1].bounds[0][0] + objects[0][1].bounds[1][0]) / 2
+    assert abs(center_x - 50.0) < 0.1

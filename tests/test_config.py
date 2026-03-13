@@ -694,3 +694,112 @@ filament = 3
     assert cfg.parts[1].filament == 3
     assert cfg.slicer.filaments[0] == "Generic PETG-CF @base"
     assert cfg.slicer.filaments[2] == "Generic PETG-CF @base"
+
+
+# --- object_filaments (multi-object 3MF) ---
+
+
+def test_object_filaments_by_name(tmp_path):
+    """Per-object filament overrides resolved by name."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "widget.3mf"
+filament = "Generic PETG-CF @base"
+
+[parts.filaments]
+inlay = "Bambu PLA Basic @BBL X1C"
+""",
+        create_files=["widget.3mf"],
+    )
+    cfg = load_config(path)
+    assert cfg.slicer.filaments == ["Generic PETG-CF @base", "Bambu PLA Basic @BBL X1C"]
+    assert cfg.parts[0].filament == 1  # default
+    assert cfg.parts[0].object_filaments == {"inlay": 2}
+
+
+def test_object_filaments_auto_derive_includes_objects(tmp_path):
+    """Object filament names included in auto-derived filaments list."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "a.3mf"
+filament = "Generic PLA @base"
+
+[parts.filaments]
+logo = "Generic PETG-CF @base"
+text = "Generic TPU @base"
+""",
+        create_files=["a.3mf"],
+    )
+    cfg = load_config(path)
+    assert "Generic PLA @base" in cfg.slicer.filaments
+    assert "Generic PETG-CF @base" in cfg.slicer.filaments
+    assert "Generic TPU @base" in cfg.slicer.filaments
+    assert (
+        cfg.parts[0].object_filaments["logo"]
+        == cfg.slicer.filaments.index("Generic PETG-CF @base") + 1
+    )
+    assert (
+        cfg.parts[0].object_filaments["text"] == cfg.slicer.filaments.index("Generic TPU @base") + 1
+    )
+
+
+def test_object_filaments_with_explicit_list(tmp_path):
+    """Per-object filaments resolved against explicit slicer.filaments."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer]
+filaments = ["Generic PETG-CF @base", "Bambu PLA Basic @BBL X1C"]
+
+[[parts]]
+file = "widget.3mf"
+filament = "Generic PETG-CF @base"
+
+[parts.filaments]
+inlay = "Bambu PLA Basic @BBL X1C"
+""",
+        create_files=["widget.3mf"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].filament == 1
+    assert cfg.parts[0].object_filaments == {"inlay": 2}
+
+
+def test_object_filaments_not_in_list(tmp_path):
+    """Object filament name not in explicit list -> error."""
+    path = _write_toml(
+        tmp_path,
+        """
+[slicer]
+filaments = ["Generic PLA @base"]
+
+[[parts]]
+file = "widget.3mf"
+filament = "Generic PLA @base"
+
+[parts.filaments]
+inlay = "Generic ABS @base"
+""",
+        create_files=["widget.3mf"],
+    )
+    with pytest.raises(ValueError, match="inlay.*not in"):
+        load_config(path)
+
+
+def test_object_filaments_empty(tmp_path):
+    """No object_filaments -> empty dict (backward compat)."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+filament = "Generic PLA @base"
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.parts[0].object_filaments == {}

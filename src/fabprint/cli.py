@@ -11,7 +11,7 @@ from pathlib import Path
 from fabprint import __version__
 from fabprint.arrange import arrange
 from fabprint.config import FabprintConfig, load_config
-from fabprint.loader import extract_paint_colors, load_mesh
+from fabprint.loader import extract_paint_colors, load_3mf_objects, load_mesh
 from fabprint.orient import orient_mesh
 from fabprint.plate import build_plate, export_plate
 
@@ -218,24 +218,50 @@ def _generate_plate(
     part_info = []  # (name, copies, filament, scale, w, d, h) per unique part
     global_scale = getattr(args, "scale", None)
     for part in cfg.parts:
-        base_mesh = load_mesh(part.file)
-        oriented = orient_mesh(base_mesh, part.orient, part.rotate)
+        is_group = bool(part.object_filaments)
         scale = part.scale * global_scale if global_scale else part.scale
-        if scale != 1.0:
-            oriented.apply_scale(scale)
-        # Store paint data in metadata (survives copy/transform)
-        oriented.metadata["filament_id"] = part.filament
-        paint_colors = extract_paint_colors(part.file)
-        if paint_colors:
-            oriented.metadata["paint_colors"] = paint_colors
-            has_paint_colors = True
-        w, d, h = oriented.extents
-        part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
-        for i in range(part.copies):
-            meshes.append(oriented.copy())
-            suffix = f"_{i + 1}" if part.copies > 1 else ""
-            names.append(f"{part.file.stem}{suffix}")
-            filament_ids.append(part.filament)
+
+        if is_group:
+            # Multi-object 3MF: load individual objects, combine for packing
+            objects = load_3mf_objects(part.file)
+            sub_meshes = []
+            for obj_name, obj_mesh in objects:
+                if scale != 1.0:
+                    obj_mesh.apply_scale(scale)
+                fil_id = part.object_filaments.get(obj_name, part.filament)
+                obj_mesh.metadata["filament_id"] = fil_id
+                sub_meshes.append((obj_name, obj_mesh))
+
+            import trimesh as _trimesh
+
+            combined = _trimesh.util.concatenate([m for _, m in sub_meshes])
+            combined.metadata["filament_id"] = part.filament
+            combined.metadata["group_objects"] = sub_meshes
+            combined.metadata["original_bounds_min"] = combined.bounds[0][:2].copy()
+            w, d, h = combined.extents
+            part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
+            for i in range(part.copies):
+                meshes.append(combined.copy())
+                suffix = f"_{i + 1}" if part.copies > 1 else ""
+                names.append(f"{part.file.stem}{suffix}")
+                filament_ids.append(part.filament)
+        else:
+            base_mesh = load_mesh(part.file)
+            oriented = orient_mesh(base_mesh, part.orient, part.rotate)
+            if scale != 1.0:
+                oriented.apply_scale(scale)
+            oriented.metadata["filament_id"] = part.filament
+            paint_colors = extract_paint_colors(part.file)
+            if paint_colors:
+                oriented.metadata["paint_colors"] = paint_colors
+                has_paint_colors = True
+            w, d, h = oriented.extents
+            part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
+            for i in range(part.copies):
+                meshes.append(oriented.copy())
+                suffix = f"_{i + 1}" if part.copies > 1 else ""
+                names.append(f"{part.file.stem}{suffix}")
+                filament_ids.append(part.filament)
 
     _print_summary(part_info, len(meshes), cfg.plate.size)
 
