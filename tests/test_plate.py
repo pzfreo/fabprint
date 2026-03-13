@@ -195,3 +195,58 @@ def test_build_plate_expands_group(tmp_path):
     assert len(objects) == 2
     extruders = {m.get("value") for o in objects for m in o.findall("metadata")}
     assert extruders == {"1", "2"}
+
+
+def test_build_plate_sequence_filter():
+    """Grouped objects can be filtered by sequence for sequential printing."""
+    inlay = trimesh.creation.box(extents=[10, 10, 1])
+    body = trimesh.creation.box(extents=[20, 20, 10])
+    body.apply_translation([0, 0, 5])
+    inlay.metadata["filament_id"] = 2
+    inlay.metadata["sequence"] = 1
+    body.metadata["filament_id"] = 1
+    body.metadata["sequence"] = 2
+
+    # Build full group
+    combined = trimesh.util.concatenate([inlay, body])
+    combined.metadata["filament_id"] = 1
+    combined.metadata["group_objects"] = [("inlay", inlay), ("body", body)]
+    combined.metadata["original_bounds_min"] = combined.bounds[0][:2].copy()
+
+    placements = arrange([combined], ["widget"], plate_size=(256, 256))
+
+    # Filter to sequence 1 only (inlay)
+    seq1_objects = [
+        (n, m)
+        for n, m in placements[0].mesh.metadata["group_objects"]
+        if m.metadata.get("sequence") == 1
+    ]
+    seq1_mesh = trimesh.util.concatenate([m for _, m in seq1_objects])
+    seq1_mesh.metadata["filament_id"] = seq1_objects[0][1].metadata["filament_id"]
+    seq1_mesh.metadata["group_objects"] = seq1_objects
+    seq1_mesh.metadata["original_bounds_min"] = placements[0].mesh.metadata["original_bounds_min"]
+
+    from fabprint.arrange import Placement
+
+    seq1_placement = Placement(mesh=seq1_mesh, name="widget", x=placements[0].x, y=placements[0].y)
+    scene1 = build_plate([seq1_placement], plate_size=(256, 256))
+    assert len(scene1.geometry) == 1
+    geom = list(scene1.geometry.values())[0]
+    assert geom.metadata.get("filament_id") == 2
+
+    # Filter to sequence 2 only (body)
+    seq2_objects = [
+        (n, m)
+        for n, m in placements[0].mesh.metadata["group_objects"]
+        if m.metadata.get("sequence") == 2
+    ]
+    seq2_mesh = trimesh.util.concatenate([m for _, m in seq2_objects])
+    seq2_mesh.metadata["filament_id"] = seq2_objects[0][1].metadata["filament_id"]
+    seq2_mesh.metadata["group_objects"] = seq2_objects
+    seq2_mesh.metadata["original_bounds_min"] = placements[0].mesh.metadata["original_bounds_min"]
+
+    seq2_placement = Placement(mesh=seq2_mesh, name="widget", x=placements[0].x, y=placements[0].y)
+    scene2 = build_plate([seq2_placement], plate_size=(256, 256))
+    assert len(scene2.geometry) == 1
+    geom = list(scene2.geometry.values())[0]
+    assert geom.metadata.get("filament_id") == 1
