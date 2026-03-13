@@ -91,6 +91,77 @@ def extract_paint_colors(path: Path) -> list[str] | None:
     return colors
 
 
+def load_3mf_objects(path: Path) -> list[tuple[str, trimesh.Trimesh]]:
+    """Load named objects from a multi-object 3MF file.
+
+    Returns list of (object_name, mesh) tuples with coordinate positions preserved.
+    Build-section transforms are applied if present.
+    """
+    import numpy as np
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    with zipfile.ZipFile(path, "r") as zf:
+        model_xml = zf.read("3D/3dmodel.model")
+
+    root = ET.fromstring(model_xml)
+    ns = NS_3MF
+
+    # Parse all objects by id
+    obj_map: dict[str, tuple[str, trimesh.Trimesh]] = {}
+    for obj_elem in root.findall(f".//{{{ns}}}object"):
+        obj_id = obj_elem.get("id")
+        name = obj_elem.get("name", f"object_{obj_id}")
+
+        mesh_elem = obj_elem.find(f"{{{ns}}}mesh")
+        if mesh_elem is None:
+            continue
+
+        vertices = []
+        for v in mesh_elem.findall(f".//{{{ns}}}vertex"):
+            vertices.append([float(v.get("x")), float(v.get("y")), float(v.get("z"))])
+
+        faces = []
+        for t in mesh_elem.findall(f".//{{{ns}}}triangle"):
+            faces.append([int(t.get("v1")), int(t.get("v2")), int(t.get("v3"))])
+
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+        obj_map[obj_id] = (name, mesh)
+
+    # Walk build items, applying transforms if present
+    results = []
+    build = root.find(f"{{{ns}}}build")
+    if build is not None:
+        for item in build.findall(f"{{{ns}}}item"):
+            obj_id = item.get("objectid")
+            if obj_id not in obj_map:
+                continue
+            name, mesh = obj_map[obj_id]
+
+            transform_str = item.get("transform")
+            if transform_str:
+                vals = [float(v) for v in transform_str.split()]
+                if len(vals) == 12:
+                    # 3MF affine: m00 m01 m02 m10 m11 m12 m20 m21 m22 tx ty tz
+                    matrix = np.eye(4)
+                    matrix[:3, :3] = np.array(vals[:9]).reshape(3, 3).T
+                    matrix[:3, 3] = vals[9:12]
+                    mesh = mesh.copy()
+                    mesh.apply_transform(matrix)
+
+            results.append((name, mesh))
+    else:
+        results = list(obj_map.values())
+
+    if not results:
+        raise ValueError(f"No mesh objects found in {path}")
+
+    log.info("Loaded %d objects from %s: %s", len(results), path, [n for n, _ in results])
+    return results
+
+
 def _load_step(path: Path) -> trimesh.Trimesh:
     """Load a STEP file via build123d → STL round-trip."""
     try:

@@ -34,6 +34,7 @@ class PartConfig:
     rotate: list[float] | None = None  # [rx, ry, rz] in degrees, overrides orient
     filament: int = 1  # slicer filament slot (1-indexed), resolved from name or int
     scale: float = 1.0  # uniform scale factor
+    object_filaments: dict[str, int] = field(default_factory=dict)  # 3MF object → slot
 
 
 @dataclass
@@ -103,6 +104,7 @@ def load_config(path: Path) -> FabprintConfig:
 
     parts = []
     raw_filaments: list[int | str] = []  # preserve raw filament values for resolution
+    raw_obj_filaments: list[dict[str, int | str]] = []  # per-part object filament overrides
     for i, p in enumerate(parts_raw):
         if "file" not in p:
             raise ValueError(f"parts[{i}]: 'file' is required")
@@ -124,6 +126,24 @@ def load_config(path: Path) -> FabprintConfig:
             if raw_fil < 1:
                 raise ValueError(f"parts[{i}]: filament must be >= 1, got {raw_fil}")
         raw_filaments.append(raw_fil)
+
+        # Per-object filament overrides for multi-object 3MF files
+        obj_fils_raw: dict[str, int | str] = {}
+        for obj_name, obj_fil in p.get("filaments", {}).items():
+            if isinstance(obj_fil, str):
+                if not obj_fil.strip():
+                    raise ValueError(
+                        f"parts[{i}].filaments.{obj_name}: filament name must not be empty"
+                    )
+            else:
+                obj_fil = int(obj_fil)
+                if obj_fil < 1:
+                    raise ValueError(
+                        f"parts[{i}].filaments.{obj_name}: filament must be >= 1, got {obj_fil}"
+                    )
+            obj_fils_raw[obj_name] = obj_fil
+        raw_obj_filaments.append(obj_fils_raw)
+
         rotate = p.get("rotate")
         if rotate is not None:
             if not isinstance(rotate, list) or len(rotate) != 3:
@@ -143,9 +163,14 @@ def load_config(path: Path) -> FabprintConfig:
             )
         )
 
+    # Collect all raw filament values (part defaults + per-object overrides)
+    all_raw_filaments: list[int | str] = list(raw_filaments)
+    for obj_fils in raw_obj_filaments:
+        all_raw_filaments.extend(obj_fils.values())
+
     # Resolve filament names → slot indices
-    has_string_filaments = any(isinstance(f, str) for f in raw_filaments)
-    has_int_filaments = any(isinstance(f, int) for f in raw_filaments)
+    has_string_filaments = any(isinstance(f, str) for f in all_raw_filaments)
+    has_int_filaments = any(isinstance(f, int) for f in all_raw_filaments)
 
     if has_string_filaments and has_int_filaments and not slicer.filaments and not slicer.slots:
         raise ValueError(
@@ -156,6 +181,8 @@ def load_config(path: Path) -> FabprintConfig:
         # All integers, no slots map — backward compatible, no resolution needed
         for i, raw_fil in enumerate(raw_filaments):
             parts[i].filament = raw_fil
+            for obj_name, obj_fil in raw_obj_filaments[i].items():
+                parts[i].object_filaments[obj_name] = obj_fil
     else:
         if not slicer.filaments:
             # Auto-derive filaments list from string refs + slots map
@@ -163,9 +190,9 @@ def load_config(path: Path) -> FabprintConfig:
             slot_to_name: dict[int, str] = dict(slicer.slots)
             used_slots: set[int] = set(slot_to_name.keys())
 
-            # Collect unique string filament names from parts
+            # Collect unique string filament names from parts (default + per-object)
             unique_names: list[str] = []
-            for raw_fil in raw_filaments:
+            for raw_fil in all_raw_filaments:
                 if isinstance(raw_fil, str) and raw_fil not in unique_names:
                     unique_names.append(raw_fil)
 
@@ -205,6 +232,23 @@ def load_config(path: Path) -> FabprintConfig:
                         f"parts[{i}]: filament slot {raw_fil} not defined in [slicer.slots]"
                     )
                 parts[i].filament = raw_fil
+
+        # Resolve per-object filament overrides for this part
+        for obj_name, obj_fil in raw_obj_filaments[i].items():
+            if isinstance(obj_fil, str):
+                if obj_fil not in fil_index:
+                    raise ValueError(
+                        f"parts[{i}].filaments.{obj_name}: '{obj_fil}' not in "
+                        f"[slicer].filaments {slicer.filaments}"
+                    )
+                parts[i].object_filaments[obj_name] = fil_index[obj_fil]
+            else:
+                if slicer.slots and obj_fil not in slicer.slots:
+                    raise ValueError(
+                        f"parts[{i}].filaments.{obj_name}: slot {obj_fil} "
+                        f"not defined in [slicer.slots]"
+                    )
+                parts[i].object_filaments[obj_name] = obj_fil
 
     # Printer config (optional)
     printer = None

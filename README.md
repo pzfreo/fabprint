@@ -180,6 +180,21 @@ Common bed types: `"Cool Plate"`, `"Engineering Plate"`, `"High Temp Plate"`, `"
 | `filament` | `int\|string` | `1`       | Filament profile name or slot index  |
 | `scale`    | `float`    | `1.0`        | Uniform scale factor                 |
 
+### `[parts.filaments]`
+
+Per-object filament overrides for multi-object 3MF files. When a 3MF contains multiple named objects (e.g. exported from build123d), each object can be assigned a different filament while preserving their relative positions:
+
+```toml
+[[parts]]
+file = "widget.3mf"
+filament = "Generic PETG-CF @base"       # default for objects not listed
+
+[parts.filaments]
+inlay = "Bambu PLA Basic @BBL X1C"       # override for object named "inlay"
+```
+
+Objects in the 3MF are grouped as a single unit for bin packing. Orientation is skipped for grouped parts — the objects are used as-is from the 3MF.
+
 ## CLI commands
 
 ```
@@ -190,6 +205,7 @@ fabprint print <config>           # Arrange, slice, and send to printer
 fabprint print <config> --dry-run # Do everything except send to printer
 fabprint print <config> --gcode output/plate_1.gcode  # Send pre-sliced gcode
 fabprint print <config> --upload-only  # Upload without starting print
+fabprint gcode-info output/plate_1.gcode  # Analyze extruder usage per layer
 fabprint login                    # Login to Bambu Cloud and cache token
 fabprint watch                    # Live dashboard for all printers
 fabprint status                   # Query status of all printers

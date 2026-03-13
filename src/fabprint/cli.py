@@ -11,7 +11,7 @@ from pathlib import Path
 from fabprint import __version__
 from fabprint.arrange import arrange
 from fabprint.config import FabprintConfig, load_config
-from fabprint.loader import extract_paint_colors, load_mesh
+from fabprint.loader import extract_paint_colors, load_3mf_objects, load_mesh
 from fabprint.orient import orient_mesh
 from fabprint.plate import build_plate, export_plate
 
@@ -167,6 +167,12 @@ def main(argv: list[str] | None = None) -> None:
         "--serial", type=str, default=None, help="Printer serial (default: all printers)"
     )
 
+    # gcode-info subcommand
+    gcode_info_cmd = sub.add_parser(
+        "gcode-info", parents=[common], help="Analyze sliced gcode (extruders, layers, usage)"
+    )
+    gcode_info_cmd.add_argument("gcode", type=Path, help="Path to .gcode or .gcode.3mf file")
+
     # watch subcommand
     watch_cmd = sub.add_parser(
         "watch", parents=[common], help="Live dashboard for all printers (no config needed)"
@@ -198,6 +204,8 @@ def main(argv: list[str] | None = None) -> None:
         _cmd_status(args)
     elif args.command == "watch":
         _cmd_watch(args)
+    elif args.command == "gcode-info":
+        _cmd_gcode_info(args)
     elif args.command == "profiles":
         _cmd_profiles(args)
 
@@ -218,24 +226,50 @@ def _generate_plate(
     part_info = []  # (name, copies, filament, scale, w, d, h) per unique part
     global_scale = getattr(args, "scale", None)
     for part in cfg.parts:
-        base_mesh = load_mesh(part.file)
-        oriented = orient_mesh(base_mesh, part.orient, part.rotate)
+        is_group = bool(part.object_filaments)
         scale = part.scale * global_scale if global_scale else part.scale
-        if scale != 1.0:
-            oriented.apply_scale(scale)
-        # Store paint data in metadata (survives copy/transform)
-        oriented.metadata["filament_id"] = part.filament
-        paint_colors = extract_paint_colors(part.file)
-        if paint_colors:
-            oriented.metadata["paint_colors"] = paint_colors
-            has_paint_colors = True
-        w, d, h = oriented.extents
-        part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
-        for i in range(part.copies):
-            meshes.append(oriented.copy())
-            suffix = f"_{i + 1}" if part.copies > 1 else ""
-            names.append(f"{part.file.stem}{suffix}")
-            filament_ids.append(part.filament)
+
+        if is_group:
+            # Multi-object 3MF: load individual objects, combine for packing
+            objects = load_3mf_objects(part.file)
+            sub_meshes = []
+            for obj_name, obj_mesh in objects:
+                if scale != 1.0:
+                    obj_mesh.apply_scale(scale)
+                fil_id = part.object_filaments.get(obj_name, part.filament)
+                obj_mesh.metadata["filament_id"] = fil_id
+                sub_meshes.append((obj_name, obj_mesh))
+
+            import trimesh as _trimesh
+
+            combined = _trimesh.util.concatenate([m for _, m in sub_meshes])
+            combined.metadata["filament_id"] = part.filament
+            combined.metadata["group_objects"] = sub_meshes
+            combined.metadata["original_bounds_min"] = combined.bounds[0][:2].copy()
+            w, d, h = combined.extents
+            part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
+            for i in range(part.copies):
+                meshes.append(combined.copy())
+                suffix = f"_{i + 1}" if part.copies > 1 else ""
+                names.append(f"{part.file.stem}{suffix}")
+                filament_ids.append(part.filament)
+        else:
+            base_mesh = load_mesh(part.file)
+            oriented = orient_mesh(base_mesh, part.orient, part.rotate)
+            if scale != 1.0:
+                oriented.apply_scale(scale)
+            oriented.metadata["filament_id"] = part.filament
+            paint_colors = extract_paint_colors(part.file)
+            if paint_colors:
+                oriented.metadata["paint_colors"] = paint_colors
+                has_paint_colors = True
+            w, d, h = oriented.extents
+            part_info.append((part.file.stem, part.copies, part.filament, scale, w, d, h))
+            for i in range(part.copies):
+                meshes.append(oriented.copy())
+                suffix = f"_{i + 1}" if part.copies > 1 else ""
+                names.append(f"{part.file.stem}{suffix}")
+                filament_ids.append(part.filament)
 
     _print_summary(part_info, len(meshes), cfg.plate.size)
 
@@ -359,6 +393,50 @@ def _cmd_print(args: argparse.Namespace) -> None:
         experimental=getattr(args, "experimental", False),
         skip_ams_mapping=getattr(args, "no_ams_mapping", False),
     )
+
+
+def _cmd_gcode_info(args: argparse.Namespace) -> None:
+    from fabprint.gcode import analyze_gcode
+
+    info = analyze_gcode(args.gcode)
+
+    if not info.layer_count:
+        print("No layer data found in gcode.")
+        return
+
+    print(f"\nFile: {args.gcode.name}")
+    if info.print_time:
+        print(f"Print time: {info.print_time}")
+    print(f"Layers: {info.layer_count}")
+    print(f"Filament changes: {info.filament_changes}")
+
+    if info.spans:
+        print("\nExtruder usage by layer:")
+        for span in info.spans:
+            extruder = span.extruder + 1  # display as 1-indexed
+            fil_type = ""
+            if span.extruder < len(info.filament_types):
+                fil_type = f"  ({info.filament_types[span.extruder]})"
+            if span.start_layer == span.end_layer:
+                layer_str = f"Layer {span.start_layer}"
+            else:
+                layer_str = f"Layer {span.start_layer}-{span.end_layer}"
+            print(
+                f"  {layer_str:>16}  z={span.start_z:.1f}-{span.end_z:.1f}mm"
+                f"  extruder {extruder}{fil_type}"
+            )
+
+    if info.filament_usage_g:
+        used = [
+            (i + 1, g, info.filament_types[i] if i < len(info.filament_types) else "")
+            for i, g in enumerate(info.filament_usage_g)
+            if g > 0
+        ]
+        if used:
+            print("\nFilament usage:")
+            for slot, grams, fil_type in used:
+                type_str = f"  ({fil_type})" if fil_type else ""
+                print(f"  Slot {slot}: {grams:.1f}g{type_str}")
 
 
 def _cmd_login(args: argparse.Namespace) -> None:

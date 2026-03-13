@@ -36,14 +36,36 @@ def build_plate(
 
     Meshes are shifted so the plate center is at origin (0,0),
     matching slicer bed coordinate conventions.
+
+    Grouped placements (multi-object 3MF) are expanded into individual
+    objects with correct relative positions and per-object filament IDs.
     """
     cx, cy = plate_size[0] / 2, plate_size[1] / 2
     scene = trimesh.Scene()
     for p in placements:
-        mesh = p.mesh.copy()
-        mesh.apply_translation([-cx, -cy, 0])
-        mesh.metadata["name"] = p.name
-        scene.add_geometry(mesh, node_name=p.name)
+        group_objects = p.mesh.metadata.get("group_objects")
+        if group_objects:
+            # Expand group: compute offset from original to packed position
+            # The combined mesh was translated by arrange(); apply the same
+            # offset to each sub-mesh.
+            original_min = p.mesh.metadata.get("original_bounds_min")
+            if original_min is not None:
+                import numpy as np
+
+                current_min = p.mesh.bounds[0][:2]
+                offset = current_min - np.array(original_min)
+            else:
+                offset = [0, 0]
+            for obj_name, obj_mesh in group_objects:
+                sub = obj_mesh.copy()
+                sub.apply_translation([offset[0] - cx, offset[1] - cy, 0])
+                sub.metadata["name"] = obj_name
+                scene.add_geometry(sub, node_name=f"{p.name}_{obj_name}")
+        else:
+            mesh = p.mesh.copy()
+            mesh.apply_translation([-cx, -cy, 0])
+            mesh.metadata["name"] = p.name
+            scene.add_geometry(mesh, node_name=p.name)
     return scene
 
 

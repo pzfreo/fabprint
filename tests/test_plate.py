@@ -155,3 +155,43 @@ def test_export_no_paint_skips_postprocess(tmp_path):
     # No BambuStudio metadata
     meta = root.findall(f".//{{{NS_3MF}}}metadata[@name='BambuStudio:MmPaintingVersion']")
     assert len(meta) == 0
+
+
+# --- multi-object groups ---
+
+
+def test_build_plate_expands_group(tmp_path):
+    """Grouped placement (multi-object 3MF) expands into individual objects."""
+    # Create two sub-meshes at different positions
+    inlay = trimesh.creation.box(extents=[10, 10, 1])
+    body = trimesh.creation.box(extents=[20, 20, 10])
+    body.apply_translation([0, 0, 5])  # body sits on top of inlay
+    inlay.metadata["filament_id"] = 2
+    body.metadata["filament_id"] = 1
+
+    # Combine for packing
+    combined = trimesh.util.concatenate([inlay, body])
+    combined.metadata["filament_id"] = 1
+    combined.metadata["group_objects"] = [("inlay", inlay), ("body", body)]
+    combined.metadata["original_bounds_min"] = combined.bounds[0][:2].copy()
+
+    placements = arrange([combined], ["widget"], plate_size=(256, 256))
+    scene = build_plate(placements, plate_size=(256, 256))
+
+    # Scene should have 2 geometries (expanded from group), not 1
+    assert len(scene.geometry) == 2
+    # Check filament_ids are preserved
+    geoms = list(scene.geometry.values())
+    fil_ids = {g.metadata.get("filament_id") for g in geoms}
+    assert fil_ids == {1, 2}
+
+    # Export and verify 3MF has 2 objects with correct extruders
+    out = tmp_path / "plate.3mf"
+    export_plate(scene, out)
+    with zipfile.ZipFile(out) as zf:
+        ms = zf.read("Metadata/model_settings.config").decode()
+    ms_root = ET.fromstring(ms)
+    objects = ms_root.findall("object")
+    assert len(objects) == 2
+    extruders = {m.get("value") for o in objects for m in o.findall("metadata")}
+    assert extruders == {"1", "2"}
