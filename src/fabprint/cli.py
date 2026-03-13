@@ -128,6 +128,12 @@ def main(argv: list[str] | None = None) -> None:
         default=1,
         help="AMS slot for --filament-type (default: 1)",
     )
+    print_cmd.add_argument(
+        "--sequence",
+        type=int,
+        default=None,
+        help="Print only this sequence number (for sequential printing configs)",
+    )
 
     # profiles subcommand
     profiles_cmd = sub.add_parser("profiles", parents=[common], help="List or pin slicer profiles")
@@ -608,22 +614,30 @@ def _cmd_print(args: argparse.Namespace) -> None:
             skip_ams_mapping=getattr(args, "no_ams_mapping", False),
         )
     elif _has_sequences(cfg):
-        # Sequential printing: slice each sequence, then print in order
-        sliced = _do_slice_sequential(args)
-        for seq_num, output_dir in sliced:
-            gcode_files = list(output_dir.glob("*.gcode"))
-            if not gcode_files:
-                raise RuntimeError(f"No gcode files found in {output_dir} for sequence {seq_num}")
-            gcode_path = gcode_files[0]
-            print(f"\nSending sequence {seq_num} to printer...")
-            send_print(
-                gcode_path,
-                cfg.printer,
-                dry_run=args.dry_run,
-                upload_only=args.upload_only,
-                experimental=getattr(args, "experimental", False),
-                skip_ams_mapping=getattr(args, "no_ams_mapping", False),
+        # Sequential printing: slice all sequences, send only the requested one
+        seq = args.sequence
+        if seq is None:
+            raise ValueError(
+                "Config has multiple sequences. Use --sequence N to print one at a time."
             )
+        sliced = _do_slice_sequential(args)
+        match = [d for s, d in sliced if s == seq]
+        if not match:
+            available = [s for s, _ in sliced]
+            raise ValueError(f"Sequence {seq} not found. Available: {available}")
+        gcode_files = list(match[0].glob("*.gcode"))
+        if not gcode_files:
+            raise RuntimeError(f"No gcode files found in {match[0]} for sequence {seq}")
+        gcode_path = gcode_files[0]
+        print(f"\nSending sequence {seq} to printer...")
+        send_print(
+            gcode_path,
+            cfg.printer,
+            dry_run=args.dry_run,
+            upload_only=args.upload_only,
+            experimental=getattr(args, "experimental", False),
+            skip_ams_mapping=getattr(args, "no_ams_mapping", False),
+        )
     else:
         # Full pipeline: arrange → slice → find gcode
         output_dir = _do_slice(args)
