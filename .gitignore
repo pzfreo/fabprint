@@ -11,4 +11,5 @@ output/
 .DS_Store
 .coverage
 *.png
+!docs/images/*.png
 scripts/bambu_cloud_bridge

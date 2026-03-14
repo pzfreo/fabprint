@@ -2,6 +2,8 @@
 
 Headless 3D print pipeline: arrange parts on a build plate, slice to gcode, and send to a Bambu Lab printer — all from a TOML config file.
 
+![fabprint pipeline](docs/images/pipeline.png)
+
 ## Why fabprint
 
 Code-CAD tools like [build123d](https://github.com/gumyr/build123d) let you define physical parts in Python — parametric, testable, and version-controlled. But the moment you need to print, the workflow breaks: open a slicer GUI, drag in your files, fiddle with settings, hit print. None of that is reproducible or tracked.
@@ -86,6 +88,10 @@ Parts reference filament profiles by name — no need to manually number AMS slo
 ```bash
 fabprint plate fabprint.toml -o plate.3mf
 ```
+
+A `plate_preview.3mf` is also generated with a bed outline — open it in any 3MF viewer to review part placement:
+
+![plate preview](docs/images/plate_preview.png)
 
 3. Slice to gcode:
 
@@ -179,6 +185,8 @@ Common bed types: `"Cool Plate"`, `"Engineering Plate"`, `"High Temp Plate"`, `"
 | `rotate`   | `[x,y,z]`  | —            | Custom rotation in degrees (overrides `orient`) |
 | `filament` | `int\|string` | `1`       | Filament profile name or slot index  |
 | `scale`    | `float`    | `1.0`        | Uniform scale factor                 |
+| `object`   | `string`   | —            | Select a named object from a multi-object 3MF |
+| `sequence` | `int`      | `1`          | Print order for sequential printing  |
 
 ### `[parts.filaments]`
 
@@ -195,16 +203,42 @@ inlay = "Bambu PLA Basic @BBL X1C"       # override for object named "inlay"
 
 Objects in the 3MF are grouped as a single unit for bin packing. Orientation is skipped for grouped parts — the objects are used as-is from the 3MF.
 
+### Sequential printing
+
+For workflows like bottom inlay printing, where you need to print one object first (e.g. text inlay in PLA) and then print the body on top (e.g. PETG-CF), use `object` and `sequence`:
+
+```toml
+[[parts]]
+file = "widget.3mf"
+object = "inlay"
+filament = "Generic PLA @base"
+sequence = 1
+
+[[parts]]
+file = "widget.3mf"
+object = "body"
+filament = "Generic PETG-CF @base"
+sequence = 2
+```
+
+Both objects come from the same 3MF, so fabprint guarantees they are positioned identically on the bed. Each sequence is sliced separately and printed with `--sequence`:
+
+```bash
+fabprint print fabprint.toml --sequence 1   # print the inlay
+# wait for completion...
+fabprint print fabprint.toml --sequence 2   # print the body on top
+```
+
 ## CLI commands
 
 ```
-fabprint plate <config>           # Arrange and export 3MF
-fabprint plate <config> --view    # Preview in viewer first
+fabprint plate <config>           # Arrange and export 3MF (+ preview)
 fabprint slice <config>           # Arrange, export, and slice to gcode
 fabprint print <config>           # Arrange, slice, and send to printer
 fabprint print <config> --dry-run # Do everything except send to printer
 fabprint print <config> --gcode output/plate_1.gcode  # Send pre-sliced gcode
 fabprint print <config> --upload-only  # Upload without starting print
+fabprint print <config> --sequence 1   # Print only sequence 1 (sequential printing)
 fabprint gcode-info output/plate_1.gcode  # Analyze extruder usage per layer
 fabprint login                    # Login to Bambu Cloud and cache token
 fabprint watch                    # Live dashboard for all printers
@@ -213,6 +247,8 @@ fabprint status --serial 01P...  # Query a specific printer
 fabprint profiles list            # List available slicer profiles
 fabprint profiles pin <config>    # Pin profiles for reproducible builds
 ```
+
+![fabprint watch](docs/images/watch.png)
 
 ## Profile management
 
