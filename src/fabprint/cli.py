@@ -40,7 +40,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     plate_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
     plate_cmd.add_argument("-o", "--output", type=Path, default=None, help="Output 3MF path")
-    plate_cmd.add_argument("--view", action="store_true", help="Show plate in viewer")
+    plate_cmd.add_argument(
+        "--preview",
+        action="store_true",
+        help="Also export a preview 3MF with bed outline (for visual review)",
+    )
 
     # slice subcommand
     slice_cmd = sub.add_parser(
@@ -48,9 +52,6 @@ def main(argv: list[str] | None = None) -> None:
     )
     slice_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
     slice_cmd.add_argument("-o", "--output-dir", type=Path, default=None, help="Output directory")
-    slice_cmd.add_argument(
-        "--view", action="store_true", help="Show plate in viewer before slicing"
-    )
     slice_cmd.add_argument(
         "--docker",
         action="store_true",
@@ -91,9 +92,6 @@ def main(argv: list[str] | None = None) -> None:
         "--upload-only",
         action="store_true",
         help="Upload gcode but don't start printing (start from touchscreen/app)",
-    )
-    print_cmd.add_argument(
-        "--view", action="store_true", help="Show plate in viewer before slicing"
     )
     print_cmd.add_argument(
         "--experimental",
@@ -363,14 +361,9 @@ def _generate_plate(
 
     placements = arrange(meshes, names, cfg.plate.size, cfg.plate.padding)
 
-    if getattr(args, "view", False):
-        from fabprint.viewer import show_plate
-
-        show_plate([p.mesh for p in placements], [p.name for p in placements], cfg.plate.size)
-
     scene = build_plate(placements, cfg.plate.size)
     export_plate(scene, output)
-    return cfg, filament_ids, has_paint_colors
+    return cfg, filament_ids, has_paint_colors, placements
 
 
 def _generate_sequential_plates(
@@ -471,6 +464,7 @@ def _has_sequences(cfg: FabprintConfig) -> bool:
 
 def _cmd_plate(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
+    placements = None
     if _has_sequences(cfg):
         output = args.output or Path("plate.3mf")
         results = _generate_sequential_plates(args, output)
@@ -478,8 +472,19 @@ def _cmd_plate(args: argparse.Namespace) -> None:
             print(f"Sequence {seq_num}: {plate_path}")
     else:
         output = args.output or Path("plate.3mf")
-        _generate_plate(args, output)
+        cfg, _, _, placements = _generate_plate(args, output)
         print(f"Plate exported to {output}")
+
+    if args.preview:
+        if placements is None:
+            # Sequential path: re-load to get all placements together
+            global_scale = getattr(args, "scale", None)
+            meshes, names, _, _, _, _ = _load_parts(cfg, global_scale)
+            placements = arrange(meshes, names, cfg.plate.size, cfg.plate.padding)
+        preview_scene = build_plate(placements, cfg.plate.size, include_bed=True)
+        preview_path = Path("plate_preview.3mf")
+        export_plate(preview_scene, preview_path)
+        print(f"Preview exported to {preview_path}")
 
 
 def _do_slice(args: argparse.Namespace) -> Path:
@@ -487,7 +492,7 @@ def _do_slice(args: argparse.Namespace) -> Path:
     from fabprint.slicer import parse_gcode_stats, slice_plate
 
     plate_3mf = Path("plate.3mf")
-    cfg, filament_ids, has_paint_colors = _generate_plate(args, plate_3mf)
+    cfg, filament_ids, has_paint_colors, _ = _generate_plate(args, plate_3mf)
     print(f"Plate exported to {plate_3mf}")
 
     # CLI --filament-type overrides the config's filament list with a single
