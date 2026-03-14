@@ -31,6 +31,7 @@ def _encode_paint_color(extruder_idx: int) -> str:
 def build_plate(
     placements: list[Placement],
     plate_size: tuple[float, float] = (256.0, 256.0),
+    include_bed: bool = False,
 ) -> trimesh.Scene:
     """Build a trimesh Scene from placed meshes.
 
@@ -39,9 +40,19 @@ def build_plate(
 
     Grouped placements (multi-object 3MF) are expanded into individual
     objects with correct relative positions and per-object filament IDs.
+
+    If include_bed is True, a thin box representing the build plate is added
+    for visual reference (not suitable for slicing).
     """
     cx, cy = plate_size[0] / 2, plate_size[1] / 2
     scene = trimesh.Scene()
+
+    if include_bed:
+        bed = trimesh.creation.box(extents=[plate_size[0], plate_size[1], 0.5])
+        bed.apply_translation([0, 0, -0.25])
+        bed.visual.face_colors = [200, 200, 200, 80]
+        scene.add_geometry(bed, node_name="_bed")
+
     for p in placements:
         group_objects = p.mesh.metadata.get("group_objects")
         if group_objects:
