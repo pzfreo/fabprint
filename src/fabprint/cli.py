@@ -486,7 +486,9 @@ def _do_slice(args: argparse.Namespace) -> Path:
     """Arrange, export, and slice. Returns the output directory."""
     from fabprint.slicer import parse_gcode_stats, slice_plate
 
-    plate_3mf = Path("plate.3mf")
+    output_dir = args.output_dir or Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plate_3mf = output_dir / "plate.3mf"
     cfg, filament_ids, has_paint_colors, _ = _generate_plate(args, plate_3mf)
     print(f"Plate exported to {plate_3mf}")
 
@@ -538,7 +540,9 @@ def _do_slice_sequential(args: argparse.Namespace) -> list[tuple[int, Path]]:
     """Slice each sequence separately. Returns list of (seq_num, output_dir)."""
     from fabprint.slicer import parse_gcode_stats, slice_plate
 
-    plate_3mf = Path("plate.3mf")
+    output_dir = args.output_dir or Path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plate_3mf = output_dir / "plate.3mf"
     results = _generate_sequential_plates(args, plate_3mf)
 
     sliced = []
