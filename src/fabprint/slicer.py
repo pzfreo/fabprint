@@ -311,11 +311,101 @@ _BC_DEFAULT_KEYS: dict[str, object] = {
 _MIN_FILAMENT_SLOTS = 5
 
 
-def _generate_plate_thumbnail(width: int = 256, height: int = 256) -> bytes:
-    """Generate a minimal plate thumbnail PNG using pure Python (no Pillow).
+def _generate_plate_thumbnail(
+    width: int = 256, height: int = 256, plate_3mf: Path | None = None
+) -> bytes:
+    """Render a top-down thumbnail of the plate using trimesh + Pillow.
 
-    Returns PNG bytes for a dark plate graphic with 'fabprint' branding.
+    Falls back to a branded placeholder if rendering fails.
     """
+    if plate_3mf is not None:
+        try:
+            return _render_plate_thumbnail(width, height, plate_3mf)
+        except Exception:
+            log.debug("Thumbnail rendering failed, using placeholder", exc_info=True)
+    return _placeholder_thumbnail(width, height)
+
+
+def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
+    """Render a top-down orthographic view of the plate meshes."""
+    import io as _io
+
+    import numpy as np
+    import trimesh
+    from PIL import Image, ImageDraw
+
+    scene = trimesh.load(str(plate_3mf), force="scene")
+    meshes = list(scene.geometry.values())
+    if not meshes:
+        raise ValueError("No geometry in plate 3MF")
+
+    # Combine all meshes for bounding box
+    combined = trimesh.util.concatenate(meshes)
+    bounds = combined.bounds  # [[xmin,ymin,zmin],[xmax,ymax,zmax]]
+    x_range = bounds[1][0] - bounds[0][0]
+    y_range = bounds[1][1] - bounds[0][1]
+
+    # Image setup — dark background
+    bg = (25, 25, 30)
+    plate_c = (50, 52, 58)
+    img = Image.new("RGB", (width, height), bg)
+    draw = ImageDraw.Draw(img)
+
+    # Fit plate into image with padding
+    margin = 16
+    draw_w = width - 2 * margin
+    draw_h = height - 2 * margin
+    scale = min(draw_w / max(x_range, 1), draw_h / max(y_range, 1))
+
+    cx = (bounds[0][0] + bounds[1][0]) / 2
+    cy = (bounds[0][1] + bounds[1][1]) / 2
+
+    def to_pixel(x: float, y: float) -> tuple[float, float]:
+        px = margin + draw_w / 2 + (x - cx) * scale
+        py = margin + draw_h / 2 - (y - cy) * scale  # flip Y
+        return px, py
+
+    # Draw plate background rectangle
+    p1 = to_pixel(bounds[0][0] - 5, bounds[1][1] + 5)  # top-left in pixel space
+    p2 = to_pixel(bounds[1][0] + 5, bounds[0][1] - 5)  # bottom-right in pixel space
+    draw.rectangle([p1, p2], fill=plate_c)
+
+    # Colors for different filament slots
+    palette = [
+        (0, 150, 136),  # teal
+        (76, 175, 80),  # green
+        (255, 152, 0),  # orange
+        (33, 150, 243),  # blue
+        (244, 67, 54),  # red
+        (156, 39, 176),  # purple
+    ]
+
+    # Render each mesh as projected 2D triangles
+    for mesh in meshes:
+        fil_id = mesh.metadata.get("filament_id", 1)
+        color = palette[(fil_id - 1) % len(palette)]
+        # Shade: darker fill, brighter outline
+        fill = tuple(int(c * 0.7) for c in color)
+        outline = color
+
+        verts = mesh.vertices
+        faces = mesh.faces
+
+        # Project vertices to 2D (top-down: use X, Y)
+        pixels = np.array([to_pixel(v[0], v[1]) for v in verts])
+
+        # Draw filled triangles
+        for face in faces:
+            pts = [tuple(pixels[i]) for i in face]
+            draw.polygon(pts, fill=fill, outline=outline)
+
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _placeholder_thumbnail(width: int = 256, height: int = 256) -> bytes:
+    """Generate a minimal branded placeholder PNG (no mesh data needed)."""
     import struct
     import zlib as _zlib
 
@@ -338,15 +428,14 @@ def _generate_plate_thumbnail(width: int = 256, height: int = 256) -> bytes:
     text = "fabprint"
     char_w, char_h, spacing = 7, 7, 1
     text_w = len(text) * (char_w + spacing) - spacing
-    scale = 2
-    tx = (width - text_w * scale) // 2
-    ty = height // 2 - (char_h * scale) // 2
+    font_scale = 2
+    tx = (width - text_w * font_scale) // 2
+    ty = height // 2 - (char_h * font_scale) // 2
 
     rows = []
     for y in range(height):
         row = bytearray(width * 3)
         for x in range(width):
-            # Plate rectangle
             mx, my = 20, 40
             if mx <= x < width - mx and my <= y < height - my:
                 if y <= my + 2:
@@ -356,17 +445,16 @@ def _generate_plate_thumbnail(width: int = 256, height: int = 256) -> bytes:
             else:
                 r, g, b = bg
 
-            # Text overlay
-            sx = (x - tx) // scale
-            sy = (y - ty) // scale
+            sx = (x - tx) // font_scale
+            sy = (y - ty) // font_scale
             if 0 <= sy < char_h and 0 <= sx < text_w:
                 ci = sx // (char_w + spacing)
-                cx = sx % (char_w + spacing)
-                if ci < len(text) and cx < char_w:
+                fcx = sx % (char_w + spacing)
+                if ci < len(text) and fcx < char_w:
                     ch = text[ci]
                     if ch in _font:
                         row_bits = _font[ch][sy]
-                        if row_bits & (0x80 >> cx):
+                        if row_bits & (0x80 >> fcx):
                             r, g, b = accent
 
             off = x * 3
@@ -390,7 +478,7 @@ def _generate_plate_thumbnail(width: int = 256, height: int = 256) -> bytes:
     return png
 
 
-def _fix_sliced_3mf(path: Path) -> None:
+def _fix_sliced_3mf(path: Path, plate_3mf: Path | None = None) -> None:
     """Post-process a --min-save 3mf so Bambu Connect accepts it.
 
     OrcaSlicer CLI's --min-save export needs three fixes:
@@ -474,7 +562,7 @@ def _fix_sliced_3mf(path: Path) -> None:
                     continue  # OrcaSlicer generated a valid thumbnail
             except KeyError:
                 pass
-            thumbnail_overrides[fname] = _generate_plate_thumbnail(w, h)
+            thumbnail_overrides[fname] = _generate_plate_thumbnail(w, h, plate_3mf)
 
         # Rewrite the zip
         buf = io.BytesIO()
@@ -602,7 +690,7 @@ def slice_plate(
                 filament_arg,
                 image,
             )
-            _fix_sliced_3mf(result_dir / "plate_sliced.gcode.3mf")
+            _fix_sliced_3mf(result_dir / "plate_sliced.gcode.3mf", input_3mf)
             return result_dir
 
         # Local slicer path
@@ -645,7 +733,7 @@ def slice_plate(
             )
 
         log.info("Slicer stdout:\n%s", result.stdout)
-        _fix_sliced_3mf(output_dir / "plate_sliced.gcode.3mf")
+        _fix_sliced_3mf(output_dir / "plate_sliced.gcode.3mf", input_3mf)
         log.info("Slicing complete. Output in %s", output_dir)
         return output_dir
 
