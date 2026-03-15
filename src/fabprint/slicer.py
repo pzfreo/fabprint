@@ -595,7 +595,7 @@ def slice_plate(
     filament_ids: list[int] | None = None,
     overrides: dict[str, object] | None = None,
     project_dir: Path | None = None,
-    docker: bool = False,
+    local: bool = False,
     docker_version: str | None = None,
     required_version: str | None = None,
 ) -> Path:
@@ -604,10 +604,10 @@ def slice_plate(
     Profile names are resolved via profiles.resolve_profile_data().
     If overrides are provided, they are patched into the process profile.
 
-    Docker modes:
-      docker=True          - use Docker with default image
-      docker_version="X"   - use Docker with fabprint:orca-X image
-      neither + no local   - fallback to Docker with default image
+    Slicer selection:
+      local=True           - force local slicer, fail if not installed
+      docker_version="X"   - force Docker with fabprint:orca-X image
+      neither (default)    - try Docker first, fall back to local
 
     If required_version is set (from config), the slicer version is checked
     and must match exactly. For Docker, the image tag is used as the version.
@@ -618,27 +618,35 @@ def slice_plate(
     # use it as the docker_version for Docker-based slicing.
     if required_version and not docker_version:
         docker_version = required_version
-        docker = True
 
-    use_docker = docker or docker_version is not None
     image = _docker_image(docker_version)
 
-    if not use_docker:
-        try:
-            slicer = find_slicer(engine)
-        except FileNotFoundError:
-            if _ensure_docker_image(image):
-                log.info("Slicer not found locally, falling back to Docker (%s)", image)
-                use_docker = True
-            else:
-                raise
-
-    if use_docker and not _ensure_docker_image(image):
-        raise FileNotFoundError(
-            f"Docker image '{image}' not found locally or on Docker Hub. "
-            f"Check your Docker login or build locally with: docker build "
-            f"--build-arg ORCA_VERSION={docker_version or 'X.Y.Z'} -t {image} ."
-        )
+    if local:
+        # Force local — no Docker fallback
+        use_docker = False
+        slicer = find_slicer(engine)
+    elif docker_version is not None:
+        # Explicit Docker version requested
+        use_docker = True
+        if not _ensure_docker_image(image):
+            raise FileNotFoundError(
+                f"Docker image '{image}' not found locally or on Docker Hub. "
+                f"Check your Docker login or build locally with: docker build "
+                f"--build-arg ORCA_VERSION={docker_version or 'X.Y.Z'} -t {image} ."
+            )
+    else:
+        # Default: try Docker first, fall back to local
+        if _ensure_docker_image(image):
+            use_docker = True
+        else:
+            try:
+                slicer = find_slicer(engine)
+                use_docker = False
+            except FileNotFoundError:
+                raise FileNotFoundError(
+                    "No slicer available. Install OrcaSlicer locally or "
+                    "pull the Docker image: docker pull fabprint/fabprint:latest"
+                )
 
     # Detect and verify slicer version
     if use_docker:

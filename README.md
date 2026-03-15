@@ -294,19 +294,20 @@ docker run --rm -v "$PWD:/project" fabprint/fabprint:orca-2.3.1 plate fabprint.t
 docker run --rm fabprint/fabprint:orca-2.3.1 profiles list
 ```
 
-### Slicing via Docker from the CLI
+### Slicer selection
 
-Use `--docker` to force Docker slicing, or `--docker-version` to pick a specific OrcaSlicer version:
+By default, fabprint uses Docker if available, falling back to a local OrcaSlicer install:
 
 ```bash
-# Use default fabprint/fabprint:latest image
-fabprint slice fabprint.toml --docker
+# Default: Docker first, local fallback
+fabprint slice fabprint.toml
 
-# Use a specific OrcaSlicer version
+# Force local slicer (fail if not installed)
+fabprint slice fabprint.toml --local
+
+# Use a specific OrcaSlicer Docker image version
 fabprint slice fabprint.toml --docker-version 2.3.1
 ```
-
-If OrcaSlicer isn't installed locally, `fabprint slice` automatically falls back to Docker.
 
 ### Building your own image
 
