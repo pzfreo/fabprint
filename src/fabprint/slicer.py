@@ -212,8 +212,9 @@ def _slice_via_docker(
         "-v",
         f"{output_dir}:/work/output",
         "--entrypoint",
-        "orca-slicer",
+        "xvfb-run",
         image,
+        "orca-slicer",
     ]
 
     if settings_arg:
