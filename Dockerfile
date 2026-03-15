@@ -59,7 +59,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /opt/fabprint
 COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
-RUN uv sync --frozen --no-dev --no-editable \
+RUN uv python install 3.12 \
+    && uv sync --frozen --no-dev --no-editable --python 3.12 \
     && uv cache clean
 
 ENV PATH="/opt/fabprint/.venv/bin:$PATH"
