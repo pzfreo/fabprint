@@ -44,7 +44,7 @@ jobs:
         id: orca_changed
         run: |
           git diff ${{ github.sha }}^1 ${{ github.sha }} --name-only \
-            | grep -qE '^Dockerfile$|src/fabprint/slicer\.py' \
+            | grep -qE '^Dockerfile$|^src/fabprint/|^pyproject\.toml$' \
             && echo "changed=true" >> "$GITHUB_OUTPUT" \
             || echo "changed=false" >> "$GITHUB_OUTPUT"
 
