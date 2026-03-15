@@ -48,9 +48,9 @@ def main(argv: list[str] | None = None) -> None:
     slice_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
     slice_cmd.add_argument("-o", "--output-dir", type=Path, default=None, help="Output directory")
     slice_cmd.add_argument(
-        "--docker",
+        "--local",
         action="store_true",
-        help="Force slicing via Docker (even if local slicer is available)",
+        help="Force local slicer (fail if not installed)",
     )
     slice_cmd.add_argument(
         "--docker-version",
@@ -99,9 +99,9 @@ def main(argv: list[str] | None = None) -> None:
         help="Skip AMS mapping and use bridge default [0,1,2,3] (diagnostic)",
     )
     print_cmd.add_argument(
-        "--docker",
+        "--local",
         action="store_true",
-        help="Force slicing via Docker (even if local slicer is available)",
+        help="Force local slicer (fail if not installed)",
     )
     print_cmd.add_argument(
         "--docker-version",
@@ -514,7 +514,7 @@ def _do_slice(args: argparse.Namespace) -> Path:
         filament_ids=filament_ids,
         overrides=cfg.slicer.overrides or None,
         project_dir=cfg.base_dir,
-        docker=args.docker or args.docker_version is not None,
+        local=args.local,
         docker_version=args.docker_version,
         required_version=cfg.slicer.version,
     )

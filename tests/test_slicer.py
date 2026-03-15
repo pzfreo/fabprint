@@ -207,6 +207,7 @@ def test_slice_plate_local_command(tmp_path):
             process="My Process",
             filaments=["PLA"],
             overrides={"wall_loops": 4},
+            local=True,
         )
 
     cmd = mock_run.call_args[0][0]
@@ -217,17 +218,18 @@ def test_slice_plate_local_command(tmp_path):
     assert str(output_dir) in cmd
 
 
-def test_slice_plate_docker_fallback(tmp_path):
-    """When local slicer not found, falls back to Docker."""
+def test_slice_plate_local_fallback(tmp_path):
+    """When Docker image not found, falls back to local slicer."""
     input_3mf = tmp_path / "plate.3mf"
     input_3mf.write_text("fake")
     output_dir = tmp_path / "output"
 
     mock_result = MagicMock(returncode=0, stdout="", stderr="")
+    slicer_path = Path("/usr/bin/orca-slicer")
 
     with (
-        patch("fabprint.slicer.find_slicer", side_effect=FileNotFoundError("not found")),
-        patch("fabprint.slicer._ensure_docker_image", return_value=True),
+        patch("fabprint.slicer._ensure_docker_image", return_value=False),
+        patch("fabprint.slicer.find_slicer", return_value=slicer_path),
         patch("fabprint.slicer.resolve_profile_data", side_effect=_mock_resolve),
         patch("fabprint.slicer.subprocess.run", return_value=mock_result) as mock_run,
     ):
@@ -239,12 +241,11 @@ def test_slice_plate_docker_fallback(tmp_path):
         )
 
     cmd = mock_run.call_args[0][0]
-    assert cmd[0] == "docker"
-    assert "fabprint/fabprint:latest" in cmd
+    assert cmd[0] == str(slicer_path)
 
 
-def test_slice_plate_docker_explicit(tmp_path):
-    """docker=True forces Docker even if local slicer exists."""
+def test_slice_plate_docker_default(tmp_path):
+    """Default behavior uses Docker when image is available."""
     input_3mf = tmp_path / "plate.3mf"
     input_3mf.write_text("fake")
     output_dir = tmp_path / "output"
@@ -261,7 +262,6 @@ def test_slice_plate_docker_explicit(tmp_path):
             engine="orca",
             output_dir=output_dir,
             printer="My Printer",
-            docker=True,
         )
 
     cmd = mock_run.call_args[0][0]
