@@ -84,8 +84,8 @@ def test_docker_image_default():
 
 
 def test_docker_image_versioned():
-    assert _docker_image("2.3.1") == "fabprint/fabprint:2.3.1"
-    assert _docker_image("2.3.2") == "fabprint/fabprint:2.3.2"
+    assert _docker_image("2.3.1") == "fabprint/fabprint:orca-2.3.1"
+    assert _docker_image("2.3.2") == "fabprint/fabprint:orca-2.3.2"
 
 
 # --- _has_docker_image ---
@@ -292,7 +292,7 @@ def test_slice_plate_docker_version(tmp_path):
 
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == "docker"
-    assert "fabprint/fabprint:2.3.1" in cmd
+    assert "fabprint/fabprint:orca-2.3.1" in cmd
 
 
 def test_slice_plate_docker_image_missing(tmp_path):

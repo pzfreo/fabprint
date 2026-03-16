@@ -96,7 +96,7 @@ jobs:
           push: true
           tags: |
             fabprint/fabprint:latest
-            fabprint/fabprint:${{ steps.version.outputs.version }}
+            fabprint/fabprint:orca-2.3.1
           build-args: ORCA_VERSION=2.3.1
           cache-from: type=gha
           cache-to: type=gha,mode=max
