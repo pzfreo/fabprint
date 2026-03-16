@@ -84,8 +84,8 @@ def test_docker_image_default():
 
 
 def test_docker_image_versioned():
-    assert _docker_image("2.3.1") == "fabprint/fabprint:2.3.1"
-    assert _docker_image("2.3.2") == "fabprint/fabprint:2.3.2"
+    assert _docker_image("2.3.1") == "fabprint/fabprint:orca-2.3.1"
+    assert _docker_image("2.3.2") == "fabprint/fabprint:orca-2.3.2"
 
 
 # --- _has_docker_image ---
