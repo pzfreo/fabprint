@@ -314,7 +314,7 @@ _MIN_FILAMENT_SLOTS = 5
 def _generate_plate_thumbnail(
     width: int = 256, height: int = 256, plate_3mf: Path | None = None
 ) -> bytes:
-    """Render a top-down thumbnail of the plate using trimesh + Pillow.
+    """Render an isometric thumbnail of the plate using trimesh + Pillow.
 
     Falls back to a branded placeholder if rendering fails.
     """
@@ -327,7 +327,7 @@ def _generate_plate_thumbnail(
 
 
 def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
-    """Render a top-down orthographic view of the plate meshes."""
+    """Render an isometric view of the plate meshes with simple shading."""
     import io as _io
 
     import numpy as np
@@ -339,36 +339,52 @@ def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
     if not meshes:
         raise ValueError("No geometry in plate 3MF")
 
-    # Combine all meshes for bounding box
-    combined = trimesh.util.concatenate(meshes)
-    bounds = combined.bounds  # [[xmin,ymin,zmin],[xmax,ymax,zmax]]
-    x_range = bounds[1][0] - bounds[0][0]
-    y_range = bounds[1][1] - bounds[0][1]
+    # Isometric projection: rotate 45° around Z, then ~35.26° around X
+    # This gives a standard isometric view looking down from front-right
+    cos45 = np.cos(np.radians(45))
+    sin45 = np.sin(np.radians(45))
+    cos35 = np.cos(np.radians(35.264))
+    sin35 = np.sin(np.radians(35.264))
 
-    # Image setup — dark background
-    bg = (25, 25, 30)
-    plate_c = (50, 52, 58)
-    img = Image.new("RGB", (width, height), bg)
-    draw = ImageDraw.Draw(img)
+    # Combined rotation matrix: Rx(35.264) @ Rz(45)
+    rot = np.array(
+        [
+            [cos45, -sin45, 0],
+            [sin35 * sin45, sin35 * cos45, -cos35],
+            [cos35 * sin45, cos35 * cos45, sin35],
+        ]
+    )
 
-    # Fit plate into image with padding
+    # Light direction (from upper-right-front, normalized)
+    light_dir = np.array([0.3, -0.5, 0.8])
+    light_dir = light_dir / np.linalg.norm(light_dir)
+
+    # Project all meshes to get combined bounding box in screen space
+    all_projected = []
+    for mesh in meshes:
+        projected = mesh.vertices @ rot.T
+        all_projected.append(projected)
+    all_pts = np.vstack(all_projected)
+    px_min, py_min = all_pts[:, 0].min(), all_pts[:, 1].min()
+    px_max, py_max = all_pts[:, 0].max(), all_pts[:, 1].max()
+
+    # Fit into image with margin
     margin = 16
     draw_w = width - 2 * margin
     draw_h = height - 2 * margin
-    scale = min(draw_w / max(x_range, 1), draw_h / max(y_range, 1))
+    proj_w = px_max - px_min
+    proj_h = py_max - py_min
+    scale = min(draw_w / max(proj_w, 1), draw_h / max(proj_h, 1))
+    offset_x = margin + draw_w / 2 - (px_min + px_max) / 2 * scale
+    offset_y = margin + draw_h / 2 + (py_min + py_max) / 2 * scale  # flip Y
 
-    cx = (bounds[0][0] + bounds[1][0]) / 2
-    cy = (bounds[0][1] + bounds[1][1]) / 2
+    def to_pixel(pt: np.ndarray) -> tuple[float, float]:
+        return (offset_x + pt[0] * scale, offset_y - pt[1] * scale)
 
-    def to_pixel(x: float, y: float) -> tuple[float, float]:
-        px = margin + draw_w / 2 + (x - cx) * scale
-        py = margin + draw_h / 2 - (y - cy) * scale  # flip Y
-        return px, py
-
-    # Draw plate background rectangle
-    p1 = to_pixel(bounds[0][0] - 5, bounds[1][1] + 5)  # top-left in pixel space
-    p2 = to_pixel(bounds[1][0] + 5, bounds[0][1] - 5)  # bottom-right in pixel space
-    draw.rectangle([p1, p2], fill=plate_c)
+    # Image setup
+    bg = (25, 25, 30)
+    img = Image.new("RGB", (width, height), bg)
+    draw = ImageDraw.Draw(img)
 
     # Colors for different filament slots
     palette = [
@@ -380,24 +396,33 @@ def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
         (156, 39, 176),  # purple
     ]
 
-    # Render each mesh as projected 2D triangles
-    for mesh in meshes:
+    # Collect all faces with depth for painter's algorithm
+    face_list = []  # (depth, pixel_pts, color)
+    for mesh_idx, mesh in enumerate(meshes):
         fil_id = mesh.metadata.get("filament_id", 1)
-        color = palette[(fil_id - 1) % len(palette)]
-        # Shade: darker fill, brighter outline
-        fill = tuple(int(c * 0.7) for c in color)
-        outline = color
+        base_color = np.array(palette[(fil_id - 1) % len(palette)], dtype=float)
 
-        verts = mesh.vertices
-        faces = mesh.faces
+        projected = all_projected[mesh_idx]
+        normals = mesh.face_normals
 
-        # Project vertices to 2D (top-down: use X, Y)
-        pixels = np.array([to_pixel(v[0], v[1]) for v in verts])
+        for fi, face in enumerate(mesh.faces):
+            # Face depth = average Z in projected space (for sorting)
+            verts_proj = projected[face]
+            depth = verts_proj[:, 2].mean()
 
-        # Draw filled triangles
-        for face in faces:
-            pts = [tuple(pixels[i]) for i in face]
-            draw.polygon(pts, fill=fill, outline=outline)
+            # Lambertian shading from face normal
+            n = normals[fi]
+            brightness = max(0.3, float(np.dot(n, light_dir)))
+            color = tuple(int(min(255, c * brightness)) for c in base_color)
+
+            pts = [to_pixel(verts_proj[i]) for i in range(3)]
+            face_list.append((depth, pts, color))
+
+    # Sort back-to-front (painter's algorithm)
+    face_list.sort(key=lambda f: f[0])
+
+    for _, pts, color in face_list:
+        draw.polygon(pts, fill=color)
 
     buf = _io.BytesIO()
     img.save(buf, format="PNG")
