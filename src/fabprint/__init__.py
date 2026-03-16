@@ -1,6 +1,6 @@
 """fabprint — Immutable 3D print pipeline."""
 
-__version__ = "0.1.37"
+__version__ = "0.1.38"
 
 
 class FabprintError(Exception):
