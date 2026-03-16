@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from fabprint.config import PrinterConfig
+from fabprint.credentials import load_printer_credentials
 from fabprint.gcode import parse_gcode_metadata
 from fabprint.printer import (
     _resolve_credentials,
@@ -14,8 +15,103 @@ from fabprint.printer import (
 )
 
 
-def test_resolve_credentials_from_config():
-    config = PrinterConfig(mode="lan", ip="10.0.0.1", access_code="abc", serial="SN123")
+def _write_credentials(tmp_path, content):
+    """Write a credentials.toml and return its path."""
+    cred_path = tmp_path / "credentials.toml"
+    cred_path.write_text(content)
+    return cred_path
+
+
+def test_load_credentials_from_file(tmp_path, monkeypatch):
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.workshop]
+ip = "10.0.0.1"
+access_code = "abc"
+serial = "SN123"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    monkeypatch.delenv("BAMBU_PRINTER_IP", raising=False)
+    monkeypatch.delenv("BAMBU_ACCESS_CODE", raising=False)
+    monkeypatch.delenv("BAMBU_SERIAL", raising=False)
+    creds = load_printer_credentials("workshop")
+    assert creds["ip"] == "10.0.0.1"
+    assert creds["access_code"] == "abc"
+    assert creds["serial"] == "SN123"
+
+
+def test_load_credentials_env_overrides(tmp_path, monkeypatch):
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.workshop]
+ip = "10.0.0.1"
+access_code = "abc"
+serial = "SN123"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    monkeypatch.setenv("BAMBU_PRINTER_IP", "192.168.1.99")
+    monkeypatch.setenv("BAMBU_ACCESS_CODE", "override_code")
+    monkeypatch.setenv("BAMBU_SERIAL", "OVERRIDE_SN")
+    creds = load_printer_credentials("workshop")
+    assert creds["ip"] == "192.168.1.99"
+    assert creds["access_code"] == "override_code"
+    assert creds["serial"] == "OVERRIDE_SN"
+
+
+def test_load_credentials_no_name_env_only(monkeypatch):
+    monkeypatch.setenv("BAMBU_EMAIL", "user@test.com")
+    monkeypatch.setenv("BAMBU_PASSWORD", "secret")
+    monkeypatch.delenv("BAMBU_PRINTER_IP", raising=False)
+    monkeypatch.delenv("BAMBU_ACCESS_CODE", raising=False)
+    monkeypatch.delenv("BAMBU_SERIAL", raising=False)
+    creds = load_printer_credentials(None)
+    assert creds["email"] == "user@test.com"
+    assert creds["password"] == "secret"
+    assert creds["ip"] is None
+
+
+def test_load_credentials_missing_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(tmp_path / "nonexistent.toml"))
+    from fabprint import FabprintError
+
+    with pytest.raises(FabprintError, match="not found"):
+        load_printer_credentials("workshop")
+
+
+def test_load_credentials_missing_printer(tmp_path, monkeypatch):
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.other]
+ip = "10.0.0.1"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    from fabprint import FabprintError
+
+    with pytest.raises(FabprintError, match="workshop.*not found"):
+        load_printer_credentials("workshop")
+
+
+def test_resolve_credentials_with_name(tmp_path, monkeypatch):
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.workshop]
+ip = "10.0.0.1"
+access_code = "abc"
+serial = "SN123"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    monkeypatch.delenv("BAMBU_PRINTER_IP", raising=False)
+    monkeypatch.delenv("BAMBU_ACCESS_CODE", raising=False)
+    monkeypatch.delenv("BAMBU_SERIAL", raising=False)
+    config = PrinterConfig(mode="lan", name="workshop")
     creds = _resolve_credentials(config)
     assert creds["mode"] == "lan"
     assert creds["ip"] == "10.0.0.1"
@@ -23,31 +119,23 @@ def test_resolve_credentials_from_config():
     assert creds["serial"] == "SN123"
 
 
-def test_resolve_credentials_env_overrides(monkeypatch):
-    config = PrinterConfig(mode="lan", ip="10.0.0.1", access_code="abc", serial="SN123")
-    monkeypatch.setenv("BAMBU_PRINTER_IP", "192.168.1.99")
-    monkeypatch.setenv("BAMBU_ACCESS_CODE", "override_code")
-    monkeypatch.setenv("BAMBU_SERIAL", "OVERRIDE_SN")
-    creds = _resolve_credentials(config)
-    assert creds["ip"] == "192.168.1.99"
-    assert creds["access_code"] == "override_code"
-    assert creds["serial"] == "OVERRIDE_SN"
-
-
-def test_resolve_credentials_cloud_env(monkeypatch):
-    config = PrinterConfig(mode="cloud")
-    monkeypatch.setenv("BAMBU_EMAIL", "user@test.com")
-    monkeypatch.setenv("BAMBU_PASSWORD", "secret")
-    creds = _resolve_credentials(config)
-    assert creds["mode"] == "cloud"
-    assert creds["email"] == "user@test.com"
-    assert creds["password"] == "secret"
-
-
-def test_send_print_lan_dry_run(tmp_path, capsys):
+def test_send_print_lan_dry_run(tmp_path, monkeypatch, capsys):
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.workshop]
+ip = "10.0.0.1"
+access_code = "abc"
+serial = "SN123"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    monkeypatch.delenv("BAMBU_PRINTER_IP", raising=False)
+    monkeypatch.delenv("BAMBU_ACCESS_CODE", raising=False)
+    monkeypatch.delenv("BAMBU_SERIAL", raising=False)
     gcode = tmp_path / "test.gcode"
     gcode.write_text("; test gcode")
-    config = PrinterConfig(mode="lan", ip="10.0.0.1", access_code="abc", serial="SN123")
+    config = PrinterConfig(mode="lan", name="workshop")
     with patch("fabprint.printer._send_lan") as mock_send:
         send_print(gcode, config, dry_run=True)
         mock_send.assert_called_once_with(
@@ -60,8 +148,11 @@ def test_send_print_lan_dry_run(tmp_path, capsys):
         )
 
 
-def test_send_print_cloud_dispatches_bambu_connect(tmp_path):
+def test_send_print_cloud_dispatches_bambu_connect(tmp_path, monkeypatch):
     """Test that cloud mode dispatches to _send_bambu_connect."""
+    monkeypatch.delenv("BAMBU_PRINTER_IP", raising=False)
+    monkeypatch.delenv("BAMBU_ACCESS_CODE", raising=False)
+    monkeypatch.delenv("BAMBU_SERIAL", raising=False)
     gcode = tmp_path / "test.gcode"
     gcode.write_text("; test gcode")
     config = PrinterConfig(mode="cloud")
@@ -71,11 +162,20 @@ def test_send_print_cloud_dispatches_bambu_connect(tmp_path):
         mock_send.assert_called_once_with(gcode, dry_run=True)
 
 
-def test_send_print_cloud_bridge_dispatches(tmp_path):
+def test_send_print_cloud_bridge_dispatches(tmp_path, monkeypatch):
     """Test that cloud-bridge mode dispatches to _send_cloud_bridge."""
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.workshop]
+serial = "SN123"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    monkeypatch.delenv("BAMBU_SERIAL", raising=False)
     gcode = tmp_path / "test.gcode"
     gcode.write_text("; test gcode")
-    config = PrinterConfig(mode="cloud-bridge", serial="SN123")
+    config = PrinterConfig(mode="cloud-bridge", name="workshop")
 
     with patch("fabprint.printer._send_cloud_bridge") as mock_send:
         send_print(gcode, config, dry_run=True)
@@ -84,29 +184,72 @@ def test_send_print_cloud_bridge_dispatches(tmp_path):
         )
 
 
-def test_send_print_lan_missing_ip():
-    config = PrinterConfig(mode="lan", ip=None, access_code="abc", serial="SN123")
+def test_send_print_lan_missing_ip(tmp_path, monkeypatch):
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.workshop]
+access_code = "abc"
+serial = "SN123"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    monkeypatch.delenv("BAMBU_PRINTER_IP", raising=False)
+    config = PrinterConfig(mode="lan", name="workshop")
     with pytest.raises(ValueError, match="ip"):
         send_print(Path("dummy.gcode"), config)
 
 
-def test_send_print_lan_missing_access_code():
-    config = PrinterConfig(mode="lan", ip="10.0.0.1", access_code=None, serial="SN123")
+def test_send_print_lan_missing_access_code(tmp_path, monkeypatch):
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.workshop]
+ip = "10.0.0.1"
+serial = "SN123"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    monkeypatch.delenv("BAMBU_ACCESS_CODE", raising=False)
+    config = PrinterConfig(mode="lan", name="workshop")
     with pytest.raises(ValueError, match="access_code"):
         send_print(Path("dummy.gcode"), config)
 
 
-def test_send_print_lan_missing_serial():
-    config = PrinterConfig(mode="lan", ip="10.0.0.1", access_code="abc", serial=None)
+def test_send_print_lan_missing_serial(tmp_path, monkeypatch):
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.workshop]
+ip = "10.0.0.1"
+access_code = "abc"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    monkeypatch.delenv("BAMBU_SERIAL", raising=False)
+    config = PrinterConfig(mode="lan", name="workshop")
     with pytest.raises(ValueError, match="serial"):
         send_print(Path("dummy.gcode"), config)
 
 
-def test_send_print_lan_dispatches(tmp_path):
+def test_send_print_lan_dispatches(tmp_path, monkeypatch):
     """Test that LAN mode dispatches to _send_lan with correct args."""
+    cred_path = _write_credentials(
+        tmp_path,
+        """
+[printers.workshop]
+ip = "10.0.0.1"
+access_code = "abc"
+serial = "SN123"
+""",
+    )
+    monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
+    monkeypatch.delenv("BAMBU_PRINTER_IP", raising=False)
+    monkeypatch.delenv("BAMBU_ACCESS_CODE", raising=False)
+    monkeypatch.delenv("BAMBU_SERIAL", raising=False)
     gcode = tmp_path / "test.gcode"
     gcode.write_text("; test gcode")
-    config = PrinterConfig(mode="lan", ip="10.0.0.1", access_code="abc", serial="SN123")
+    config = PrinterConfig(mode="lan", name="workshop")
 
     with patch("fabprint.printer._send_lan") as mock_send:
         send_print(gcode, config, dry_run=False)

@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 from fabprint.config import PrinterConfig
+from fabprint.credentials import load_printer_credentials
 from fabprint.gcode import parse_gcode_metadata
 
 log = logging.getLogger(__name__)
@@ -117,18 +118,13 @@ def wrap_gcode_3mf(gcode_path: Path, output_path: Path | None = None) -> Path:
 
 
 def _resolve_credentials(config: PrinterConfig) -> dict[str, str | None]:
-    """Merge config values with env var overrides.
+    """Load credentials from credentials.toml (by printer name), with env var overrides.
 
-    Env vars take precedence over config file values.
+    Resolution: env vars > credentials.toml > None.
     """
-    return {
-        "mode": config.mode,
-        "ip": os.environ.get("BAMBU_PRINTER_IP", config.ip),
-        "access_code": os.environ.get("BAMBU_ACCESS_CODE", config.access_code),
-        "serial": os.environ.get("BAMBU_SERIAL", config.serial),
-        "email": os.environ.get("BAMBU_EMAIL"),
-        "password": os.environ.get("BAMBU_PASSWORD"),
-    }
+    creds = load_printer_credentials(config.name)
+    creds["mode"] = config.mode
+    return creds
 
 
 def _send_lan(
@@ -330,7 +326,8 @@ def _send_cloud_bridge(
         serial = os.environ.get("BAMBU_SERIAL")
     if not serial:
         raise ValueError(
-            "cloud-bridge mode requires serial. Set in [printer] config or BAMBU_SERIAL env var."
+            "cloud-bridge mode requires serial. "
+            "Set in ~/.config/fabprint/credentials.toml or BAMBU_SERIAL env var."
         )
 
     # Check printer availability before sending, and capture AMS state for mapping
@@ -434,7 +431,8 @@ def _send_cloud_http(
         serial = os.environ.get("BAMBU_SERIAL")
     if not serial:
         raise ValueError(
-            "cloud-http mode requires serial. Set in [printer] config or BAMBU_SERIAL env var."
+            "cloud-http mode requires serial. "
+            "Set in ~/.config/fabprint/credentials.toml or BAMBU_SERIAL env var."
         )
 
     sliced_3mf = gcode_path.parent / "plate_sliced.gcode.3mf"
@@ -486,7 +484,8 @@ def send_print(
             if not creds[field]:
                 env_var = f"BAMBU_{field.upper()}" if field != "ip" else "BAMBU_PRINTER_IP"
                 raise ValueError(
-                    f"LAN mode requires {field}. Set in [printer] config or {env_var} env var."
+                    f"LAN mode requires {field}. "
+                    f"Set in ~/.config/fabprint/credentials.toml or {env_var} env var."
                 )
         _send_lan(
             gcode_path,
