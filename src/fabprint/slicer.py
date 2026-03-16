@@ -353,11 +353,11 @@ def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
     # Round up to nearest common plate size, minimum the part extent + padding
     bed_half = max(plate_half + 10, 64)
 
-    # Isometric view: Rx(-35.264) @ Rz(45) — looking down from front-right
+    # Isometric view: Rx(-30) @ Rz(45) — looking down from front-right
     cos45 = np.cos(np.radians(45))
     sin45 = np.sin(np.radians(45))
-    cos35 = np.cos(np.radians(35.264))
-    sin35 = np.sin(np.radians(35.264))
+    cos35 = np.cos(np.radians(30))
+    sin35 = np.sin(np.radians(30))
 
     # Rx(-a) @ Rz(b): screen_x = cos(b)*x - sin(b)*y
     #                  screen_y = cos(a)*sin(b)*x + cos(a)*cos(b)*y + sin(a)*z
