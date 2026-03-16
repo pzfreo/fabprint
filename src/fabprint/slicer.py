@@ -327,7 +327,7 @@ def _generate_plate_thumbnail(
 
 
 def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
-    """Render an isometric view of the plate meshes with simple shading."""
+    """Render an isometric view of the plate meshes with bed plate."""
     import io as _io
 
     import numpy as np
@@ -339,32 +339,59 @@ def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
     if not meshes:
         raise ValueError("No geometry in plate 3MF")
 
-    # Isometric projection: rotate 45° around Z, then ~35.26° around X
-    # This gives a standard isometric view looking down from front-right
+    # Bed is the full plate size (256x256 by convention — parts are centered at origin)
+    # Read plate size from the part bounds symmetry (parts centered at 0,0)
+    combined_parts = trimesh.util.concatenate(meshes)
+    part_bounds = combined_parts.bounds
+    # Plate is symmetric about origin; infer size from the max extent
+    plate_half = max(
+        abs(part_bounds[0][0]),
+        abs(part_bounds[1][0]),
+        abs(part_bounds[0][1]),
+        abs(part_bounds[1][1]),
+    )
+    # Round up to nearest common plate size, minimum the part extent + padding
+    bed_half = max(plate_half + 10, 64)
+
+    # Isometric view: Rx(-30) @ Rz(45) — looking down from front-right
     cos45 = np.cos(np.radians(45))
     sin45 = np.sin(np.radians(45))
-    cos35 = np.cos(np.radians(35.264))
-    sin35 = np.sin(np.radians(35.264))
+    cos35 = np.cos(np.radians(30))
+    sin35 = np.sin(np.radians(30))
 
-    # Combined rotation matrix: Rx(35.264) @ Rz(45)
+    # Rx(-a) @ Rz(b): screen_x = cos(b)*x - sin(b)*y
+    #                  screen_y = cos(a)*sin(b)*x + cos(a)*cos(b)*y + sin(a)*z
+    #                  depth    = -sin(a)*sin(b)*x - sin(a)*cos(b)*y + cos(a)*z
     rot = np.array(
         [
             [cos45, -sin45, 0],
-            [sin35 * sin45, sin35 * cos45, -cos35],
             [cos35 * sin45, cos35 * cos45, sin35],
+            [-sin35 * sin45, -sin35 * cos45, cos35],
         ]
     )
 
-    # Light direction (from upper-right-front, normalized)
-    light_dir = np.array([0.3, -0.5, 0.8])
+    # Light direction (from upper-right, normalized)
+    light_dir = np.array([0.3, -0.3, 0.9])
     light_dir = light_dir / np.linalg.norm(light_dir)
 
-    # Project all meshes to get combined bounding box in screen space
+    # Project all part meshes for bounding box
     all_projected = []
     for mesh in meshes:
         projected = mesh.vertices @ rot.T
         all_projected.append(projected)
-    all_pts = np.vstack(all_projected)
+
+    # Also project bed corners for bounding box
+    bed_corners_3d = np.array(
+        [
+            [-bed_half, -bed_half, 0],
+            [bed_half, -bed_half, 0],
+            [bed_half, bed_half, 0],
+            [-bed_half, bed_half, 0],
+        ]
+    )
+    bed_corners_proj = bed_corners_3d @ rot.T
+
+    all_pts = np.vstack(all_projected + [bed_corners_proj])
     px_min, py_min = all_pts[:, 0].min(), all_pts[:, 1].min()
     px_max, py_max = all_pts[:, 0].max(), all_pts[:, 1].max()
 
@@ -396,7 +423,12 @@ def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
         (156, 39, 176),  # purple
     ]
 
-    # Collect all faces with depth for painter's algorithm
+    # Draw bed first as a simple projected quad
+    bed_pts = [to_pixel(c) for c in bed_corners_proj]
+    draw.polygon(bed_pts, fill=(55, 58, 65))
+    draw.line(bed_pts + [bed_pts[0]], fill=(75, 78, 85), width=1)
+
+    # Collect part faces with depth for painter's algorithm
     face_list = []  # (depth, pixel_pts, color)
     for mesh_idx, mesh in enumerate(meshes):
         fil_id = mesh.metadata.get("filament_id", 1)
@@ -406,11 +438,9 @@ def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
         normals = mesh.face_normals
 
         for fi, face in enumerate(mesh.faces):
-            # Face depth = average Z in projected space (for sorting)
             verts_proj = projected[face]
             depth = verts_proj[:, 2].mean()
 
-            # Lambertian shading from face normal
             n = normals[fi]
             brightness = max(0.3, float(np.dot(n, light_dir)))
             color = tuple(int(min(255, c * brightness)) for c in base_color)
@@ -418,7 +448,7 @@ def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
             pts = [to_pixel(verts_proj[i]) for i in range(3)]
             face_list.append((depth, pts, color))
 
-    # Sort back-to-front (painter's algorithm)
+    # Sort back-to-front: lowest depth = furthest from camera = draw first
     face_list.sort(key=lambda f: f[0])
 
     for _, pts, color in face_list:
