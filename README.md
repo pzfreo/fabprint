@@ -1,16 +1,64 @@
 # fabprint
 
-Headless 3D print pipeline: arrange parts on a build plate, slice to gcode, and send to a Bambu Lab printer — all from a TOML config file.
+[![PyPI version](https://img.shields.io/pypi/v/fabprint)](https://pypi.org/project/fabprint/)
+[![CI](https://github.com/pzfreo/fabprint/actions/workflows/ci.yml/badge.svg)](https://github.com/pzfreo/fabprint/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
+**Immutable 3D print pipeline**: arrange parts on a build plate, slice to gcode, and send to a Bambu Lab printer — all from a single TOML config file.
 
 ![fabprint pipeline](docs/images/pipeline.png)
 
-## Why fabprint
+## Why fabprint?
 
-Code-CAD tools like [build123d](https://github.com/gumyr/build123d) let you define physical parts in Python — parametric, testable, and version-controlled. But the moment you need to print, the workflow breaks: open a slicer GUI, drag in your files, fiddle with settings, hit print. None of that is reproducible or tracked.
+Code-CAD tools like [build123d](https://github.com/gumyr/build123d) let you define physical parts in Python — parametric, testable, and version-controlled. But the moment you need to print, the workflow breaks: open a slicer GUI, drag in files, fiddle with settings, hit print. Nothing is reproducible, nothing is tracked.
 
-fabprint closes that gap. A TOML file declares your parts, filaments, and slicer settings. The CLI arranges, slices, and sends to the printer. Everything is text, everything goes in git, and the same config produces the same print every time.
+fabprint closes that gap. **One TOML file declares your parts, filaments, and slicer settings. One command arranges, slices, and sends to the printer.** Everything is text, everything goes in git, and the same config produces the same print every time.
 
-Software engineering spent decades borrowing rigour from physical manufacturing — assembly lines, quality gates, repeatable builds. fabprint brings those ideas full circle: version-controlled configs, reproducible builds, and command-line deployments for the physical world.
+## Quick start
+
+### 1. Install
+
+```bash
+pip install fabprint
+```
+
+### 2. Create `fabprint.toml`
+
+```toml
+[plate]
+size = [256, 256]       # build plate dimensions in mm
+padding = 5.0
+
+[slicer]
+engine = "orca"
+printer = "Bambu Lab P1S 0.4 nozzle"
+process = "0.20mm Standard @BBL X1C"
+
+[[parts]]
+file = "frame.stl"
+filament = "Generic PETG-CF @base"
+
+[[parts]]
+file = "wheel.stl"
+copies = 5
+orient = "upright"
+filament = "Generic PETG-CF @base"
+```
+
+Parts reference filament profiles by name — no need to manually number AMS slots.
+
+### 3. Arrange, slice, print
+
+```bash
+fabprint plate fabprint.toml -o plate.3mf   # arrange parts onto a build plate
+fabprint slice fabprint.toml                 # slice to gcode
+fabprint print fabprint.toml                 # slice and send to printer
+```
+
+The `plate` command also generates a `plate_preview.3mf` with a bed outline — open it in any 3MF viewer to review placement:
+
+![plate preview](docs/images/plate_preview.png)
 
 ## Features
 
@@ -19,9 +67,10 @@ Software engineering spent decades borrowing rigour from physical manufacturing 
 - **Bin packing** — efficient 2D arrangement with configurable padding
 - **Part scaling** — uniform scale factor per part
 - **Multi-filament** — AMS slot assignment per part with correct extruder mapping
-- **Slicer integration** — BambuStudio and OrcaSlicer CLI support
+- **Slicer integration** — OrcaSlicer and BambuStudio CLI support
 - **Profile management** — discover, pin, and override slicer profiles
-- **Print delivery** — send to printer via LAN, Bambu Connect, or cloud API
+- **Print delivery** — LAN, Bambu Connect, or cloud API
+- **Docker support** — pre-built images with OrcaSlicer for reproducible CI/CD slicing
 - **Cross-platform** — macOS, Linux, and Windows
 
 ## Installation
@@ -32,78 +81,40 @@ Requires Python 3.11+.
 pip install fabprint
 ```
 
-Or from source with [uv](https://docs.astral.sh/uv/):
+Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv sync
+uv pip install fabprint
 ```
 
-Optional extras:
+### Optional extras
 
 ```bash
-pip install "fabprint[lan]"    # LAN printing (bambulabs-api)
+pip install "fabprint[lan]"    # LAN printing via MQTT/FTP
 pip install "fabprint[cloud]"  # Bambu Cloud API (experimental)
 pip install "fabprint[step]"   # STEP file support (build123d)
 pip install "fabprint[all]"    # Everything
 ```
 
-## Quick start
+## CLI reference
 
-1. Create a `fabprint.toml` config:
-
-```toml
-[printer]
-mode = "cloud-bridge"
-serial = "01P00A..."
-
-[plate]
-size = [256, 256]
-padding = 5.0
-
-[slicer]
-engine = "orca"
-printer = "Bambu Lab P1S 0.4 nozzle"
-process = "0.20mm Standard @BBL X1C"
-
-[slicer.overrides]
-enable_support = 1
-curr_bed_type = "Textured PEI Plate"
-
-[[parts]]
-file = "frame.stl"
-copies = 1
-filament = "Generic PETG-CF @base"
-
-[[parts]]
-file = "wheel.stl"
-copies = 5
-orient = "upright"
-filament = "Generic PETG-CF @base"
+```
+fabprint plate <config>                     # Arrange and export 3MF (+ preview)
+fabprint slice <config>                     # Arrange, export, and slice to gcode
+fabprint print <config>                     # Arrange, slice, and send to printer
+fabprint print <config> --dry-run           # Do everything except send to printer
+fabprint print <config> --gcode plate.gcode # Send pre-sliced gcode
+fabprint print <config> --upload-only       # Upload without starting print
+fabprint print <config> --sequence 1        # Print only sequence 1
+fabprint gcode-info plate.gcode             # Analyze extruder usage per layer
+fabprint login                              # Log in to Bambu Cloud, cache token
+fabprint watch                              # Live dashboard for all printers
+fabprint status                             # Query status of all printers
+fabprint profiles list                      # List available slicer profiles
+fabprint profiles pin <config>              # Pin profiles for reproducible builds
 ```
 
-Parts reference filament profiles by name — no need to manually number AMS slots. The filament list is auto-derived from what parts use. For multi-material prints with explicit slot ordering, you can still set `[slicer].filaments` directly.
-
-2. Generate a build plate:
-
-```bash
-fabprint plate fabprint.toml -o plate.3mf
-```
-
-A `plate_preview.3mf` is also generated with a bed outline — open it in any 3MF viewer to review part placement:
-
-![plate preview](docs/images/plate_preview.png)
-
-3. Slice to gcode:
-
-```bash
-fabprint slice fabprint.toml
-```
-
-4. Slice and send to printer:
-
-```bash
-fabprint print fabprint.toml
-```
+![fabprint watch](docs/images/watch.png)
 
 ## Config reference
 
@@ -116,42 +127,42 @@ fabprint print fabprint.toml
 | `access_code` | `string` | —             | Printer access code (LAN mode)         |
 | `serial`      | `string` | —             | Printer serial number (LAN mode)       |
 
-Printer modes:
+**Printer modes:**
 
-- **`bambu-lan`** — direct LAN connection via MQTT + FTP. Requires `ip`, `access_code`, and `serial`. Fastest, works offline.
-- **`bambu-connect`** — sends sliced `.gcode.3mf` to [Bambu Connect](https://wiki.bambulab.com/en/software/bambu-connect) app. No credentials needed. You confirm and start the print from Bambu Connect.
-- **`bambu-cloud`** — experimental cloud API. Requires `BAMBU_EMAIL` and `BAMBU_PASSWORD` env vars.
+- **`bambu-lan`** — Direct LAN connection via MQTT + FTP. Requires `ip`, `access_code`, and `serial`. Fastest, works offline.
+- **`bambu-connect`** — Sends sliced `.gcode.3mf` to the [Bambu Connect](https://wiki.bambulab.com/en/software/bambu-connect) app. No credentials needed; you confirm and start from the app.
+- **`bambu-cloud`** — Experimental cloud API. Requires `BAMBU_EMAIL` and `BAMBU_PASSWORD` env vars.
 
-Credentials can also be set via environment variables, which override config values:
+**Environment variable overrides:**
 
-| Env var            | Overrides         |
-|--------------------|-------------------|
-| `BAMBU_PRINTER_IP` | `printer.ip`      |
+| Env var            | Overrides             |
+|--------------------|-----------------------|
+| `BAMBU_PRINTER_IP` | `printer.ip`         |
 | `BAMBU_ACCESS_CODE`| `printer.access_code` |
-| `BAMBU_SERIAL`     | `printer.serial`  |
-| `BAMBU_EMAIL`      | Cloud login email  |
-| `BAMBU_PASSWORD`   | Cloud login password |
+| `BAMBU_SERIAL`     | `printer.serial`     |
+| `BAMBU_EMAIL`      | Cloud login email     |
+| `BAMBU_PASSWORD`   | Cloud login password  |
 
 ### `[plate]`
 
-| Key       | Type         | Default | Description              |
-|-----------|--------------|---------|--------------------------|
-| `size`    | `[w, h]`    | —       | Build plate size in mm   |
-| `padding` | `float`      | `5.0`   | Gap between parts in mm  |
+| Key       | Type      | Default | Description              |
+|-----------|-----------|---------|--------------------------|
+| `size`    | `[w, h]`  | —       | Build plate size in mm   |
+| `padding` | `float`   | `5.0`   | Gap between parts in mm  |
 
 ### `[slicer]`
 
-| Key         | Type       | Default   | Description                            |
-|-------------|------------|-----------|----------------------------------------|
-| `engine`    | `string`   | `"orca"`  | `"orca"` or `"bambu"`                  |
-| `version`   | `string`   | —         | Required OrcaSlicer version (e.g. `"2.3.1"`) |
-| `printer`   | `string`   | —         | Printer profile name                   |
-| `process`   | `string`   | —         | Process profile name                   |
-| `filaments` | `[string]` | —         | Filament profiles (auto-derived from parts if omitted) |
+| Key         | Type       | Default  | Description                            |
+|-------------|------------|----------|----------------------------------------|
+| `engine`    | `string`   | `"orca"` | `"orca"` or `"bambu"`                  |
+| `version`   | `string`   | —        | Required OrcaSlicer version (e.g. `"2.3.1"`) |
+| `printer`   | `string`   | —        | Printer profile name                   |
+| `process`   | `string`   | —        | Process profile name                   |
+| `filaments` | `[string]` | —        | Filament profiles (auto-derived from parts if omitted) |
 
 ### `[slicer.slots]`
 
-Map slot numbers to filament profiles. Useful when you need specific slot placement (e.g. direct feed) or when parts reference slots by number:
+Map slot numbers to filament profiles for explicit AMS placement:
 
 ```toml
 [slicer.slots]
@@ -160,7 +171,7 @@ Map slot numbers to filament profiles. Useful when you need specific slot placem
 5 = "Generic TPU @base"        # direct feed (bypass AMS)
 ```
 
-Parts can then use `filament = 3` to target a specific slot, or `filament = "Generic PLA @base"` to let the slicer pick. String-referenced filaments not in the slots map are auto-assigned to the next free slot.
+Parts can use `filament = 3` to target a specific slot, or `filament = "Generic PLA @base"` to auto-assign.
 
 ### `[slicer.overrides]`
 
@@ -177,20 +188,20 @@ Common bed types: `"Cool Plate"`, `"Engineering Plate"`, `"High Temp Plate"`, `"
 
 ### `[[parts]]`
 
-| Key        | Type       | Default      | Description                          |
-|------------|------------|--------------|--------------------------------------|
-| `file`     | `string`   | —            | Path to mesh file (STL/3MF/STEP)     |
-| `copies`   | `int`      | `1`          | Number of copies                     |
-| `orient`   | `string`   | `"flat"`     | `"flat"`, `"upright"`, or `"side"`   |
-| `rotate`   | `[x,y,z]`  | —            | Custom rotation in degrees (overrides `orient`) |
-| `filament` | `int\|string` | `1`       | Filament profile name or slot index  |
-| `scale`    | `float`    | `1.0`        | Uniform scale factor                 |
-| `object`   | `string`   | —            | Select a named object from a multi-object 3MF |
-| `sequence` | `int`      | `1`          | Print order for sequential printing  |
+| Key        | Type          | Default  | Description                          |
+|------------|---------------|----------|--------------------------------------|
+| `file`     | `string`      | —        | Path to mesh file (STL/3MF/STEP)     |
+| `copies`   | `int`         | `1`      | Number of copies                     |
+| `orient`   | `string`      | `"flat"` | `"flat"`, `"upright"`, or `"side"`   |
+| `rotate`   | `[x, y, z]`  | —        | Custom rotation in degrees (overrides `orient`) |
+| `filament` | `int\|string` | `1`      | Filament profile name or slot index  |
+| `scale`    | `float`       | `1.0`    | Uniform scale factor                 |
+| `object`   | `string`      | —        | Select a named object from a multi-object 3MF |
+| `sequence` | `int`         | `1`      | Print order for sequential printing  |
 
 ### `[parts.filaments]`
 
-Per-object filament overrides for multi-object 3MF files. When a 3MF contains multiple named objects (e.g. exported from build123d), each object can be assigned a different filament while preserving their relative positions:
+Per-object filament overrides for multi-object 3MF files:
 
 ```toml
 [[parts]]
@@ -201,11 +212,11 @@ filament = "Generic PETG-CF @base"       # default for objects not listed
 inlay = "Bambu PLA Basic @BBL X1C"       # override for object named "inlay"
 ```
 
-Objects in the 3MF are grouped as a single unit for bin packing. Orientation is skipped for grouped parts — the objects are used as-is from the 3MF.
+Objects are grouped as a single unit for bin packing.
 
-### Sequential printing
+## Sequential printing
 
-For workflows like bottom inlay printing, where you need to print one object first (e.g. text inlay in PLA) and then print the body on top (e.g. PETG-CF), use `object` and `sequence`:
+For workflows like bottom inlay printing — print one object first (e.g. text inlay in PLA), then print the body on top (e.g. PETG-CF):
 
 ```toml
 [[parts]]
@@ -221,34 +232,13 @@ filament = "Generic PETG-CF @base"
 sequence = 2
 ```
 
-Both objects come from the same 3MF, so fabprint guarantees they are positioned identically on the bed. Each sequence is sliced separately and printed with `--sequence`:
+Both objects come from the same 3MF, so fabprint guarantees identical bed positioning:
 
 ```bash
 fabprint print fabprint.toml --sequence 1   # print the inlay
 # wait for completion...
 fabprint print fabprint.toml --sequence 2   # print the body on top
 ```
-
-## CLI commands
-
-```
-fabprint plate <config>           # Arrange and export 3MF (+ preview)
-fabprint slice <config>           # Arrange, export, and slice to gcode
-fabprint print <config>           # Arrange, slice, and send to printer
-fabprint print <config> --dry-run # Do everything except send to printer
-fabprint print <config> --gcode output/plate_1.gcode  # Send pre-sliced gcode
-fabprint print <config> --upload-only  # Upload without starting print
-fabprint print <config> --sequence 1   # Print only sequence 1 (sequential printing)
-fabprint gcode-info output/plate_1.gcode  # Analyze extruder usage per layer
-fabprint login                    # Login to Bambu Cloud and cache token
-fabprint watch                    # Live dashboard for all printers
-fabprint status                   # Query status of all printers
-fabprint status --serial 01P...  # Query a specific printer
-fabprint profiles list            # List available slicer profiles
-fabprint profiles pin <config>    # Pin profiles for reproducible builds
-```
-
-![fabprint watch](docs/images/watch.png)
 
 ## Profile management
 
@@ -264,6 +254,45 @@ Pin profiles to lock your build against slicer updates:
 fabprint profiles pin fabprint.toml
 ```
 
+Commit the `profiles/` directory to git for identical slicing across machines.
+
+## Docker
+
+Pre-built images with OrcaSlicer are available on [Docker Hub](https://hub.docker.com/r/fabprint/fabprint):
+
+```bash
+docker pull fabprint/fabprint:orca-2.3.1
+```
+
+Run from your project directory:
+
+```bash
+docker run --rm -v "$PWD:/project" fabprint/fabprint:orca-2.3.1 slice fabprint.toml
+docker run --rm -v "$PWD:/project" fabprint/fabprint:orca-2.3.1 plate fabprint.toml -o plate.3mf
+```
+
+By default, fabprint uses Docker if available, falling back to a local slicer install:
+
+```bash
+fabprint slice fabprint.toml                  # Docker first, local fallback
+fabprint slice fabprint.toml --local          # Force local slicer
+fabprint slice fabprint.toml --docker-version 2.3.1  # Pin Docker image version
+```
+
+For fully reproducible builds, pin both profiles and the OrcaSlicer version:
+
+```bash
+fabprint profiles pin fabprint.toml
+fabprint slice fabprint.toml --docker-version 2.3.1
+```
+
+To build your own image:
+
+```bash
+./scripts/build-docker.sh 2.3.2          # build only
+./scripts/build-docker.sh 2.3.2 --push   # build and push
+```
+
 ## Platform support
 
 fabprint auto-detects slicer paths per platform:
@@ -274,75 +303,26 @@ fabprint auto-detects slicer paths per platform:
 | Linux    | `/usr/bin/bambu-studio` | `/usr/bin/orca-slicer` |
 | Windows  | `C:\Program Files\BambuStudio\...` | `C:\Program Files\OrcaSlicer\...` |
 
-Slicers on PATH are also detected (Flatpak, Snap, custom installs).
-
-Profile directories follow platform conventions (`~/Library/Application Support/` on macOS, `~/.config/` on Linux, `%APPDATA%` on Windows).
-
-## Docker
-
-Pre-built Docker images with OrcaSlicer are available on [Docker Hub](https://hub.docker.com/r/fabprint/fabprint):
-
-```bash
-docker pull fabprint/fabprint:orca-2.3.1
-```
-
-### Run from your project directory
-
-```bash
-docker run --rm -v "$PWD:/project" fabprint/fabprint:orca-2.3.1 slice fabprint.toml
-docker run --rm -v "$PWD:/project" fabprint/fabprint:orca-2.3.1 plate fabprint.toml -o plate.3mf
-docker run --rm fabprint/fabprint:orca-2.3.1 profiles list
-```
-
-### Slicer selection
-
-By default, fabprint uses Docker if available, falling back to a local OrcaSlicer install:
-
-```bash
-# Default: Docker first, local fallback
-fabprint slice fabprint.toml
-
-# Force local slicer (fail if not installed)
-fabprint slice fabprint.toml --local
-
-# Use a specific OrcaSlicer Docker image version
-fabprint slice fabprint.toml --docker-version 2.3.1
-```
-
-### Building your own image
-
-To build locally or for a different OrcaSlicer version:
-
-```bash
-./scripts/build-docker.sh 2.3.2          # build only
-./scripts/build-docker.sh 2.3.2 --push   # build and push to Docker Hub
-```
-
-### Reproducible builds
-
-Pin both profiles and OrcaSlicer version for fully reproducible slicing:
-
-```bash
-# Pin profiles into your project
-fabprint profiles pin fabprint.toml
-
-# Slice with a pinned OrcaSlicer version
-fabprint slice fabprint.toml --docker-version 2.3.1
-```
-
-Commit the `profiles/` directory to git so slicing results are identical across machines.
+Slicers on PATH are also detected (Flatpak, Snap, custom installs). Profile directories follow platform conventions (`~/Library/Application Support/` on macOS, `~/.config/` on Linux, `%APPDATA%` on Windows).
 
 ## How it works
 
-fabprint handles the full pipeline from STL to printer:
-
 1. **Arrange** — loads meshes, orients them, and bin-packs onto the build plate
-2. **Export** — writes a 3MF with per-object extruder metadata so OrcaSlicer knows which AMS slot each part uses
-3. **Slice** — calls OrcaSlicer CLI with `--export-3mf` and `--min-save` to produce a Bambu Connect-compatible `.gcode.3mf`
-4. **Post-process** — patches the sliced 3MF to fix metadata issues that Bambu Connect requires (see [docs/gcode-3mf-format.md](docs/gcode-3mf-format.md))
+2. **Export** — writes a 3MF with per-object extruder metadata for correct AMS slot mapping
+3. **Slice** — calls OrcaSlicer CLI to produce a Bambu Connect-compatible `.gcode.3mf`
+4. **Post-process** — patches the sliced 3MF to fix metadata issues Bambu Connect requires (see [docs/gcode-3mf-format.md](docs/gcode-3mf-format.md))
 5. **Send** — delivers to the printer via LAN, Bambu Connect, or cloud API
 
-For details on the `.gcode.3mf` format and the post-processing fixes, see [The .gcode.3mf Format](docs/gcode-3mf-format.md).
+## Contributing
+
+```bash
+git clone https://github.com/pzfreo/fabprint.git
+cd fabprint
+uv sync --extra dev
+uv run pytest              # run tests
+uv run ruff check src tests     # lint
+uv run ruff format src tests    # format
+```
 
 ## License
 

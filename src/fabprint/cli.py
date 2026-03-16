@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from fabprint import __version__
+from fabprint import FabprintError, __version__
 from fabprint.arrange import arrange
 from fabprint.config import FabprintConfig, load_config
 from fabprint.loader import extract_paint_colors, load_3mf_objects, load_mesh
@@ -16,10 +16,31 @@ from fabprint.orient import orient_mesh
 from fabprint.plate import build_plate, export_plate
 
 
+def _resolve_config(args: argparse.Namespace) -> None:
+    """Default config to ./fabprint.toml when not provided."""
+    if not hasattr(args, "config") or args.config is None:
+        return
+    # argparse stores the Path from nargs="?" default; if it's the sentinel
+    # value we set, resolve to ./fabprint.toml
+    if args.config == _CONFIG_DEFAULT:
+        candidate = Path("fabprint.toml")
+        if not candidate.exists():
+            raise FabprintError(
+                "No config file specified and no fabprint.toml found in the current directory.\n"
+                "Usage: fabprint <command> [config.toml]"
+            )
+        args.config = candidate
+
+
+# Sentinel so we can distinguish "user didn't pass config" from "user passed a path"
+_CONFIG_DEFAULT = Path("\x00")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="fabprint",
-        description="Headless 3D print pipeline: arrange, slice, and print",
+        description="Immutable 3D print pipeline: arrange, slice, and print.",
+        epilog="Run 'fabprint <command> --help' for command-specific options.",
     )
     parser.add_argument("--version", action="version", version=f"fabprint {__version__}")
     sub = parser.add_subparsers(dest="command")
@@ -36,16 +57,32 @@ def main(argv: list[str] | None = None) -> None:
 
     # plate subcommand
     plate_cmd = sub.add_parser(
-        "plate", parents=[common], help="Arrange parts and export a 3MF plate"
+        "plate",
+        parents=[common],
+        help="Arrange parts and export a 3MF build plate",
     )
-    plate_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
+    plate_cmd.add_argument(
+        "config",
+        nargs="?",
+        type=Path,
+        default=_CONFIG_DEFAULT,
+        help="Path to config file (default: ./fabprint.toml)",
+    )
     plate_cmd.add_argument("-o", "--output", type=Path, default=None, help="Output 3MF path")
 
     # slice subcommand
     slice_cmd = sub.add_parser(
-        "slice", parents=[common], help="Arrange, export, and slice to gcode"
+        "slice",
+        parents=[common],
+        help="Arrange, export, and slice to gcode",
     )
-    slice_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
+    slice_cmd.add_argument(
+        "config",
+        nargs="?",
+        type=Path,
+        default=_CONFIG_DEFAULT,
+        help="Path to config file (default: ./fabprint.toml)",
+    )
     slice_cmd.add_argument("-o", "--output-dir", type=Path, default=None, help="Output directory")
     slice_cmd.add_argument(
         "--local",
@@ -73,9 +110,17 @@ def main(argv: list[str] | None = None) -> None:
 
     # print subcommand
     print_cmd = sub.add_parser(
-        "print", parents=[common], help="Arrange, slice, and send to printer"
+        "print",
+        parents=[common],
+        help="Arrange, slice, and send to printer",
     )
-    print_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
+    print_cmd.add_argument(
+        "config",
+        nargs="?",
+        type=Path,
+        default=_CONFIG_DEFAULT,
+        help="Path to config file (default: ./fabprint.toml)",
+    )
     print_cmd.add_argument(
         "--gcode", type=Path, default=None, help="Send pre-sliced gcode (skip arrange/slice)"
     )
@@ -149,7 +194,13 @@ def main(argv: list[str] | None = None) -> None:
     pin_cmd = profiles_sub.add_parser(
         "pin", help="Pin profiles from config into local profiles/ dir"
     )
-    pin_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
+    pin_cmd.add_argument(
+        "config",
+        nargs="?",
+        type=Path,
+        default=_CONFIG_DEFAULT,
+        help="Path to config file (default: ./fabprint.toml)",
+    )
 
     # login subcommand
     login_cmd = sub.add_parser(
@@ -191,22 +242,33 @@ def main(argv: list[str] | None = None) -> None:
         format="%(levelname)s: %(message)s",
     )
 
-    if args.command == "plate":
-        _cmd_plate(args)
-    elif args.command == "slice":
-        _cmd_slice(args)
-    elif args.command == "print":
-        _cmd_print(args)
-    elif args.command == "login":
-        _cmd_login(args)
-    elif args.command == "status":
-        _cmd_status(args)
-    elif args.command == "watch":
-        _cmd_watch(args)
-    elif args.command == "gcode-info":
-        _cmd_gcode_info(args)
-    elif args.command == "profiles":
-        _cmd_profiles(args)
+    try:
+        _resolve_config(args)
+
+        if args.command == "plate":
+            _cmd_plate(args)
+        elif args.command == "slice":
+            _cmd_slice(args)
+        elif args.command == "print":
+            _cmd_print(args)
+        elif args.command == "login":
+            _cmd_login(args)
+        elif args.command == "status":
+            _cmd_status(args)
+        elif args.command == "watch":
+            _cmd_watch(args)
+        elif args.command == "gcode-info":
+            _cmd_gcode_info(args)
+        elif args.command == "profiles":
+            _cmd_profiles(args)
+    except FabprintError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
 
 
 def _load_parts(cfg: FabprintConfig, global_scale: float | None = None):
@@ -257,7 +319,7 @@ def _load_parts(cfg: FabprintConfig, global_scale: float | None = None):
         sub_meshes = []
         for part in group_parts:
             if part.object not in all_objects:
-                raise ValueError(
+                raise FabprintError(
                     f"Object '{part.object}' not found in {file_path}. "
                     f"Available: {list(all_objects.keys())}"
                 )
@@ -295,7 +357,7 @@ def _load_parts(cfg: FabprintConfig, global_scale: float | None = None):
             # Single object selection (not grouped with other parts)
             all_objects = dict(load_3mf_objects(part.file))
             if part.object not in all_objects:
-                raise ValueError(
+                raise FabprintError(
                     f"Object '{part.object}' not found in {part.file}. "
                     f"Available: {list(all_objects.keys())}"
                 )
@@ -463,6 +525,15 @@ def _print_summary(
     print(f"\nPlate: {total} parts on {plate_size[0]:.0f}x{plate_size[1]:.0f}mm")
 
 
+def _get_token_file() -> Path:
+    """Return the Bambu Cloud token file path, raising if it doesn't exist."""
+    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
+    token_file = Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
+    if not token_file.exists():
+        raise FabprintError(f"Token file not found: {token_file}\nRun 'fabprint login' first.")
+    return token_file
+
+
 def _has_sequences(cfg: FabprintConfig) -> bool:
     """Check if config uses sequential printing (multiple distinct sequences)."""
     sequences = {p.sequence for p in cfg.parts}
@@ -566,7 +637,7 @@ def _do_slice_sequential(args: argparse.Namespace) -> list[tuple[int, Path]]:
             filament_ids=filament_ids,
             overrides=cfg.slicer.overrides or None,
             project_dir=cfg.base_dir,
-            docker=args.docker or args.docker_version is not None,
+            local=args.local,
             docker_version=args.docker_version,
             required_version=cfg.slicer.version,
         )
@@ -602,13 +673,13 @@ def _cmd_print(args: argparse.Namespace) -> None:
     cfg = load_config(args.config)
 
     if cfg.printer is None:
-        raise ValueError("No [printer] section in config. Required for printing.")
+        raise FabprintError("No [printer] section in config. Required for printing.")
 
     if args.gcode:
         # Send pre-sliced gcode directly
         gcode_path = args.gcode.resolve()
         if not gcode_path.exists():
-            raise FileNotFoundError(f"Gcode file not found: {gcode_path}")
+            raise FabprintError(f"Gcode file not found: {gcode_path}")
         send_print(
             gcode_path,
             cfg.printer,
@@ -621,17 +692,17 @@ def _cmd_print(args: argparse.Namespace) -> None:
         # Sequential printing: slice all sequences, send only the requested one
         seq = args.sequence
         if seq is None:
-            raise ValueError(
+            raise FabprintError(
                 "Config has multiple sequences. Use --sequence N to print one at a time."
             )
         sliced = _do_slice_sequential(args)
         match = [d for s, d in sliced if s == seq]
         if not match:
             available = [s for s, _ in sliced]
-            raise ValueError(f"Sequence {seq} not found. Available: {available}")
+            raise FabprintError(f"Sequence {seq} not found. Available: {available}")
         gcode_files = list(match[0].glob("*.gcode"))
         if not gcode_files:
-            raise RuntimeError(f"No gcode files found in {match[0]} for sequence {seq}")
+            raise FabprintError(f"No gcode files found in {match[0]} for sequence {seq}")
         gcode_path = gcode_files[0]
         print(f"\nSending sequence {seq} to printer...")
         send_print(
@@ -647,7 +718,7 @@ def _cmd_print(args: argparse.Namespace) -> None:
         output_dir = _do_slice(args)
         gcode_files = list(output_dir.glob("*.gcode"))
         if not gcode_files:
-            raise RuntimeError(f"No gcode files found in {output_dir}")
+            raise FabprintError(f"No gcode files found in {output_dir}")
         gcode_path = gcode_files[0]
         send_print(
             gcode_path,
@@ -712,12 +783,7 @@ def _cmd_login(args: argparse.Namespace) -> None:
 def _cmd_status(args: argparse.Namespace) -> None:
     from fabprint.cloud import cloud_list_devices, cloud_status
 
-    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
-    token_file = Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
-    if not token_file.exists():
-        print(f"Token file not found: {token_file}")
-        print("Run 'fabprint login' first.")
-        sys.exit(1)
+    token_file = _get_token_file()
 
     if args.serial:
         serials = [(args.serial, args.serial)]
@@ -838,12 +904,7 @@ def _cmd_watch(args: argparse.Namespace) -> None:
 
     from fabprint.cloud import PersistentBridge, cloud_list_devices
 
-    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
-    token_file = Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
-    if not token_file.exists():
-        print(f"Token file not found: {token_file}")
-        print("Run 'python scripts/bambu_cloud_login.py' first, or set BAMBU_TOKEN_FILE.")
-        sys.exit(1)
+    token_file = _get_token_file()
     interval = args.interval
 
     print("Discovering printers...")
