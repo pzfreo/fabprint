@@ -5,15 +5,15 @@
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-**Immutable 3D print pipeline**: arrange parts on a build plate, slice to gcode, and send to a Bambu Lab printer — all from a single TOML config file.
+**Immutable 3D print pipeline**: arrange parts on a build plate, slice to gcode, and send to a Bambu Lab printer — all defined in a single TOML config file.
 
 ![fabprint pipeline](docs/images/pipeline.png)
 
 ## Why fabprint?
 
-Code-CAD tools like [build123d](https://github.com/gumyr/build123d) let you define physical parts in Python — parametric, testable, and version-controlled. But the moment you need to print, the workflow breaks: open a slicer GUI, drag in files, fiddle with settings, hit print. Nothing is reproducible, nothing is tracked.
+Code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org) and [cadquery](https://github.com/cadquery/cadquery) let you define physical parts in code — making designs parametric, testable, and version-controlled. But the moment you need to print, that workflow breaks: open a slicer GUI, drag in files, fiddle with settings, hit print. Hard to reproduce, no diffs, the only thing to track are binary project files.
 
-fabprint closes that gap. **One TOML file declares your parts, filaments, and slicer settings. One command arranges, slices, and sends to the printer.** Everything is text, everything goes in git, and the same config produces the same print every time.
+fabprint is aiming to close that gap. Define your objects, filaments, slicer setting and printer targets in a straightforward TOML file. Use a CLI or CI pipeline to arrange, slice and send to the printer. Pin filament and printer profiles to capture the exact settings. Slicing happens in Docker for platform-agnostic reproducible builds. Everything is text, everything goes in git, and the same config produces the same print every time.
 
 ## Quick start
 
@@ -52,8 +52,8 @@ Parts reference filament profiles by name — no need to manually number AMS slo
 
 ```bash
 fabprint plate fabprint.toml -o plate.3mf   # arrange parts onto a build plate
-fabprint slice fabprint.toml                 # slice to gcode
-fabprint print fabprint.toml                 # slice and send to printer
+fabprint slice fabprint.toml                 # arrange and slice to gcode
+fabprint print fabprint.toml                 # arrange, slice and send to printer
 ```
 
 The `plate` command also generates a `plate_preview.3mf` with a bed outline — open it in any 3MF viewer to review placement:
@@ -67,7 +67,7 @@ The `plate` command also generates a `plate_preview.3mf` with a bed outline — 
 - **Bin packing** — efficient 2D arrangement with configurable padding
 - **Part scaling** — uniform scale factor per part
 - **Multi-filament** — AMS slot assignment per part with correct extruder mapping
-- **Slicer integration** — OrcaSlicer and BambuStudio CLI support
+- **Slicer integration** — OrcaSlicer support
 - **Profile management** — discover, pin, and override slicer profiles
 - **Print delivery** — LAN, Bambu Connect, or cloud API
 - **Docker support** — pre-built images with OrcaSlicer for reproducible CI/CD slicing
@@ -108,7 +108,7 @@ fabprint print <config> --upload-only       # Upload without starting print
 fabprint print <config> --sequence 1        # Print only sequence 1
 fabprint gcode-info plate.gcode             # Analyze extruder usage per layer
 fabprint login                              # Log in to Bambu Cloud, cache token
-fabprint watch                              # Live dashboard for all printers
+fabprint watch                              # Live dashboard for all printers 
 fabprint status                             # Query status of all printers
 fabprint profiles list                      # List available slicer profiles
 fabprint profiles pin <config>              # Pin profiles for reproducible builds
