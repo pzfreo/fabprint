@@ -5,7 +5,7 @@
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-**Headless 3D print pipeline**: arrange parts on a build plate, slice to gcode, and send to a Bambu Lab printer — all from a single TOML config file.
+**Immutable 3D print pipeline**: arrange parts on a build plate, slice to gcode, and send to a Bambu Lab printer — all from a single TOML config file.
 
 ![fabprint pipeline](docs/images/pipeline.png)
 
