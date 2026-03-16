@@ -45,8 +45,14 @@ SLICER_PATHS = _slicer_paths()
 
 
 def _docker_image(version: str | None = None) -> str:
-    """Return the Docker Hub image name for a given OrcaSlicer version."""
+    """Return the Docker image name for a given OrcaSlicer version.
+
+    Tries orca-<version> tag first (local builds), then bare <version> (Docker Hub).
+    """
     if version:
+        orca_tag = f"{DOCKERHUB_REPO}:orca-{version}"
+        if _has_docker_image(orca_tag):
+            return orca_tag
         return f"{DOCKERHUB_REPO}:{version}"
     return DEFAULT_DOCKER_IMAGE
 

@@ -577,6 +577,13 @@ def _do_slice(args: argparse.Namespace) -> Path:
     else:
         filaments = cfg.slicer.filaments
 
+    if not cfg.slicer.version:
+        print(
+            "warning: no slicer.version in config — slices are not reproducible. "
+            'Add version = "X.Y.Z" to [slicer] to pin the OrcaSlicer version.',
+            file=sys.stderr,
+        )
+
     output_dir = slice_plate(
         input_3mf=plate_3mf,
         engine=cfg.slicer.engine,
