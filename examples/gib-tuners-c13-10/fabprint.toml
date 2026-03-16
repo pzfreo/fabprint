@@ -3,7 +3,7 @@
 
 [printer]
 mode = "cloud-bridge"
-serial = "01P00A451601106"
+name = "workshop"  # references [printers.workshop] in ~/.config/fabprint/credentials.toml
 
 [plate]
 size = [256, 256]

@@ -292,9 +292,7 @@ def test_printer_config(tmp_path):
         """
 [printer]
 mode = "lan"
-ip = "192.168.1.100"
-access_code = "12345678"
-serial = "01P00A000000"
+name = "workshop"
 
 [[parts]]
 file = "cube.stl"
@@ -304,9 +302,7 @@ file = "cube.stl"
     cfg = load_config(path)
     assert cfg.printer is not None
     assert cfg.printer.mode == "lan"
-    assert cfg.printer.ip == "192.168.1.100"
-    assert cfg.printer.access_code == "12345678"
-    assert cfg.printer.serial == "01P00A000000"
+    assert cfg.printer.name == "workshop"
 
 
 def test_printer_config_cloud(tmp_path):
@@ -324,7 +320,25 @@ file = "cube.stl"
     cfg = load_config(path)
     assert cfg.printer is not None
     assert cfg.printer.mode == "cloud"
-    assert cfg.printer.ip is None
+    assert cfg.printer.name is None
+
+
+def test_printer_rejects_secrets_in_project_toml(tmp_path):
+    for field in ("ip", "access_code", "serial"):
+        path = _write_toml(
+            tmp_path,
+            f"""
+[printer]
+mode = "lan"
+{field} = "secret_value"
+
+[[parts]]
+file = "cube.stl"
+""",
+            create_files=["cube.stl"],
+        )
+        with pytest.raises(FabprintError, match=f"printer.{field}.*credentials.toml"):
+            load_config(path)
 
 
 def test_printer_config_absent(tmp_path):
