@@ -6,6 +6,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from fabprint import FabprintError
+
 VALID_ORIENTS = {"flat", "upright", "side"}
 
 
@@ -60,7 +62,7 @@ def load_config(path: Path) -> FabprintConfig:
     """Load and validate a fabprint.toml file."""
     path = path.resolve()
     if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {path}")
+        raise FabprintError(f"Config file not found: {path}")
 
     with open(path, "rb") as f:
         raw = tomllib.load(f)
@@ -71,7 +73,7 @@ def load_config(path: Path) -> FabprintConfig:
     plate_raw = raw.get("plate", {})
     size = tuple(plate_raw.get("size", [256.0, 256.0]))
     if len(size) != 2 or any(s <= 0 for s in size):
-        raise ValueError(f"plate.size must be two positive numbers, got {size}")
+        raise FabprintError(f"plate.size must be two positive numbers, got {size}")
     plate = PlateConfig(size=size, padding=float(plate_raw.get("padding", 5.0)))
 
     # Slicer config
@@ -81,11 +83,13 @@ def load_config(path: Path) -> FabprintConfig:
         try:
             slot_num = int(key)
         except (TypeError, ValueError):
-            raise ValueError(f"slicer.slots: key '{key}' must be an integer slot number")
+            raise FabprintError(f"slicer.slots: key '{key}' must be an integer slot number")
         if slot_num < 1:
-            raise ValueError(f"slicer.slots: slot must be >= 1, got {slot_num}")
+            raise FabprintError(f"slicer.slots: slot must be >= 1, got {slot_num}")
         if not isinstance(profile, str) or not profile.strip():
-            raise ValueError(f"slicer.slots[{slot_num}]: profile name must be a non-empty string")
+            raise FabprintError(
+                f"slicer.slots[{slot_num}]: profile name must be a non-empty string"
+            )
         slots_parsed[slot_num] = profile
     slicer = SlicerConfig(
         engine=slicer_raw.get("engine", "bambu"),
@@ -97,36 +101,38 @@ def load_config(path: Path) -> FabprintConfig:
         overrides=slicer_raw.get("overrides", {}),
     )
     if slicer.engine not in ("bambu", "orca"):
-        raise ValueError(f"slicer.engine must be 'bambu' or 'orca', got '{slicer.engine}'")
+        raise FabprintError(f"slicer.engine must be 'bambu' or 'orca', got '{slicer.engine}'")
 
     # Parts — first pass: parse everything except filament resolution
     parts_raw = raw.get("parts", [])
     if not parts_raw:
-        raise ValueError("At least one [[parts]] entry is required")
+        raise FabprintError("At least one [[parts]] entry is required")
 
     parts = []
     raw_filaments: list[int | str] = []  # preserve raw filament values for resolution
     raw_obj_filaments: list[dict[str, int | str]] = []  # per-part object filament overrides
     for i, p in enumerate(parts_raw):
         if "file" not in p:
-            raise ValueError(f"parts[{i}]: 'file' is required")
+            raise FabprintError(f"parts[{i}]: 'file' is required")
         orient = p.get("orient", "flat")
         if orient not in VALID_ORIENTS:
-            raise ValueError(f"parts[{i}]: orient must be one of {VALID_ORIENTS}, got '{orient}'")
+            raise FabprintError(
+                f"parts[{i}]: orient must be one of {VALID_ORIENTS}, got '{orient}'"
+            )
         file_path = base_dir / p["file"]
         if not file_path.exists():
-            raise FileNotFoundError(f"parts[{i}]: file not found: {file_path}")
+            raise FabprintError(f"parts[{i}]: file not found: {file_path}")
         copies = int(p.get("copies", 1))
         if copies < 1:
-            raise ValueError(f"parts[{i}]: copies must be >= 1, got {copies}")
+            raise FabprintError(f"parts[{i}]: copies must be >= 1, got {copies}")
         raw_fil = p.get("filament", 1)
         if isinstance(raw_fil, str):
             if not raw_fil.strip():
-                raise ValueError(f"parts[{i}]: filament name must not be empty")
+                raise FabprintError(f"parts[{i}]: filament name must not be empty")
         else:
             raw_fil = int(raw_fil)
             if raw_fil < 1:
-                raise ValueError(f"parts[{i}]: filament must be >= 1, got {raw_fil}")
+                raise FabprintError(f"parts[{i}]: filament must be >= 1, got {raw_fil}")
         raw_filaments.append(raw_fil)
 
         # Per-object filament overrides for multi-object 3MF files
@@ -134,13 +140,13 @@ def load_config(path: Path) -> FabprintConfig:
         for obj_name, obj_fil in p.get("filaments", {}).items():
             if isinstance(obj_fil, str):
                 if not obj_fil.strip():
-                    raise ValueError(
+                    raise FabprintError(
                         f"parts[{i}].filaments.{obj_name}: filament name must not be empty"
                     )
             else:
                 obj_fil = int(obj_fil)
                 if obj_fil < 1:
-                    raise ValueError(
+                    raise FabprintError(
                         f"parts[{i}].filaments.{obj_name}: filament must be >= 1, got {obj_fil}"
                     )
             obj_fils_raw[obj_name] = obj_fil
@@ -149,20 +155,20 @@ def load_config(path: Path) -> FabprintConfig:
         rotate = p.get("rotate")
         if rotate is not None:
             if not isinstance(rotate, list) or len(rotate) != 3:
-                raise ValueError(f"parts[{i}]: rotate must be [rx, ry, rz], got {rotate}")
+                raise FabprintError(f"parts[{i}]: rotate must be [rx, ry, rz], got {rotate}")
             rotate = [float(r) for r in rotate]
         scale = float(p.get("scale", 1.0))
         if scale <= 0:
-            raise ValueError(f"parts[{i}]: scale must be > 0, got {scale}")
+            raise FabprintError(f"parts[{i}]: scale must be > 0, got {scale}")
         obj_name = p.get("object")
         if obj_name is not None:
             if not isinstance(obj_name, str) or not obj_name.strip():
-                raise ValueError(f"parts[{i}]: object must be a non-empty string")
+                raise FabprintError(f"parts[{i}]: object must be a non-empty string")
             if obj_fils_raw:
-                raise ValueError(f"parts[{i}]: cannot use both 'object' and [parts.filaments]")
+                raise FabprintError(f"parts[{i}]: cannot use both 'object' and [parts.filaments]")
         sequence = int(p.get("sequence", 1))
         if sequence < 1:
-            raise ValueError(f"parts[{i}]: sequence must be >= 1, got {sequence}")
+            raise FabprintError(f"parts[{i}]: sequence must be >= 1, got {sequence}")
         parts.append(
             PartConfig(
                 file=file_path,
@@ -186,7 +192,7 @@ def load_config(path: Path) -> FabprintConfig:
     has_int_filaments = any(isinstance(f, int) for f in all_raw_filaments)
 
     if has_string_filaments and has_int_filaments and not slicer.filaments and not slicer.slots:
-        raise ValueError(
+        raise FabprintError(
             "Cannot mix filament names and indices without [slicer].filaments or [slicer.slots]"
         )
 
@@ -233,7 +239,7 @@ def load_config(path: Path) -> FabprintConfig:
         for i, raw_fil in enumerate(raw_filaments):
             if isinstance(raw_fil, str):
                 if raw_fil not in fil_index:
-                    raise ValueError(
+                    raise FabprintError(
                         f"parts[{i}]: filament '{raw_fil}' not in "
                         f"[slicer].filaments {slicer.filaments}"
                     )
@@ -241,7 +247,7 @@ def load_config(path: Path) -> FabprintConfig:
             else:
                 # Integer slot ref — validate against slots map if present
                 if slicer.slots and raw_fil not in slicer.slots:
-                    raise ValueError(
+                    raise FabprintError(
                         f"parts[{i}]: filament slot {raw_fil} not defined in [slicer.slots]"
                     )
                 parts[i].filament = raw_fil
@@ -250,14 +256,14 @@ def load_config(path: Path) -> FabprintConfig:
         for obj_name, obj_fil in raw_obj_filaments[i].items():
             if isinstance(obj_fil, str):
                 if obj_fil not in fil_index:
-                    raise ValueError(
+                    raise FabprintError(
                         f"parts[{i}].filaments.{obj_name}: '{obj_fil}' not in "
                         f"[slicer].filaments {slicer.filaments}"
                     )
                 parts[i].object_filaments[obj_name] = fil_index[obj_fil]
             else:
                 if slicer.slots and obj_fil not in slicer.slots:
-                    raise ValueError(
+                    raise FabprintError(
                         f"parts[{i}].filaments.{obj_name}: slot {obj_fil} "
                         f"not defined in [slicer.slots]"
                     )
@@ -278,7 +284,7 @@ def load_config(path: Path) -> FabprintConfig:
             "cloud",
         )
         if mode not in valid_modes:
-            raise ValueError(f"printer.mode must be one of {valid_modes}, got '{mode}'")
+            raise FabprintError(f"printer.mode must be one of {valid_modes}, got '{mode}'")
         printer = PrinterConfig(
             mode=mode,
             ip=printer_raw.get("ip"),

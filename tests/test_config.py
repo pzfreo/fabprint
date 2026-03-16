@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from fabprint import FabprintError
 from fabprint.config import load_config
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -88,7 +89,7 @@ def test_missing_parts(tmp_path):
 size = [200, 200]
 """,
     )
-    with pytest.raises(ValueError, match="At least one"):
+    with pytest.raises(FabprintError, match="At least one"):
         load_config(path)
 
 
@@ -102,7 +103,7 @@ orient = "diagonal"
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="orient"):
+    with pytest.raises(FabprintError, match="orient"):
         load_config(path)
 
 
@@ -118,7 +119,7 @@ file = "cube.stl"
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="plate.size"):
+    with pytest.raises(FabprintError, match="plate.size"):
         load_config(path)
 
 
@@ -130,7 +131,7 @@ def test_missing_file(tmp_path):
 file = "nonexistent.stl"
 """,
     )
-    with pytest.raises(FileNotFoundError, match="nonexistent.stl"):
+    with pytest.raises(FabprintError, match="nonexistent.stl"):
         load_config(path)
 
 
@@ -157,7 +158,7 @@ filament = 0
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="filament"):
+    with pytest.raises(FabprintError, match="filament"):
         load_config(path)
 
 
@@ -171,7 +172,7 @@ copies = 0
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="copies"):
+    with pytest.raises(FabprintError, match="copies"):
         load_config(path)
 
 
@@ -187,7 +188,7 @@ file = "cube.stl"
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="engine"):
+    with pytest.raises(FabprintError, match="engine"):
         load_config(path)
 
 
@@ -228,7 +229,7 @@ scale = 0
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="scale"):
+    with pytest.raises(FabprintError, match="scale"):
         load_config(path)
 
 
@@ -351,7 +352,7 @@ file = "cube.stl"
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="printer.mode"):
+    with pytest.raises(FabprintError, match="printer.mode"):
         load_config(path)
 
 
@@ -379,7 +380,7 @@ rotate = [90, 0]
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="rotate"):
+    with pytest.raises(FabprintError, match="rotate"):
         load_config(path)
 
 
@@ -393,7 +394,7 @@ rotate = 45
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="rotate"):
+    with pytest.raises(FabprintError, match="rotate"):
         load_config(path)
 
 
@@ -407,7 +408,7 @@ scale = -1.0
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="scale"):
+    with pytest.raises(FabprintError, match="scale"):
         load_config(path)
 
 
@@ -504,7 +505,7 @@ filament = "Generic ABS @base"
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="not in"):
+    with pytest.raises(FabprintError, match="not in"):
         load_config(path)
 
 
@@ -523,7 +524,7 @@ filament = "Generic PLA @base"
 """,
         create_files=["a.stl", "b.stl"],
     )
-    with pytest.raises(ValueError, match="Cannot mix"):
+    with pytest.raises(FabprintError, match="Cannot mix"):
         load_config(path)
 
 
@@ -556,7 +557,7 @@ filament = ""
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="empty"):
+    with pytest.raises(FabprintError, match="empty"):
         load_config(path)
 
 
@@ -648,7 +649,7 @@ filament = 3
 """,
         create_files=["frame.stl"],
     )
-    with pytest.raises(ValueError, match="slot 3 not defined"):
+    with pytest.raises(FabprintError, match="slot 3 not defined"):
         load_config(path)
 
 
@@ -666,7 +667,7 @@ filament = "Generic PLA @base"
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="slot must be >= 1"):
+    with pytest.raises(FabprintError, match="slot must be >= 1"):
         load_config(path)
 
 
@@ -786,7 +787,7 @@ inlay = "Generic ABS @base"
 """,
         create_files=["widget.3mf"],
     )
-    with pytest.raises(ValueError, match="inlay.*not in"):
+    with pytest.raises(FabprintError, match="inlay.*not in"):
         load_config(path)
 
 
@@ -841,7 +842,7 @@ object = ""
 """,
         create_files=["widget.3mf"],
     )
-    with pytest.raises(ValueError, match="object must be a non-empty string"):
+    with pytest.raises(FabprintError, match="object must be a non-empty string"):
         load_config(path)
 
 
@@ -860,7 +861,7 @@ body = 2
 """,
         create_files=["widget.3mf"],
     )
-    with pytest.raises(ValueError, match="cannot use both 'object' and"):
+    with pytest.raises(FabprintError, match="cannot use both 'object' and"):
         load_config(path)
 
 
@@ -913,5 +914,5 @@ sequence = 0
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(ValueError, match="sequence must be >= 1"):
+    with pytest.raises(FabprintError, match="sequence must be >= 1"):
         load_config(path)

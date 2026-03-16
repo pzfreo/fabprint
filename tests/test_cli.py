@@ -109,6 +109,49 @@ def test_no_subcommand():
     assert exc_info.value.code == 1
 
 
+def test_missing_config_no_traceback(tmp_path, monkeypatch, capsys):
+    """Missing config should print a clean error, not a traceback."""
+    monkeypatch.chdir(tmp_path)  # no fabprint.toml here
+    with pytest.raises(SystemExit) as exc_info:
+        main(["plate"])
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "error:" in captured.err
+    assert "fabprint.toml" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_invalid_config_no_traceback(tmp_path, monkeypatch, capsys):
+    """Invalid config should print a clean error, not a traceback."""
+    toml = tmp_path / "fabprint.toml"
+    toml.write_text("[plate]\nsize = [256, 256]\n")  # missing [[parts]]
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc_info:
+        main(["plate"])
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_explicit_config_path(tmp_path):
+    """Explicit config path should still work."""
+    config = _write_config(tmp_path)
+    output = tmp_path / "out.3mf"
+    main(["plate", str(config), "-o", str(output)])
+    assert output.exists()
+
+
+def test_auto_discover_config(tmp_path, monkeypatch):
+    """Running without config arg should find ./fabprint.toml."""
+    config = _write_config(tmp_path)
+    # Rename to fabprint.toml (the convention)
+    config.rename(tmp_path / "fabprint.toml")
+    monkeypatch.chdir(tmp_path)
+    main(["plate", "-o", str(tmp_path / "out.3mf")])
+    assert (tmp_path / "out.3mf").exists()
+
+
 def test_profiles_list(capsys):
     """Profiles list should run and produce output."""
     main(["profiles", "list", "--engine", "orca", "--category", "machine"])
@@ -242,7 +285,7 @@ def test_slice_docker_version_mismatch(monkeypatch):
     config = _write_slice_config(work_dir, version="99.99.99")
     monkeypatch.chdir(work_dir)
     try:
-        with pytest.raises(FileNotFoundError, match="Docker image"):
+        with pytest.raises(SystemExit) as exc_info:
             main(
                 [
                     "slice",
@@ -251,5 +294,6 @@ def test_slice_docker_version_mismatch(monkeypatch):
                     str(work_dir / "output"),
                 ]
             )
+        assert exc_info.value.code == 1
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
