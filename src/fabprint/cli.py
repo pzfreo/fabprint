@@ -243,6 +243,13 @@ def main(argv: list[str] | None = None) -> None:
         help="Path to config file (default: ./fabprint.toml)",
     )
 
+    # --- credentials subcommand ---
+    sub.add_parser(
+        "credentials",
+        parents=[common],
+        help="Set up printer credentials (~/.config/fabprint/credentials.toml)",
+    )
+
     # --- login subcommand ---
     login_cmd = sub.add_parser(
         "login", parents=[common], help="Login to Bambu Cloud and cache token"
@@ -286,6 +293,8 @@ def main(argv: list[str] | None = None) -> None:
             _cmd_init(args)
         elif args.command == "validate":
             _cmd_validate(args)
+        elif args.command == "credentials":
+            _cmd_credentials(args)
         elif args.command == "login":
             _cmd_login(args)
         elif args.command == "status":
@@ -350,6 +359,12 @@ def _cmd_init(args: argparse.Namespace) -> None:
         print(dump_template(), end="")
     else:
         run_wizard(output=args.output)
+
+
+def _cmd_credentials(args: argparse.Namespace) -> None:
+    from fabprint.credentials import setup_credentials
+
+    setup_credentials()
 
 
 def _cmd_validate(args: argparse.Namespace) -> None:

@@ -55,3 +55,65 @@ def load_printer_credentials(name: str | None) -> dict[str, str | None]:
         "email": os.environ.get("BAMBU_EMAIL", file_creds.get("email")),
         "password": os.environ.get("BAMBU_PASSWORD", file_creds.get("password")),
     }
+
+
+def setup_credentials() -> None:
+    """Interactive wizard to create or update credentials.toml."""
+    path = _credentials_path()
+
+    # Load existing file if present
+    existing: dict = {}
+    if path.exists():
+        with open(path, "rb") as f:
+            existing = tomllib.load(f)
+        printers = existing.get("printers", {})
+        if printers:
+            print(f"Existing credentials: {path}")
+            print(f"  Printers: {', '.join(printers.keys())}")
+            print()
+
+    name = input("Printer name (e.g. 'workshop'): ").strip()
+    if not name:
+        print("Aborted — printer name is required.")
+        return
+
+    print(f"\nSetting up printer '{name}'")
+    print("  Leave blank to skip optional fields.\n")
+
+    ip = input("  IP address (for LAN mode): ").strip() or None
+    access_code = input("  Access code (8 digits, from printer screen): ").strip() or None
+    serial = input("  Serial number (from printer label): ").strip() or None
+
+    entry: dict[str, str] = {}
+    if ip:
+        entry["ip"] = ip
+    if access_code:
+        entry["access_code"] = access_code
+    if serial:
+        entry["serial"] = serial
+
+    if not entry:
+        print("\nNo credentials entered. Aborted.")
+        return
+
+    # Merge into existing config
+    if "printers" not in existing:
+        existing["printers"] = {}
+    existing["printers"][name] = entry
+
+    # Write TOML manually (tomllib is read-only, no tomli_w dependency)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        for printer_name, creds in existing["printers"].items():
+            f.write(f"[printers.{printer_name}]\n")
+            for key, val in creds.items():
+                f.write(f'{key} = "{val}"\n')
+            f.write("\n")
+
+    # Set restrictive permissions (owner read/write only)
+    path.chmod(0o600)
+
+    print(f"\nWrote {path} (mode 600)")
+    print("Reference this printer in fabprint.toml with:")
+    print("  [printer]")
+    print(f'  name = "{name}"')

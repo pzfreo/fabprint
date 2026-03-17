@@ -54,6 +54,41 @@ fabprint validate                  # check ./fabprint.toml
 fabprint validate myproject.toml   # check a specific file
 ```
 
+## `fabprint credentials`
+
+Interactively create or update `~/.config/fabprint/credentials.toml`.
+
+```
+fabprint credentials
+```
+
+Prompts for:
+- **Printer name** — used to reference this printer in `fabprint.toml` (e.g. `name = "workshop"`)
+- **IP address** — for LAN mode connections
+- **Access code** — 8-digit code from the printer's screen
+- **Serial number** — from the printer label
+
+The credentials file is created with `600` permissions (owner read/write only). If the file already exists, new printers are added alongside existing ones.
+
+### Example session
+
+```
+$ fabprint credentials
+Printer name (e.g. 'workshop'): workshop
+
+Setting up printer 'workshop'
+  Leave blank to skip optional fields.
+
+  IP address (for LAN mode): 192.168.1.100
+  Access code (8 digits, from printer screen): 12345678
+  Serial number (from printer label): 01P00A451601106
+
+Wrote ~/.config/fabprint/credentials.toml (mode 600)
+Reference this printer in fabprint.toml with:
+  [printer]
+  name = "workshop"
+```
+
 ## `fabprint run`
 
 Run all or part of the pipeline.

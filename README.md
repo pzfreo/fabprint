@@ -102,6 +102,7 @@ Combined with `version = "2.3.1"` in `[slicer]` (which pins the Docker image), t
 fabprint init                        # interactive config wizard
 fabprint init --template             # dump commented TOML template
 fabprint validate                    # check config for issues
+fabprint credentials                 # set up printer credentials
 fabprint run                         # full pipeline
 fabprint run --until plate           # stop after plating
 fabprint run --only slice            # run just one stage
