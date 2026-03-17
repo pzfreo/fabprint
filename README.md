@@ -23,13 +23,15 @@ fabprint closes the gap:
 
 ### How is this different from OrcaSlicer CLI?
 
-OrcaSlicer CLI slices one plate of pre-arranged models. fabprint is the pipeline around it:
+This builds on OrcaSlicer CLI, but is designed to allow other slicers like Cura to plugin.
 
-- **Auto-arrangement** — bin-packs multiple STLs onto the build plate (OrcaSlicer CLI has no arrange step)
+OrcaSlicer CLI slices one plate of pre-arranged models. fabprint is a pipeline around it:
+
+- **Arrangement** — bin-packs multiple STLs onto the build plate (OrcaSlicer CLI has no arrange step)
 - **Multi-part filament mapping** — per-part filament slot assignment and paint color preservation, injected into the 3MF metadata
 - **Reproducible builds** — pin slicer profiles into your repo + lock OrcaSlicer version in Docker = identical gcode on any machine
 - **Partial execution** — `--until plate` to inspect layout, `--only slice` to re-slice, `--dry-run` to test everything
-- **Send to printer** — LAN, Bambu Cloud, and Moonraker (experimental), with live status monitoring
+- **Send to printer** — Bambu LAN, Bambu Cloud, and Moonraker (experimental), with live status monitoring
 - **Headless Docker slicing** — no GUI, no display server, works in CI
 
 ## Quick start
