@@ -7,7 +7,7 @@
 
 **Reproducible 3D print pipeline**: define parts, slicer settings, and printer targets in a TOML file — arrange, slice, and print from the command line.
 
-![fabprint pipeline](docs/images/pipeline.png)
+![fabprint pipeline](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/pipeline.png)
 
 ## Why fabprint?
 
@@ -36,7 +36,7 @@ fabprint init --template            # dump a commented template to stdout
 fabprint init --template > fabprint.toml   # save template and edit manually
 ```
 
-Or create `fabprint.toml` by hand (see [full config reference](docs/config.md)):
+Or create `fabprint.toml` by hand (see [full config reference](https://github.com/pzfreo/fabprint/blob/main/docs/config.md)):
 
 ```toml
 [pipeline]
@@ -72,7 +72,7 @@ orient = "upright"
 filament = "Generic PETG-CF @base"
 ```
 
-Run it (see [full CLI reference](docs/cli.md)):
+Run it (see [full CLI reference](https://github.com/pzfreo/fabprint/blob/main/docs/cli.md)):
 
 ```bash
 fabprint run                   # arrange, slice and send to printer
@@ -83,7 +83,7 @@ fabprint run --dry-run         # full pipeline without sending to printer
 
 The plate stage generates a `plate_preview.3mf` — open it in any 3MF viewer to check placement:
 
-![plate preview](docs/images/plate_preview.png)
+![plate preview](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/plate_preview.png)
 
 ## Reproducibility
 
@@ -113,13 +113,13 @@ fabprint profiles list               # list available slicer profiles
 fabprint profiles pin                # pin profiles for reproducible builds
 ```
 
-![fabprint watch](docs/images/watch.png)
+![fabprint watch](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/watch.png)
 
 ## Documentation
 
-- [CLI reference](docs/cli.md) — all commands, flags, and pipeline stages
-- [Config reference](docs/config.md) — complete TOML format
-- [Developing](docs/developing.md) — setup, testing, architecture
+- [CLI reference](https://github.com/pzfreo/fabprint/blob/main/docs/cli.md) — all commands, flags, and pipeline stages
+- [Config reference](https://github.com/pzfreo/fabprint/blob/main/docs/config.md) — complete TOML format
+- [Developing](https://github.com/pzfreo/fabprint/blob/main/docs/developing.md) — setup, testing, architecture
 
 ## License
 
