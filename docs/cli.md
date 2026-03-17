@@ -1,6 +1,58 @@
 # CLI reference
 
-fabprint uses a single `run` command that executes a pipeline defined in your `fabprint.toml`. Utility commands (`login`, `status`, `watch`, `profiles`) handle printer management.
+fabprint provides commands for creating configs (`init`, `validate`), running the pipeline (`run`), and managing printers (`login`, `status`, `watch`, `profiles`).
+
+## `fabprint init`
+
+Create a new `fabprint.toml` config file.
+
+```
+fabprint init [--template] [-o OUTPUT]
+```
+
+| Option        | Description                                         |
+|---------------|-----------------------------------------------------|
+| `--template`  | Dump a commented template to stdout (skip wizard)   |
+| `-o, --output`| Output file path (default: `./fabprint.toml`)       |
+
+Without `--template`, runs an interactive wizard that:
+1. Discovers installed OrcaSlicer profiles (printer, process, filament)
+2. Auto-discovers CAD files (STL, 3MF, STEP) in the current directory
+3. Walks through plate size, slicer version, pipeline stages, and printer setup
+4. Previews the generated TOML before writing
+
+### Examples
+
+```bash
+fabprint init                              # interactive wizard
+fabprint init --template                   # print commented template
+fabprint init --template > fabprint.toml   # save template to file
+fabprint init -o myproject.toml            # wizard writes to custom path
+```
+
+## `fabprint validate`
+
+Check a `fabprint.toml` for issues and print actionable warnings.
+
+```
+fabprint validate [config]
+```
+
+If `config` is omitted, looks for `fabprint.toml` in the current directory.
+
+Checks for:
+- Missing `slicer.version` (reproducibility)
+- Profile names not matching installed slicer profiles (with suggestions)
+- Printer name not found in credentials file
+- Absolute part file paths (portability)
+- Unknown pipeline stages
+
+### Examples
+
+```bash
+fabprint validate                  # check ./fabprint.toml
+fabprint validate myproject.toml   # check a specific file
+```
 
 ## `fabprint run`
 
