@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from fabprint import FabprintError
 from fabprint.config import PrinterConfig
 from fabprint.credentials import load_printer_credentials
 from fabprint.gcode import parse_gcode_metadata
@@ -190,7 +191,7 @@ serial = "SN123"
     monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
     monkeypatch.delenv("BAMBU_PRINTER_IP", raising=False)
     config = PrinterConfig(name="workshop")
-    with pytest.raises(ValueError, match="ip"):
+    with pytest.raises(FabprintError, match="ip"):
         send_print(Path("dummy.gcode"), config)
 
 
@@ -207,7 +208,7 @@ serial = "SN123"
     monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
     monkeypatch.delenv("BAMBU_ACCESS_CODE", raising=False)
     config = PrinterConfig(name="workshop")
-    with pytest.raises(ValueError, match="access_code"):
+    with pytest.raises(FabprintError, match="access_code"):
         send_print(Path("dummy.gcode"), config)
 
 
@@ -224,7 +225,7 @@ access_code = "abc"
     monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
     monkeypatch.delenv("BAMBU_SERIAL", raising=False)
     config = PrinterConfig(name="workshop")
-    with pytest.raises(ValueError, match="serial"):
+    with pytest.raises(FabprintError, match="serial"):
         send_print(Path("dummy.gcode"), config)
 
 
@@ -240,7 +241,7 @@ ip = "10.0.0.1"
     monkeypatch.setenv("FABPRINT_CREDENTIALS", str(cred_path))
     monkeypatch.delenv("BAMBU_PRINTER_IP", raising=False)
     config = PrinterConfig(name="workshop")
-    with pytest.raises(ValueError, match="no 'type'"):
+    with pytest.raises(FabprintError, match="no 'type'"):
         send_print(Path("dummy.gcode"), config)
 
 

@@ -37,6 +37,20 @@ BRIDGE_NAME = "bambu_cloud_bridge"
 DOCKER_IMAGE = "fabprint/cloud-bridge"
 BASE_URL = "https://api.bambulab.com"
 
+# Timeouts (seconds)
+BRIDGE_TIMEOUT = 300
+BRIDGE_STATUS_TIMEOUT = 60
+BRIDGE_TASK_LIST_TIMEOUT = 30
+BRIDGE_CANCEL_TIMEOUT = 30
+
+# Task polling defaults
+TASK_POLL_MAX_ATTEMPTS = 12
+TASK_POLL_INTERVAL = 5
+
+# 3MF processing poll limits
+PROCESSING_POLL_MAX_ATTEMPTS = 15
+PROCESSING_POLL_INTERVAL = 2
+
 # BambuConnect X.509 certificate ID and private key for signing print tasks.
 # The server passes this signature to the printer via MQTT; without it the
 # printer rejects the command ("MQTT Command verification failed").
@@ -128,7 +142,7 @@ def _find_bridge() -> str | None:
 def _run_bridge(
     args: list[str],
     *,
-    timeout: int = 300,
+    timeout: int = BRIDGE_TIMEOUT,
     verbose: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run the bridge binary with given arguments.
@@ -246,7 +260,7 @@ class PersistentBridge:
             log.debug("Stopped persistent bridge container: %s", self._container_id)
             self._container_id = None
 
-    def status(self, device_id: str, *, timeout: int = 60) -> dict:
+    def status(self, device_id: str, *, timeout: int = BRIDGE_STATUS_TIMEOUT) -> dict:
         """Query printer status via the running container."""
         cmd = [
             "docker",
@@ -390,7 +404,7 @@ def cloud_status(
         raise FileNotFoundError(f"Token file not found: {token_file}")
 
     args = ["status", device_id, str(token_file.resolve())]
-    result = _run_bridge(args, timeout=60, verbose=verbose)
+    result = _run_bridge(args, timeout=BRIDGE_STATUS_TIMEOUT, verbose=verbose)
 
     try:
         data = json.loads(result.stdout.strip())
@@ -416,7 +430,7 @@ def cloud_tasks(
         raise FileNotFoundError(f"Token file not found: {token_file}")
 
     args = ["tasks", str(token_file.resolve()), "--limit", str(limit)]
-    result = _run_bridge(args, timeout=30)
+    result = _run_bridge(args, timeout=BRIDGE_TASK_LIST_TIMEOUT)
 
     try:
         data = json.loads(result.stdout.strip())
@@ -464,7 +478,7 @@ def cloud_cancel(
         raise FileNotFoundError(f"Token file not found: {token_file}")
 
     args = ["cancel", device_id, str(token_file.resolve())]
-    result = _run_bridge(args, timeout=30, verbose=verbose)
+    result = _run_bridge(args, timeout=BRIDGE_CANCEL_TIMEOUT, verbose=verbose)
 
     try:
         return json.loads(result.stdout.strip())
@@ -490,7 +504,7 @@ def _patch_config_3mf_ams_colors(
     try:
         with zipfile.ZipFile(config_path, "r") as z:
             file_data = {name: z.read(name) for name in z.namelist()}
-    except Exception as e:
+    except (zipfile.BadZipFile, KeyError, OSError) as e:
         log.debug("Could not read config 3MF for color patching: %s", e)
         return
 
@@ -499,7 +513,7 @@ def _patch_config_3mf_ams_colors(
 
     try:
         root = ET.fromstring(file_data["Metadata/slice_info.config"])
-    except Exception as e:
+    except ET.ParseError as e:
         log.debug("Could not parse slice_info.config: %s", e)
         return
 
@@ -559,7 +573,7 @@ def _patch_config_3mf_ams_colors(
                         colours[idx] = "#" + tray["color"]
             ps["filament_colour"] = colours
             file_data["Metadata/project_settings.config"] = json.dumps(ps).encode()
-        except Exception as e:
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
             log.debug("Could not patch project_settings.config colours: %s", e)
 
     buf = io.BytesIO()
@@ -653,7 +667,7 @@ def _build_ams_mapping(
                         filament_by_id[fid] = f
                     if not total_slots and filament_by_id:
                         total_slots = max(filament_by_id.keys())
-    except Exception as e:
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, json.JSONDecodeError, OSError) as e:
         log.warning("Failed to parse 3MF for AMS mapping: %s", e)
         return result
 
@@ -811,8 +825,8 @@ def _poll_task_status(
     task_id: int,
     device_id: str = "",
     *,
-    max_polls: int = 12,
-    interval: int = 5,
+    max_polls: int = TASK_POLL_MAX_ATTEMPTS,
+    interval: int = TASK_POLL_INTERVAL,
 ) -> dict:
     """Poll task status until dispatched or times out.
 
@@ -836,7 +850,7 @@ def _poll_task_status(
                         task.get("failedType", 0),
                     )
                     return task
-        except Exception as e:
+        except (OSError, ValueError) as e:
             log.debug("Task poll error: %s", e)
 
         # Check device status (updates faster than task API)
@@ -869,7 +883,7 @@ def _poll_task_status(
                                     "print_status": ps,
                                 }
                             break
-            except Exception as e:
+            except (OSError, ValueError) as e:
                 log.debug("Device poll error: %s", e)
         else:
             log.debug(
@@ -999,7 +1013,7 @@ def cloud_print_http(
 
     # Step 4: Poll GET /notification until processing is done (not "running")
     log.debug("Waiting for server to process 3MF...")
-    for attempt in range(15):
+    for attempt in range(PROCESSING_POLL_MAX_ATTEMPTS):
         r = session.get(
             f"{BASE_URL}/v1/iot-service/api/user/notification",
             params={"action": "upload", "ticket": upload_ticket},
@@ -1009,8 +1023,8 @@ def cloud_print_http(
             log.debug("Processing done after %d poll(s): %s", attempt + 1, msg)
             break
         if verbose:
-            log.debug("Poll %d/15: still processing", attempt + 1)
-        time.sleep(2)
+            log.debug("Poll %d/%d: still processing", attempt + 1, PROCESSING_POLL_MAX_ATTEMPTS)
+        time.sleep(PROCESSING_POLL_INTERVAL)
     else:
         raise RuntimeError(f"3MF processing timed out for project {project_id}")
 

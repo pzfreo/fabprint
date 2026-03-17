@@ -7,12 +7,17 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# Number of lines to scan from the start/end of gcode for metadata
+GCODE_HEADER_LINES = 300
+GCODE_TAIL_LINES = 50
+
 
 def parse_gcode_metadata(gcode_path: Path) -> dict[str, str | float | int]:
     """Extract print time and filament stats from gcode comments.
 
-    Scans header (first 300 lines) for print time, and tail (last 50 lines)
-    for filament usage. Handles multiple OrcaSlicer/BambuStudio formats.
+    Scans header (first GCODE_HEADER_LINES lines) for print time, and tail
+    (last GCODE_TAIL_LINES lines) for filament usage. Handles multiple
+    OrcaSlicer/BambuStudio formats.
 
     Returns dict with keys like 'print_time', 'print_time_secs',
     'filament_g', and/or 'filament_cm3'.
@@ -21,7 +26,7 @@ def parse_gcode_metadata(gcode_path: Path) -> dict[str, str | float | int]:
     stats: dict[str, str | float | int] = {}
 
     # Scan header for print time
-    for line in lines[:300]:
+    for line in lines[:GCODE_HEADER_LINES]:
         if m := re.search(r"total estimated time:\s*(.+?)(?:;|$)", line):
             stats["print_time"] = m.group(1).strip()
         elif m := re.match(r";\s*estimated printing time.*?=\s*(.+)", line):
@@ -34,7 +39,7 @@ def parse_gcode_metadata(gcode_path: Path) -> dict[str, str | float | int]:
     filament_g_total: float | None = None
     filament_cm3_slots: list[float] = []
     filament_cm3_total: float | None = None
-    for line in lines[-50:]:
+    for line in lines[-GCODE_TAIL_LINES:]:
         if m := re.match(r";\s*total filament used \[g\]\s*=\s*([\d.]+)", line):
             filament_g_total = float(m.group(1))
         elif m := re.match(r";\s*filament used \[g\]\s*=\s*([\d.]+)", line):
@@ -116,7 +121,7 @@ def analyze_gcode(path: Path) -> GcodeInfo:
     info = GcodeInfo()
 
     # Parse filament types from header
-    for line in lines[:300]:
+    for line in lines[:GCODE_HEADER_LINES]:
         if m := re.match(r";\s*filament_type\s*=\s*(.+)", line):
             info.filament_types = [t.strip() for t in m.group(1).split(";")]
         elif m := re.search(r"total estimated time:\s*(.+?)(?:;|$)", line):
@@ -125,7 +130,7 @@ def analyze_gcode(path: Path) -> GcodeInfo:
             info.print_time = m.group(1).strip()
 
     # Parse per-slot filament usage from tail
-    for line in lines[-50:]:
+    for line in lines[-GCODE_TAIL_LINES:]:
         if m := re.match(r";\s*filament used \[g\]\s*=\s*(.+)", line):
             info.filament_usage_g = [float(v.strip()) for v in m.group(1).split(",")]
 

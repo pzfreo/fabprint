@@ -7,6 +7,7 @@ import logging
 import zipfile
 from pathlib import Path
 
+from fabprint import FabprintError
 from fabprint.config import PrinterConfig
 from fabprint.credentials import cloud_token_json, load_printer_credentials
 from fabprint.gcode import parse_gcode_metadata
@@ -389,7 +390,7 @@ def send_print(
     ptype = creds.get("type")
 
     if not ptype:
-        raise ValueError(
+        raise FabprintError(
             f"Printer '{config.name}' has no 'type' in credentials.toml. "
             "Run 'fabprint setup' to configure it."
         )
@@ -397,7 +398,7 @@ def send_print(
     if ptype == "bambu-lan":
         for field in ("ip", "access_code", "serial"):
             if not creds[field]:
-                raise ValueError(
+                raise FabprintError(
                     f"bambu-lan printer '{config.name}' requires {field}. "
                     "Run 'fabprint setup' to configure it."
                 )
@@ -412,7 +413,7 @@ def send_print(
 
     elif ptype == "bambu-cloud":
         if not creds["serial"]:
-            raise ValueError(
+            raise FabprintError(
                 f"bambu-cloud printer '{config.name}' requires serial. "
                 "Run 'fabprint setup' to configure it."
             )
@@ -426,7 +427,7 @@ def send_print(
 
     elif ptype == "moonraker":
         if not creds["url"]:
-            raise ValueError(
+            raise FabprintError(
                 f"moonraker printer '{config.name}' requires url. "
                 "Run 'fabprint setup' to configure it."
             )
@@ -439,7 +440,7 @@ def send_print(
         )
 
     else:
-        raise ValueError(
+        raise FabprintError(
             f"Unknown printer type '{ptype}' for printer '{config.name}'. "
             f"Valid types: bambu-lan, bambu-cloud, moonraker"
         )
