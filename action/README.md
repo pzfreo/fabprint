@@ -15,6 +15,8 @@ on:
 jobs:
   slice:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: pzfreo/fabprint/action@main
@@ -42,7 +44,7 @@ jobs:
 
 ## What it does
 
-1. Builds a Docker image with OrcaSlicer and fabprint
+1. Pulls a pre-built Docker image with OrcaSlicer and fabprint
 2. Runs `fabprint run` against your config (stops before printing)
 3. Uploads sliced `.gcode` and `.3mf` files as workflow artifacts
 4. Posts a PR comment with print time and filament usage
@@ -51,3 +53,9 @@ jobs:
 
 - A `fabprint.toml` in your repo (see [config docs](../docs/config.md))
 - STL/3MF/STEP model files referenced in your config
+- The GHCR package must be public, or you must authenticate with `docker login ghcr.io` before this action runs
+- If using the `comment` feature, your job needs `permissions: pull-requests: write`
+
+## Supported OrcaSlicer versions
+
+Only versions with a published `ghcr.io/pzfreo/fabprint:orca-<version>` image are supported. Currently: `2.3.1` (default).

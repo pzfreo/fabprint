@@ -63,7 +63,7 @@ runs:
           "ghcr.io/${REPO}:orca-${ORCA_VERSION}" \
           run "${CONFIG}" \
           --until "${UNTIL}" \
-          --output "/project/${OUTPUT_DIR}" \
+          --output-dir "/project/${OUTPUT_DIR}" \
           -v \
           2>&1 | tee /tmp/fabprint-output.log
 
