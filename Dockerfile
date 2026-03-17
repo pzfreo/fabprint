@@ -57,7 +57,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Install fabprint
 WORKDIR /opt/fabprint
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src/ ./src/
 RUN uv python install 3.12 \
     && uv sync --frozen --no-dev --no-editable --python 3.12 \
