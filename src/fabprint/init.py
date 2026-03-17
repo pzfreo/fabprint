@@ -185,6 +185,42 @@ def _closest_match(name: str, candidates: list[str]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _plate_size_from_machine(profile_name: str, engine: str) -> tuple[int, int] | None:
+    """Extract build plate dimensions from a machine profile's printable_area."""
+    try:
+        from fabprint.profiles import resolve_profile_data
+
+        data = resolve_profile_data(profile_name, engine, "machine")
+        area = data.get("printable_area")
+        if not area or not isinstance(area, list):
+            return None
+        # printable_area is a polygon like ["0x0", "256x0", "256x256", "0x256"]
+        max_x = max_y = 0
+        for pt in area:
+            parts = str(pt).split("x")
+            if len(parts) == 2:
+                max_x = max(max_x, int(float(parts[0])))
+                max_y = max(max_y, int(float(parts[1])))
+        if max_x > 0 and max_y > 0:
+            return (max_x, max_y)
+    except Exception:
+        pass
+    return None
+
+
+def _detect_orca_version() -> str | None:
+    """Try to detect the installed OrcaSlicer version."""
+    try:
+        from fabprint.slicer import SLICER_PATHS, _detect_slicer_version
+
+        slicer = SLICER_PATHS.get("orca")
+        if slicer and slicer.exists():
+            return _detect_slicer_version(slicer)
+    except Exception:
+        pass
+    return None
+
+
 _FILTER_THRESHOLD = 10  # show search prompt when list exceeds this size
 
 
@@ -235,6 +271,12 @@ def _search_filter(options: list[str], query: str | None = None) -> tuple[list[s
     """Prompt for a search term and return matching options with original indices."""
     while True:
         if query is None:
+            # Show first few examples so the user can see the naming format
+            preview = options[:10]
+            for ex in preview:
+                print(f"    {ex}")
+            if len(options) > len(preview):
+                print(f"    ... and {len(options) - len(preview)} more")
             query = input(f"  Search ({len(options)} available, type to filter): ").strip()
         if not query:
             query = None
@@ -320,9 +362,13 @@ def run_wizard(output: Path | None = None) -> str:
     filament_names: list[str] = []
     filament_options = sorted(profiles.get("filament", {}).keys())
     if filament_options:
-        print("Filament profiles (comma-separated or 'all'):")
-        chosen = _prompt_choice("Pick filament(s): ", filament_options, allow_multi=True)
-        filament_names = [filament_options[i] for i in chosen]
+        print("Filament profiles:")
+        while True:
+            chosen = _prompt_choice("Pick filament(s): ", filament_options, allow_multi=True)
+            filament_names.extend(filament_options[i] for i in chosen)
+            print(f"  Selected: {', '.join(filament_names)}")
+            if not _prompt_yn("Add another filament?", default=False):
+                break
         print()
     else:
         fil = _prompt_str("Filament profile name", "Generic PLA @base")
@@ -370,13 +416,25 @@ def run_wizard(output: Path | None = None) -> str:
         parts_config.append({"file": file_name, "copies": 1, "orient": "flat", "filament": 1})
         print()
 
-    # --- Step 7: Plate size ---
-    plate_x = _prompt_int("Plate width (mm)?", 256)
-    plate_y = _prompt_int("Plate depth (mm)?", 256)
+    # --- Step 7: Plate size (default from printer profile if available) ---
+    default_plate = (256, 256)
+    if printer_profile:
+        detected = _plate_size_from_machine(printer_profile, engine)
+        if detected:
+            default_plate = detected
+            print(f"Detected plate size from printer profile: {detected[0]}x{detected[1]}mm")
+    plate_x = _prompt_int("Plate width (mm)?", default_plate[0])
+    plate_y = _prompt_int("Plate depth (mm)?", default_plate[1])
     print()
 
     # --- Step 8: Slicer version ---
-    slicer_version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)")
+    detected_version = _detect_orca_version()
+    if detected_version:
+        slicer_version = _prompt_str(
+            "OrcaSlicer version to pin (leave blank to skip)", detected_version
+        )
+    else:
+        slicer_version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)")
     print()
 
     # --- Step 9: Pipeline stages ---
