@@ -184,7 +184,7 @@ def _closest_match(name: str, candidates: list[str]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-_FILTER_THRESHOLD = 20  # show search prompt when list exceeds this size
+_FILTER_THRESHOLD = 10  # show search prompt when list exceeds this size
 
 
 def _prompt_choice(prompt: str, options: list[str], allow_multi: bool = False) -> list[int]:
