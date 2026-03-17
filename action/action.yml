@@ -1,0 +1,159 @@
+name: "Fabprint Slice"
+description: "Slice 3D models with OrcaSlicer and post build metrics to your PR"
+branding:
+  icon: "box"
+  color: "blue"
+
+inputs:
+  config:
+    description: "Path to fabprint.toml (relative to repo root)"
+    required: false
+    default: "fabprint.toml"
+  orca-version:
+    description: "OrcaSlicer version to use"
+    required: false
+    default: "2.3.1"
+  until:
+    description: "Run pipeline up to this stage (default: slice)"
+    required: false
+    default: "slice"
+  output-dir:
+    description: "Output directory for sliced files (relative to repo root)"
+    required: false
+    default: "fabprint_output"
+  comment:
+    description: "Post a PR comment with build metrics (true/false)"
+    required: false
+    default: "true"
+
+outputs:
+  print-time:
+    description: "Estimated print time (human-readable)"
+  filament-grams:
+    description: "Total filament usage in grams"
+  gcode-path:
+    description: "Path to sliced gcode output directory"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Pull fabprint image
+      shell: bash
+      env:
+        ORCA_VERSION: ${{ inputs.orca-version }}
+        REPO: ${{ github.repository }}
+      run: |
+        IMAGE="ghcr.io/${REPO}:orca-${ORCA_VERSION}"
+        echo "::group::Pulling ${IMAGE}"
+        docker pull "${IMAGE}"
+        echo "::endgroup::"
+
+    - name: Run fabprint pipeline
+      shell: bash
+      env:
+        ORCA_VERSION: ${{ inputs.orca-version }}
+        REPO: ${{ github.repository }}
+        CONFIG: ${{ inputs.config }}
+        UNTIL: ${{ inputs.until }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        docker run --rm \
+          -v "${WORKSPACE}:/project" \
+          "ghcr.io/${REPO}:orca-${ORCA_VERSION}" \
+          run "${CONFIG}" \
+          --until "${UNTIL}" \
+          --output-dir "/project/${OUTPUT_DIR}" \
+          -v \
+          2>&1 | tee /tmp/fabprint-output.log
+
+    - name: Extract build metrics
+      id: metrics
+      shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        # Find gcode files and extract stats
+        FULL_OUTPUT_DIR="${WORKSPACE}/${OUTPUT_DIR}"
+        GCODE=$(find "$FULL_OUTPUT_DIR" -name '*.gcode' -type f 2>/dev/null | head -1)
+
+        if [ -z "$GCODE" ]; then
+          # Try inside .gcode.3mf
+          MF=$(find "$FULL_OUTPUT_DIR" -name '*.gcode.3mf' -type f 2>/dev/null | head -1)
+          if [ -n "$MF" ]; then
+            echo "gcode-3mf=$MF" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+
+        # Parse metrics from fabprint log output
+        PRINT_TIME=$(grep -oP 'estimated \K.+' /tmp/fabprint-output.log 2>/dev/null || true)
+        FILAMENT=$(grep -oP '[\d.]+(?=g filament)' /tmp/fabprint-output.log 2>/dev/null || true)
+
+        echo "print-time=${PRINT_TIME}" >> "$GITHUB_OUTPUT"
+        echo "filament-grams=${FILAMENT}" >> "$GITHUB_OUTPUT"
+        echo "gcode-path=${FULL_OUTPUT_DIR}" >> "$GITHUB_OUTPUT"
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+      with:
+        name: fabprint-output
+        path: |
+          ${{ inputs.output-dir }}/*.gcode
+          ${{ inputs.output-dir }}/*.3mf
+          ${{ inputs.output-dir }}/*.png
+        if-no-files-found: warn
+
+    - name: Post PR comment
+      if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      env:
+        PRINT_TIME: ${{ steps.metrics.outputs.print-time }}
+        FILAMENT_GRAMS: ${{ steps.metrics.outputs.filament-grams }}
+        ORCA_VERSION: ${{ inputs.orca-version }}
+      with:
+        script: |
+          const printTime = process.env.PRINT_TIME || 'unknown';
+          const filament = process.env.FILAMENT_GRAMS || 'unknown';
+          const orcaVersion = process.env.ORCA_VERSION || 'unknown';
+          const marker = '<!-- fabprint-slice-result -->';
+
+          const body = [
+            marker,
+            '### Fabprint Slice Results',
+            '',
+            '| Metric | Value |',
+            '|--------|-------|',
+            `| Print time | ${printTime} |`,
+            `| Filament | ${filament}g |`,
+            '',
+            `Sliced with OrcaSlicer ${orcaVersion}`,
+            '',
+            '> Download the sliced output from the **fabprint-output** artifact above.',
+          ].join('\n');
+
+          // Find existing comment to update
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          const existing = comments.find(c => c.body.includes(marker));
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+          }
