@@ -159,25 +159,23 @@ Combined with `version = "2.3.1"` in `[slicer]` (which pins the Docker image), t
 
 ### CI/CD example
 
-Automate slicing in GitHub Actions — push a commit, get G-code as a build artifact:
+Automate slicing in GitHub Actions — push a commit, get G-code as a build artifact with print metrics on your PR:
 
 ```yaml
 # .github/workflows/slice.yml
 name: Slice
-on: [push]
+on: [push, pull_request]
 jobs:
   slice:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv tool install fabprint
-      - run: fabprint run --until slice
-      - uses: actions/upload-artifact@v4
+      - uses: pzfreo/fabprint@main
         with:
-          name: gcode
-          path: output/*.3mf
+          orca-version: "2.3.1"
 ```
+
+The action slices your model, uploads G-code as an artifact, and posts print time / filament stats as a PR comment. See [`action/README.md`](action/README.md) for all options.
 
 ## CLI overview
 
