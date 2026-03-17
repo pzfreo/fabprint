@@ -21,6 +21,17 @@ fabprint closes the gap:
 - **Versioned Docker slicing** — pin OrcaSlicer version for identical gcode across machines
 - **One command** — `fabprint run` goes from STL files to a running print
 
+### How is this different from OrcaSlicer CLI?
+
+OrcaSlicer CLI slices one plate of pre-arranged models. fabprint is the pipeline around it:
+
+- **Auto-arrangement** — bin-packs multiple STLs onto the build plate (OrcaSlicer CLI has no arrange step)
+- **Multi-part filament mapping** — per-part filament slot assignment and paint color preservation, injected into the 3MF metadata
+- **Reproducible builds** — pin slicer profiles into your repo + lock OrcaSlicer version in Docker = identical gcode on any machine
+- **Partial execution** — `--until plate` to inspect layout, `--only slice` to re-slice, `--dry-run` to test everything
+- **Send to printer** — LAN, Bambu Cloud, and Moonraker (experimental), with live status monitoring
+- **Headless Docker slicing** — no GUI, no display server, works in CI
+
 ## Quick start
 
 ```bash
