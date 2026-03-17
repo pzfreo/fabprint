@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from fabprint.config import load_config
 from fabprint.pipeline import LoadedParts, ResolvedFilaments, format_summary, load_parts
 
@@ -187,9 +189,176 @@ def test_resolve_outputs_only():
 
 def test_resolve_outputs_unknown_stage():
     """resolve_outputs with unknown only stage raises."""
-    import pytest
-
     from fabprint.pipeline import resolve_outputs
 
     with pytest.raises(ValueError, match="Unknown stage"):
         resolve_outputs(["load"], only="foobar")
+
+
+def test_resolve_outputs_until_not_in_stages():
+    """resolve_outputs with until stage not in pipeline raises."""
+    from fabprint.pipeline import resolve_outputs
+
+    with pytest.raises(ValueError, match="not in pipeline stages"):
+        resolve_outputs(["load", "arrange"], until="print")
+
+
+def test_resolve_outputs_only_gcode_info():
+    """resolve_outputs --only gcode-info returns gcode_stats."""
+    from fabprint.pipeline import resolve_outputs
+
+    stages = ["load", "arrange", "plate", "slice", "gcode-info"]
+    outputs = resolve_outputs(stages, only="gcode-info")
+    assert outputs == ["gcode_stats"]
+
+
+# --- resolve_overrides tests ---
+
+
+def test_resolve_overrides_no_requirements():
+    """Stages with no prerequisites return empty overrides."""
+    from fabprint.pipeline import resolve_overrides
+
+    overrides = resolve_overrides("plate", Path("/tmp/unused"))
+    assert overrides == {}
+
+
+def test_resolve_overrides_slice_finds_plate(tmp_path):
+    """--only slice resolves plate_3mf_path from disk."""
+    from fabprint.pipeline import resolve_overrides
+
+    plate = tmp_path / "plate.3mf"
+    plate.write_bytes(b"fake 3mf")
+    overrides = resolve_overrides("slice", tmp_path)
+    assert overrides["plate_3mf_path"] == plate
+
+
+def test_resolve_overrides_slice_missing_plate(tmp_path):
+    """--only slice raises when plate.3mf doesn't exist."""
+    from fabprint.pipeline import resolve_overrides
+
+    with pytest.raises(FileNotFoundError, match="plate 3MF file"):
+        resolve_overrides("slice", tmp_path)
+
+
+def test_resolve_overrides_gcode_info_finds_dir(tmp_path):
+    """--only gcode-info resolves sliced_output_dir from disk."""
+    from fabprint.pipeline import resolve_overrides
+
+    overrides = resolve_overrides("gcode-info", tmp_path)
+    assert overrides["sliced_output_dir"] == tmp_path
+
+
+def test_resolve_overrides_print_finds_gcode(tmp_path):
+    """--only print resolves gcode_path from disk."""
+    from fabprint.pipeline import resolve_overrides
+
+    gcode = tmp_path / "plate.gcode"
+    gcode.write_text("G28\n")
+    overrides = resolve_overrides("print", tmp_path)
+    assert overrides["gcode_path"] == gcode
+
+
+def test_resolve_overrides_print_missing_gcode(tmp_path):
+    """--only print raises when no gcode files exist."""
+    from fabprint.pipeline import resolve_overrides
+
+    with pytest.raises(FileNotFoundError, match="sliced gcode file"):
+        resolve_overrides("print", tmp_path)
+
+
+# --- gcode_path node tests ---
+
+
+def test_gcode_path_finds_file(tmp_path):
+    """gcode_path returns the gcode file from the output dir."""
+    from fabprint.pipeline import gcode_path
+
+    gcode = tmp_path / "model.gcode"
+    gcode.write_text("G28\n")
+    assert gcode_path(tmp_path) == gcode
+
+
+def test_gcode_path_no_files(tmp_path):
+    """gcode_path raises when no gcode files exist."""
+    from fabprint.pipeline import gcode_path
+
+    with pytest.raises(RuntimeError, match="No gcode files"):
+        gcode_path(tmp_path)
+
+
+# --- resolved_filaments node tests ---
+
+
+def test_resolved_filaments_with_override(tmp_path):
+    """Filament type override should produce single-filament config."""
+    from fabprint.pipeline import resolved_filaments
+
+    cfg = load_config(_write_config(tmp_path))
+    parts = load_parts(cfg)
+    rf = resolved_filaments(
+        cfg, parts, filament_type_override="Generic PETG @base", filament_slot_override=2
+    )
+    assert rf.filaments == ["Generic PETG @base"]
+    assert all(slot == 2 for slot in rf.filament_ids)
+
+
+def test_resolved_filaments_from_config(tmp_path):
+    """Without override, filaments come from config."""
+    from fabprint.pipeline import resolved_filaments
+
+    cfg = load_config(_write_config(tmp_path))
+    parts = load_parts(cfg)
+    rf = resolved_filaments(cfg, parts, filament_type_override=None, filament_slot_override=1)
+    assert rf.filament_ids == parts.filament_ids
+
+
+# --- format_summary edge case ---
+
+
+def test_format_summary_empty():
+    """format_summary with empty parts returns empty string."""
+    parts = LoadedParts()
+    assert format_summary(parts, (256, 256)) == ""
+
+
+# --- display_results tests ---
+
+
+def test_display_results_plate(capsys):
+    """_display_results shows plate and preview paths."""
+    from fabprint.cli import _display_results
+
+    _display_results(
+        {
+            "part_summary": "Parts:\n  cube x2",
+            "plate_3mf_path": Path("/tmp/plate.3mf"),
+            "preview_path": Path("/tmp/plate_preview.3mf"),
+        }
+    )
+    out = capsys.readouterr().out
+    assert "cube x2" in out
+    assert "plate.3mf" in out
+    assert "Preview:" in out
+
+
+def test_display_results_gcode_stats(capsys):
+    """_display_results shows gcode stats."""
+    from fabprint.cli import _display_results
+
+    _display_results(
+        {
+            "gcode_stats": {"filament_g": 12.5, "print_time": "1h 30m"},
+        }
+    )
+    out = capsys.readouterr().out
+    assert "12.5g" in out
+    assert "1h 30m" in out
+
+
+def test_display_results_empty(capsys):
+    """_display_results with empty dict produces no output."""
+    from fabprint.cli import _display_results
+
+    _display_results({})
+    assert capsys.readouterr().out == ""
