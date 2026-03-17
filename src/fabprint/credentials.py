@@ -27,7 +27,7 @@ PRINTER_TYPES = {
     "moonraker": {
         "required": ["url"],
         "optional": ["api_key"],
-        "description": "Klipper/Moonraker printer via REST API",
+        "description": "Klipper/Moonraker printer via REST API (experimental)",
     },
 }
 

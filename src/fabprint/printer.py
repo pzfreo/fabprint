@@ -197,9 +197,10 @@ def get_lan_status(ip: str, access_code: str, serial: str) -> dict:
 
 
 def get_moonraker_status(url: str, api_key: str | None = None) -> dict:
-    """Query printer status via Moonraker REST API.
+    """Query printer status via Moonraker REST API (experimental).
 
     Returns a normalised status dict with keys matching the rendering format.
+    Not yet tested against a real Moonraker instance.
     """
     try:
         import requests
@@ -329,7 +330,7 @@ def _send_moonraker(
     dry_run: bool = False,
     upload_only: bool = False,
 ) -> None:
-    """Send gcode to a Klipper/Moonraker printer via REST API."""
+    """Send gcode to a Klipper/Moonraker printer via REST API (experimental)."""
     try:
         import requests
     except ImportError:
