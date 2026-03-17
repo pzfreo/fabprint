@@ -258,22 +258,22 @@ def load_config(path: Path) -> FabprintConfig:
                     )
                 parts[i].filament = raw_fil
 
-        # Resolve per-object filament overrides for this part
-        for obj_name, obj_fil in raw_obj_filaments[i].items():
-            if isinstance(obj_fil, str):
-                if obj_fil not in fil_index:
-                    raise FabprintError(
-                        f"parts[{i}].filaments.{obj_name}: '{obj_fil}' not in "
-                        f"[slicer].filaments {slicer.filaments}"
-                    )
-                parts[i].object_filaments[obj_name] = fil_index[obj_fil]
-            else:
-                if slicer.slots and obj_fil not in slicer.slots:
-                    raise FabprintError(
-                        f"parts[{i}].filaments.{obj_name}: slot {obj_fil} "
-                        f"not defined in [slicer.slots]"
-                    )
-                parts[i].object_filaments[obj_name] = obj_fil
+            # Resolve per-object filament overrides for this part
+            for obj_name, obj_fil in raw_obj_filaments[i].items():
+                if isinstance(obj_fil, str):
+                    if obj_fil not in fil_index:
+                        raise FabprintError(
+                            f"parts[{i}].filaments.{obj_name}: '{obj_fil}' not in "
+                            f"[slicer].filaments {slicer.filaments}"
+                        )
+                    parts[i].object_filaments[obj_name] = fil_index[obj_fil]
+                else:
+                    if slicer.slots and obj_fil not in slicer.slots:
+                        raise FabprintError(
+                            f"parts[{i}].filaments.{obj_name}: slot {obj_fil} "
+                            f"not defined in [slicer.slots]"
+                        )
+                    parts[i].object_filaments[obj_name] = obj_fil
 
     # Pipeline config (optional)
     from fabprint.pipeline import STAGE_OUTPUTS
@@ -281,12 +281,14 @@ def load_config(path: Path) -> FabprintConfig:
     pipeline_raw = raw.get("pipeline", {})
     pipeline_stages = pipeline_raw.get("stages", list(DEFAULT_STAGES))
     if not isinstance(pipeline_stages, list):
-        raise ValueError("pipeline.stages must be a list of stage names")
+        raise FabprintError("pipeline.stages must be a list of stage names")
     for s in pipeline_stages:
         if not isinstance(s, str) or not s.strip():
-            raise ValueError(f"pipeline.stages: each stage must be a non-empty string, got {s!r}")
+            raise FabprintError(
+                f"pipeline.stages: each stage must be a non-empty string, got {s!r}"
+            )
         if s not in STAGE_OUTPUTS:
-            raise ValueError(
+            raise FabprintError(
                 f"pipeline.stages: unknown stage '{s}'. Valid stages: {sorted(STAGE_OUTPUTS)}"
             )
     pipeline = PipelineConfig(stages=pipeline_stages)
