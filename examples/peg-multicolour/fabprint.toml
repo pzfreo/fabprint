@@ -2,6 +2,9 @@
 # Two-colour print: paint_color data in the 3MF files assigns
 # alternating layers to AMS slots 1 and 2.
 
+[pipeline]
+stages = ["load", "arrange", "plate", "slice"]
+
 [plate]
 size = [256, 256]
 padding = 5.0

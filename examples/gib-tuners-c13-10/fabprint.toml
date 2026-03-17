@@ -1,6 +1,9 @@
 # Gib Tuners MK2 — C13-10, 5-gang LH
 # FDM print plate for Bambu Lab P1S
 
+[pipeline]
+stages = ["load", "arrange", "plate", "slice", "print"]
+
 [printer]
 mode = "cloud-bridge"
 name = "workshop"  # references [printers.workshop] in ~/.config/fabprint/credentials.toml
