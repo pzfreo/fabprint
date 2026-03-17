@@ -37,26 +37,22 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Build fabprint image
+    - name: Pull fabprint image
       shell: bash
       env:
         ORCA_VERSION: ${{ inputs.orca-version }}
-        ACTION_PATH: ${{ github.action_path }}
+        REPO: ${{ github.repository }}
       run: |
-        IMAGE="fabprint:orca-${ORCA_VERSION}"
-        if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-          echo "::group::Building fabprint Docker image"
-          docker build \
-            --build-arg "ORCA_VERSION=${ORCA_VERSION}" \
-            -t "$IMAGE" \
-            "${ACTION_PATH}/.."
-          echo "::endgroup::"
-        fi
+        IMAGE="ghcr.io/${REPO}:orca-${ORCA_VERSION}"
+        echo "::group::Pulling ${IMAGE}"
+        docker pull "${IMAGE}"
+        echo "::endgroup::"
 
     - name: Run fabprint pipeline
       shell: bash
       env:
         ORCA_VERSION: ${{ inputs.orca-version }}
+        REPO: ${{ github.repository }}
         CONFIG: ${{ inputs.config }}
         UNTIL: ${{ inputs.until }}
         OUTPUT_DIR: ${{ inputs.output-dir }}
@@ -64,7 +60,7 @@ runs:
       run: |
         docker run --rm \
           -v "${WORKSPACE}:/project" \
-          "fabprint:orca-${ORCA_VERSION}" \
+          "ghcr.io/${REPO}:orca-${ORCA_VERSION}" \
           run "${CONFIG}" \
           --until "${UNTIL}" \
           --output "/project/${OUTPUT_DIR}" \
