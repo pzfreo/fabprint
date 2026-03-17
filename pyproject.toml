@@ -1,6 +1,6 @@
 [project]
 name = "fabprint"
-version = "0.1.55"
+version = "0.1.56"
 description = "Headless 3D print pipeline: arrange, orient, slice, and send to printer from a TOML config"
 readme = "README.md"
 requires-python = ">=3.11"
