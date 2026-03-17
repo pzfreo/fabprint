@@ -111,7 +111,6 @@ def _get_devices(token: str) -> list[dict]:
     return resp.json().get("devices", [])
 
 
-
 def _show_devices(token: str) -> None:
     """Print bound printers."""
     print("\n  Printers:")

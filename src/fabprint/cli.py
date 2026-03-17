@@ -388,7 +388,6 @@ def _cmd_validate(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-
 def _cmd_status(args: argparse.Namespace) -> None:
     from fabprint.credentials import list_printers, load_printer_credentials
 
