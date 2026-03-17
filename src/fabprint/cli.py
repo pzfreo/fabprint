@@ -20,6 +20,14 @@ log = logging.getLogger(__name__)
 
 def _build_driver(verbose: bool = False):
     """Build a Hamilton driver wired to the fabprint pipeline."""
+    import os
+
+    # Disable Hamilton telemetry before first import
+    os.environ["HAMILTON_TELEMETRY_ENABLED"] = "false"
+
+    # Silence all Hamilton loggers (pandera warnings, tracebacks, extension messages)
+    logging.getLogger("hamilton").setLevel(logging.WARNING)
+
     from hamilton import driver
 
     from fabprint import adapters, pipeline
