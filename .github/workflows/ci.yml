@@ -15,6 +15,7 @@ jobs:
       - run: uv sync --extra dev
       - run: uv run ruff check src tests
       - run: uv run ruff format --check src tests
+      - run: uv run mypy src/fabprint
 
   test:
     runs-on: ${{ matrix.os }}

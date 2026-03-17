@@ -325,7 +325,7 @@ def _render_plate_thumbnail(width: int, height: int, plate_3mf: Path) -> bytes:
     from PIL import Image, ImageDraw
 
     scene = trimesh.load(str(plate_3mf), force="scene")
-    meshes = list(scene.geometry.values())
+    meshes = list(scene.geometry.values())  # type: ignore[attr-defined]
     if not meshes:
         raise ValueError("No geometry in plate 3MF")
 

@@ -184,8 +184,8 @@ def pin_profiles(
 
         # Always re-flatten to pick up any slicer updates
         data = resolve_profile_data(name, engine, category)
-        with open(dest, "w") as f:
-            json.dump(data, f, indent=4)
+        with open(dest, "w") as fh:
+            json.dump(data, fh, indent=4)
         log.info("Pinned %s → %s (flattened)", name, dest)
         pinned.append(dest)
 

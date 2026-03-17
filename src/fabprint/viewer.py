@@ -74,7 +74,7 @@ def _try_trimesh(
 
     # Add ghost plate
     plate = _make_plate_outline(plate_size)
-    plate.visual.face_colors = [200, 200, 200, 80]
+    plate.visual.face_colors = [200, 200, 200, 80]  # type: ignore[union-attr]
     scene.add_geometry(plate, node_name="build_plate")
 
     for i, mesh in enumerate(meshes):

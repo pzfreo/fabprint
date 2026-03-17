@@ -205,8 +205,10 @@ def load_config(path: Path) -> FabprintConfig:
     if has_int_filaments and not has_string_filaments and not slicer.slots:
         # All integers, no slots map — backward compatible, no resolution needed
         for i, raw_fil in enumerate(raw_filaments):
+            assert isinstance(raw_fil, int)
             parts[i].filament = raw_fil
             for obj_name, obj_fil in raw_obj_filaments[i].items():
+                assert isinstance(obj_fil, int)
                 parts[i].object_filaments[obj_name] = obj_fil
     else:
         if not slicer.filaments:

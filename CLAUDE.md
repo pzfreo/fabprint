@@ -4,9 +4,10 @@
 Before pushing any PR branch, always run locally:
 1. `uv run ruff check src tests` — lint must pass with zero errors
 2. `uv run ruff format --check src tests` — formatting must pass (run `uv run ruff format src tests` to auto-fix)
-3. `uv run pytest` — all tests must pass
+3. `uv run mypy src/fabprint` — type check must pass with zero errors
+4. `uv run pytest` — all tests must pass
 
-Do NOT push a PR until all three checks pass locally.
+Do NOT push a PR until all four checks pass locally.
 
 ## Post-PR Checklist (MANDATORY)
 After pushing a PR or merging to main:

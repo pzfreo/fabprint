@@ -191,7 +191,7 @@ def get_lan_status(ip: str, access_code: str, serial: str) -> dict:
         printer.connect()
         # Give MQTT a moment to receive the first status push
         time.sleep(3)
-        status = printer.get_device_status() or {}
+        status = printer.get_device_status() or {}  # type: ignore[attr-defined]
         return status
     finally:
         printer.disconnect()
@@ -396,17 +396,20 @@ def send_print(
         )
 
     if ptype == "bambu-lan":
-        for field in ("ip", "access_code", "serial"):
-            if not creds[field]:
+        ip = creds.get("ip") or ""
+        access_code = creds.get("access_code") or ""
+        serial = creds.get("serial") or ""
+        for field_name, field_val in [("ip", ip), ("access_code", access_code), ("serial", serial)]:
+            if not field_val:
                 raise FabprintError(
-                    f"bambu-lan printer '{config.name}' requires {field}. "
+                    f"bambu-lan printer '{config.name}' requires {field_name}. "
                     "Run 'fabprint setup' to configure it."
                 )
         _send_lan(
             gcode_path,
-            ip=creds["ip"],
-            access_code=creds["access_code"],
-            serial=creds["serial"],
+            ip=ip,
+            access_code=access_code,
+            serial=serial,
             dry_run=dry_run,
             upload_only=upload_only,
         )
