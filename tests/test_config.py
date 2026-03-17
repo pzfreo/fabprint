@@ -291,7 +291,6 @@ def test_printer_config(tmp_path):
         tmp_path,
         """
 [printer]
-mode = "lan"
 name = "workshop"
 
 [[parts]]
@@ -301,35 +300,16 @@ file = "cube.stl"
     )
     cfg = load_config(path)
     assert cfg.printer is not None
-    assert cfg.printer.mode == "lan"
     assert cfg.printer.name == "workshop"
 
 
-def test_printer_config_cloud(tmp_path):
-    path = _write_toml(
-        tmp_path,
-        """
-[printer]
-mode = "cloud"
-
-[[parts]]
-file = "cube.stl"
-""",
-        create_files=["cube.stl"],
-    )
-    cfg = load_config(path)
-    assert cfg.printer is not None
-    assert cfg.printer.mode == "cloud"
-    assert cfg.printer.name is None
-
-
 def test_printer_rejects_secrets_in_project_toml(tmp_path):
-    for field in ("ip", "access_code", "serial"):
+    for field in ("ip", "access_code", "serial", "mode"):
         path = _write_toml(
             tmp_path,
             f"""
 [printer]
-mode = "lan"
+name = "workshop"
 {field} = "secret_value"
 
 [[parts]]
@@ -337,7 +317,7 @@ file = "cube.stl"
 """,
             create_files=["cube.stl"],
         )
-        with pytest.raises(FabprintError, match=f"printer.{field}.*credentials.toml"):
+        with pytest.raises(FabprintError, match=f"printer.{field}"):
             load_config(path)
 
 
@@ -354,19 +334,18 @@ file = "cube.stl"
     assert cfg.printer is None
 
 
-def test_printer_bad_mode(tmp_path):
+def test_printer_requires_name(tmp_path):
     path = _write_toml(
         tmp_path,
         """
 [printer]
-mode = "usb"
 
 [[parts]]
 file = "cube.stl"
 """,
         create_files=["cube.stl"],
     )
-    with pytest.raises(FabprintError, match="printer.mode"):
+    with pytest.raises(FabprintError, match="printer.name is required"):
         load_config(path)
 
 

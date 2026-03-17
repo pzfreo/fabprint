@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -243,6 +242,13 @@ def main(argv: list[str] | None = None) -> None:
         help="Path to config file (default: ./fabprint.toml)",
     )
 
+    # --- setup subcommand ---
+    sub.add_parser(
+        "setup",
+        parents=[common],
+        help="Set up a printer (credentials, cloud login, connection type)",
+    )
+
     # --- login subcommand ---
     login_cmd = sub.add_parser(
         "login", parents=[common], help="Login to Bambu Cloud and cache token"
@@ -252,15 +258,21 @@ def main(argv: list[str] | None = None) -> None:
 
     # --- status subcommand ---
     status_cmd = sub.add_parser(
-        "status", parents=[common], help="Query printer status (all or by serial)"
+        "status", parents=[common], help="Query printer status (all configured or by name)"
     )
     status_cmd.add_argument(
-        "--serial", type=str, default=None, help="Printer serial (default: all printers)"
+        "--printer", type=str, default=None, help="Printer name from credentials.toml"
+    )
+    status_cmd.add_argument(
+        "--serial", type=str, default=None, help="Bambu printer serial (cloud only, legacy)"
     )
 
     # --- watch subcommand ---
     watch_cmd = sub.add_parser(
-        "watch", parents=[common], help="Live dashboard for all printers (no config needed)"
+        "watch", parents=[common], help="Live dashboard for all configured printers"
+    )
+    watch_cmd.add_argument(
+        "--printer", type=str, default=None, help="Printer name from credentials.toml"
     )
     watch_cmd.add_argument(
         "--interval", type=int, default=10, help="Refresh interval in seconds (default: 10)"
@@ -286,6 +298,8 @@ def main(argv: list[str] | None = None) -> None:
             _cmd_init(args)
         elif args.command == "validate":
             _cmd_validate(args)
+        elif args.command == "setup":
+            _cmd_setup(args)
         elif args.command == "login":
             _cmd_login(args)
         elif args.command == "status":
@@ -352,6 +366,12 @@ def _cmd_init(args: argparse.Namespace) -> None:
         run_wizard(output=args.output)
 
 
+def _cmd_setup(args: argparse.Namespace) -> None:
+    from fabprint.credentials import setup_printer
+
+    setup_printer()
+
+
 def _cmd_validate(args: argparse.Namespace) -> None:
     from fabprint.init import validate_config
 
@@ -369,15 +389,6 @@ def _cmd_validate(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _get_token_file() -> Path:
-    """Return the Bambu Cloud token file path, raising if it doesn't exist."""
-    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
-    token_file = Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
-    if not token_file.exists():
-        raise FabprintError(f"Token file not found: {token_file}\nRun 'fabprint login' first.")
-    return token_file
-
-
 def _cmd_login(args: argparse.Namespace) -> None:
     from fabprint.auth import cloud_login
 
@@ -385,28 +396,74 @@ def _cmd_login(args: argparse.Namespace) -> None:
 
 
 def _cmd_status(args: argparse.Namespace) -> None:
-    from fabprint.cloud import cloud_list_devices, cloud_status
+    from fabprint.credentials import list_printers, load_printer_credentials
 
-    token_file = _get_token_file()
+    printers = _resolve_status_printers(args, list_printers, load_printer_credentials)
 
-    if args.serial:
-        serials = [(args.serial, args.serial)]
-    else:
-        devices = cloud_list_devices(token_file)
-        if not devices:
-            print("No printers found.")
-            return
-        serials = [(d["dev_id"], d.get("name", d["dev_id"])) for d in devices]
-
-    for serial, name in serials:
-        print(f"\033[1m{name}\033[0m  ({serial})")
+    for name, creds in printers:
+        ptype = creds.get("type", "unknown")
+        print(f"\033[1m{name}\033[0m  ({ptype})")
         try:
-            status = cloud_status(serial, token_file)
-            for line in _render_printer(status, name, serial):
+            status = _query_printer_status(name, creds)
+            for line in _render_printer(status, name, creds.get("serial", "")):
                 print(line)
         except Exception as e:
             print(f"  \033[31merror: {e}\033[0m")
         print()
+
+
+def _resolve_status_printers(args, list_printers_fn, load_creds_fn):
+    """Build list of (name, creds) tuples for status/watch commands."""
+    # --printer flag: single named printer
+    if getattr(args, "printer", None):
+        creds = load_creds_fn(args.printer)
+        return [(args.printer, creds)]
+
+    # --serial flag (legacy cloud-only): query by serial directly
+    if getattr(args, "serial", None):
+        return [(args.serial, {"type": "bambu-cloud", "serial": args.serial})]
+
+    # Default: all configured printers
+    all_printers = list_printers_fn()
+    if not all_printers:
+        raise FabprintError("No printers configured.\nRun 'fabprint setup' to add a printer.")
+    return [(name, {**creds}) for name, creds in all_printers.items()]
+
+
+def _query_printer_status(name: str, creds: dict) -> dict:
+    """Query a single printer's status, dispatching by type."""
+    ptype = creds.get("type")
+
+    if ptype == "bambu-cloud":
+        from fabprint.cloud import cloud_status
+        from fabprint.credentials import cloud_token_json
+
+        serial = creds.get("serial")
+        if not serial:
+            raise ValueError(f"Printer '{name}' has no serial")
+        with cloud_token_json() as token_file:
+            return cloud_status(serial, token_file)
+
+    elif ptype == "bambu-lan":
+        from fabprint.printer import get_lan_status
+
+        ip = creds.get("ip")
+        access_code = creds.get("access_code")
+        serial = creds.get("serial")
+        if not all([ip, access_code, serial]):
+            raise ValueError(f"bambu-lan printer '{name}' requires ip, access_code, serial")
+        return get_lan_status(ip, access_code, serial)
+
+    elif ptype == "moonraker":
+        from fabprint.printer import get_moonraker_status
+
+        url = creds.get("url")
+        if not url:
+            raise ValueError(f"moonraker printer '{name}' requires url")
+        return get_moonraker_status(url, creds.get("api_key"))
+
+    else:
+        raise ValueError(f"Unknown printer type '{ptype}' for '{name}'")
 
 
 def _render_printer(status: dict, name: str, serial: str) -> list[str]:
@@ -500,52 +557,62 @@ def _render_printer(status: dict, name: str, serial: str) -> list[str]:
 
 
 def _cmd_watch(args: argparse.Namespace) -> None:
-    """Live dashboard showing all bound printers."""
+    """Live dashboard showing all configured printers."""
     import time
 
-    from fabprint.cloud import PersistentBridge, cloud_list_devices
+    from fabprint.credentials import list_printers, load_printer_credentials
 
-    token_file = _get_token_file()
     interval = args.interval
 
-    print("Discovering printers...")
-    devices = cloud_list_devices(token_file)
-    if not devices:
-        print("No printers found.")
-        return
+    printers = _resolve_status_printers(args, list_printers, load_printer_credentials)
+    print(f"Watching {len(printers)} printer(s): {', '.join(n for n, _ in printers)}")
 
-    printer_names = {d["dev_id"]: d.get("name", d["dev_id"]) for d in devices}
-    serials = [d["dev_id"] for d in devices]
-    print(f"Found {len(serials)} printer(s): {', '.join(printer_names.values())}")
+    # For cloud printers, keep a persistent bridge container to avoid Docker overhead
+    cloud_printers = [(n, c) for n, c in printers if c.get("type") == "bambu-cloud"]
+    bridge_ctx = None
+    if cloud_printers:
+        from fabprint.cloud import PersistentBridge
+        from fabprint.credentials import cloud_token_json
 
-    with PersistentBridge(token_file) as bridge:
-        try:
-            while True:
-                t0 = time.monotonic()
-                output_lines = []
+        token_ctx = cloud_token_json()
+        token_file = token_ctx.__enter__()
+        bridge_ctx = PersistentBridge(token_file)
+        bridge_ctx.__enter__()
 
-                for serial in serials:
-                    name = printer_names[serial]
-                    output_lines.append(f"\033[1m{name}\033[0m  ({serial})")
-                    try:
-                        status = bridge.status(serial)
-                        output_lines.extend(_render_printer(status, name, serial))
-                    except Exception as e:
-                        output_lines.append(f"  \033[31merror: {e}\033[0m")
-                    output_lines.append("")
+    try:
+        while True:
+            t0 = time.monotonic()
+            output_lines = []
 
-                elapsed = time.monotonic() - t0
-                now = time.strftime("%H:%M:%S")
-                header = f"fabprint watch  {now}  (polled in {elapsed:.1f}s, Ctrl-C to quit)"
+            for name, creds in printers:
+                ptype = creds.get("type", "unknown")
+                output_lines.append(f"\033[1m{name}\033[0m  ({ptype})")
+                try:
+                    if ptype == "bambu-cloud" and bridge_ctx is not None:
+                        status = bridge_ctx.status(creds["serial"])
+                    else:
+                        status = _query_printer_status(name, creds)
+                    output_lines.extend(_render_printer(status, name, creds.get("serial", "")))
+                except Exception as e:
+                    output_lines.append(f"  \033[31merror: {e}\033[0m")
+                output_lines.append("")
 
-                sys.stdout.write("\033[2J\033[H")
-                sys.stdout.write(header + "\n\n" + "\n".join(output_lines))
-                sys.stdout.flush()
+            elapsed = time.monotonic() - t0
+            now = time.strftime("%H:%M:%S")
+            header = f"fabprint watch  {now}  (polled in {elapsed:.1f}s, Ctrl-C to quit)"
 
-                sleep_time = max(1, interval - elapsed)
-                time.sleep(sleep_time)
-        except KeyboardInterrupt:
-            print("\n")
+            sys.stdout.write("\033[2J\033[H")
+            sys.stdout.write(header + "\n\n" + "\n".join(output_lines))
+            sys.stdout.flush()
+
+            sleep_time = max(1, interval - elapsed)
+            time.sleep(sleep_time)
+    except KeyboardInterrupt:
+        print("\n")
+    finally:
+        if bridge_ctx is not None:
+            bridge_ctx.__exit__(None, None, None)
+            token_ctx.__exit__(None, None, None)
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:

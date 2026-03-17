@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Standalone test for Bambu Lab cloud printing via MQTT.
 
+DEPRECATED: Use `fabprint run` with a bambu-cloud printer instead.
+Credentials are now stored in ~/.config/fabprint/credentials.toml.
+
+This legacy script is kept for standalone MQTT testing without fabprint installed.
+It reads from ~/.bambu_cloud_token (old location, written by bambu_cloud_login.py).
+
 Zero third-party dependencies beyond paho-mqtt and requests.
 Tests the full cloud print lifecycle:
   1. Login (email/password → access token + user ID)
@@ -10,10 +16,6 @@ Tests the full cloud print lifecycle:
   5. Pause print
   6. Resume print
   7. Stop print
-
-Login flow:
-    First login requires an email verification code (sent to your inbox).
-    The token is cached in ~/.bambu_cloud_token for subsequent runs.
 
 Usage:
     export BAMBU_EMAIL="your@email.com"

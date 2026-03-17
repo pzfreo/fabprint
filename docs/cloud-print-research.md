@@ -708,9 +708,9 @@ Response: {"accessToken": "eyJ..."}
 
 ### Token Caching
 
-- Cached at `~/.bambu_cloud_token` with permissions `0o600`
-- Format: `{"token": "eyJ...", "email": "user@email.com"}`
-- Cache reuse: email must match to avoid using wrong account's token
+- Stored in `~/.config/fabprint/credentials.toml` `[cloud]` section (via `fabprint login` or `fabprint setup`)
+- Legacy location: `~/.bambu_cloud_token` (used by standalone test scripts only)
+- Format in credentials.toml: `token`, `refresh_token`, `email`, `uid` fields
 - Validation: attempt `GET /my/preference` with cached token; fall back to fresh login on failure
 
 ### User ID Resolution

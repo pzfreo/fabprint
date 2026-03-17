@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Login to Bambu Cloud and cache the access token.
 
-Run this once before using test_cloud_print.py. Handles:
+DEPRECATED: Use `fabprint login` or `fabprint setup` (bambu-cloud type) instead.
+Credentials are now stored in ~/.config/fabprint/credentials.toml.
+
+This legacy script is kept for standalone testing without fabprint installed.
+It writes to ~/.bambu_cloud_token (old location) for use by test_cloud_print.py.
+
+Handles:
   - Password login (if the account allows it)
   - Email verification code login (most accounts)
   - Two-factor authentication (if enabled)
-
-The token is saved to ~/.bambu_cloud_token and reused by test_cloud_print.py.
-Tokens are valid for ~3 months.
 
 Usage:
     export BAMBU_EMAIL="your@email.com"

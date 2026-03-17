@@ -1,6 +1,6 @@
 # CLI reference
 
-fabprint provides commands for creating configs (`init`, `validate`), running the pipeline (`run`), and managing printers (`login`, `status`, `watch`, `profiles`).
+fabprint provides commands for creating configs (`init`, `validate`), setting up printers (`setup`, `login`), running the pipeline (`run`), and managing printers (`status`, `watch`, `profiles`).
 
 ## `fabprint init`
 
@@ -52,6 +52,53 @@ Checks for:
 ```bash
 fabprint validate                  # check ./fabprint.toml
 fabprint validate myproject.toml   # check a specific file
+```
+
+## `fabprint setup`
+
+Interactively set up a printer in `~/.config/fabprint/credentials.toml`.
+
+```
+fabprint setup
+```
+
+Walks through:
+1. **Printer name** — used to reference this printer in `fabprint.toml` (e.g. `name = "workshop"`)
+2. **Printer type** — `bambu-lan` (direct LAN), `bambu-cloud` (cloud bridge), or `moonraker` (Klipper)
+3. **Type-specific fields** — IP/access code/serial for Bambu LAN, serial for Bambu Cloud, URL for Moonraker
+4. **Cloud login** — for `bambu-cloud` type, optionally logs in to Bambu Cloud
+
+The credentials file is created with `600` permissions (owner read/write only). If the file already exists, new printers are added alongside existing ones.
+
+### Supported printer types
+
+| Type          | Required fields              | Description                          |
+|---------------|------------------------------|--------------------------------------|
+| `bambu-lan`   | ip, access_code, serial      | Direct LAN connection to Bambu Lab   |
+| `bambu-cloud` | serial                       | Cloud bridge (requires cloud login)  |
+| `moonraker`   | url (+ optional api_key)     | Klipper/Moonraker REST API           |
+
+### Example session
+
+```
+$ fabprint setup
+Printer name (e.g. 'workshop'): workshop
+
+Printer types:
+  [1] bambu-lan — Bambu Lab printer via LAN (direct connection)
+  [2] bambu-cloud — Bambu Lab printer via cloud (requires cloud login)
+  [3] moonraker — Klipper/Moonraker printer via REST API
+Choose type [1]: 1
+
+Setting up 'workshop' (bambu-lan)
+  ip: 192.168.1.100
+  access_code: 12345678
+  serial: 01P00A451601106
+
+Wrote ~/.config/fabprint/credentials.toml (mode 600)
+Reference this printer in fabprint.toml with:
+  [printer]
+  name = "workshop"
 ```
 
 ## `fabprint run`

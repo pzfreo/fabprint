@@ -56,8 +56,8 @@ orient = "flat"                # flat, upright, or side
 
 # Printer connection (optional — requires credentials.toml):
 # [printer]
-# mode = "bambu-lan"            # bambu-lan, bambu-connect, or cloud-bridge
 # name = "my-printer"           # references [printers.my-printer] in credentials.toml
+#                                # Run 'fabprint setup' to configure printers
 """
 
 
@@ -128,13 +128,14 @@ def validate_config(path: Path) -> list[str]:
                 )
 
     # Check printer credentials reference
-    if cfg.printer and cfg.printer.name:
+    if cfg.printer:
         from fabprint.credentials import _credentials_path
 
         cred_path = _credentials_path()
         if not cred_path.exists():
             warnings.append(
-                f"printer.name = '{cfg.printer.name}' but credentials file not found: {cred_path}"
+                f"printer.name = '{cfg.printer.name}' but credentials file not found: {cred_path}. "
+                "Run 'fabprint setup' to configure."
             )
         else:
             import tomllib
@@ -385,15 +386,11 @@ def run_wizard(output: Path | None = None) -> str:
     print()
 
     # --- Step 10: Printer connection ---
-    printer_section = None
+    printer_name = None
     if "print" in stages and _prompt_yn("Configure printer connection?", default=False):
-        print("  Modes: bambu-lan, bambu-connect, cloud-bridge")
-        mode = _prompt_str("  Printer mode", "bambu-lan")
-        name = _prompt_str("  Printer name (from credentials.toml)", "")
-        if name:
-            printer_section = {"mode": mode, "name": name}
-        else:
-            printer_section = {"mode": mode}
+        printer_name = _prompt_str("  Printer name (from 'fabprint setup')", "")
+        if not printer_name:
+            printer_name = None
         print()
 
     # --- Build TOML ---
@@ -406,7 +403,7 @@ def run_wizard(output: Path | None = None) -> str:
         plate_size=(plate_x, plate_y),
         slicer_version=slicer_version or None,
         stages=stages,
-        printer_section=printer_section,
+        printer_name=printer_name,
     )
 
     # --- Preview and confirm ---
@@ -439,7 +436,7 @@ def _build_toml(
     plate_size: tuple[int, int],
     slicer_version: str | None,
     stages: list[str],
-    printer_section: dict | None,
+    printer_name: str | None,
 ) -> str:
     """Build a TOML string from wizard answers."""
     lines: list[str] = []
@@ -483,11 +480,9 @@ def _build_toml(
         lines.append("")
 
     # Printer
-    if printer_section:
+    if printer_name:
         lines.append("[printer]")
-        lines.append(f'mode = "{printer_section["mode"]}"')
-        if printer_section.get("name"):
-            lines.append(f'name = "{printer_section["name"]}"')
+        lines.append(f'name = "{printer_name}"')
         lines.append("")
 
     return "\n".join(lines)

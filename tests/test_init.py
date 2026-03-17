@@ -132,7 +132,6 @@ version = "2.3.1"
 file = "{_posix(FIXTURES / "cube_10mm.stl")}"
 
 [printer]
-mode = "bambu-lan"
 name = "nonexistent-printer"
 """)
         # Patch credentials path to a non-existent file
@@ -209,7 +208,7 @@ class TestBuildToml:
             plate_size=(256, 256),
             slicer_version="2.3.1",
             stages=["load", "arrange", "plate", "slice"],
-            printer_section=None,
+            printer_name=None,
         )
         assert "[slicer]" in toml
         assert 'engine = "orca"' in toml
@@ -217,7 +216,7 @@ class TestBuildToml:
         assert "[[parts]]" in toml
         assert 'file = "cube.stl"' in toml
 
-    def test_with_printer_section(self):
+    def test_with_printer_name(self):
         toml = _build_toml(
             engine="orca",
             printer_profile=None,
@@ -227,10 +226,9 @@ class TestBuildToml:
             plate_size=(200, 200),
             slicer_version=None,
             stages=["load", "arrange", "plate"],
-            printer_section={"mode": "bambu-lan", "name": "my-printer"},
+            printer_name="my-printer",
         )
         assert "[printer]" in toml
-        assert 'mode = "bambu-lan"' in toml
         assert 'name = "my-printer"' in toml
 
     def test_multiple_copies_shown(self):
@@ -243,7 +241,7 @@ class TestBuildToml:
             plate_size=(256, 256),
             slicer_version=None,
             stages=["load", "arrange", "plate"],
-            printer_section=None,
+            printer_name=None,
         )
         assert "copies = 3" in toml
 
@@ -257,7 +255,7 @@ class TestBuildToml:
             plate_size=(256, 256),
             slicer_version=None,
             stages=["load", "arrange", "plate"],
-            printer_section=None,
+            printer_name=None,
         )
         assert 'orient = "upright"' in toml
 
@@ -272,7 +270,7 @@ class TestBuildToml:
             plate_size=(256, 256),
             slicer_version=None,
             stages=["load", "arrange", "plate"],
-            printer_section=None,
+            printer_name=None,
         )
         assert "copies" not in toml
         assert "orient" not in toml

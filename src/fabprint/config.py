@@ -43,8 +43,7 @@ class PartConfig:
 
 @dataclass
 class PrinterConfig:
-    mode: str = "bambu-lan"  # "bambu-lan", "bambu-connect", "bambu-cloud", or legacy "lan"/"cloud"
-    name: str | None = None  # references a printer in ~/.config/fabprint/credentials.toml
+    name: str  # references a printer in ~/.config/fabprint/credentials.toml
 
 
 DEFAULT_STAGES = ["load", "arrange", "plate", "slice", "print"]
@@ -295,30 +294,18 @@ def load_config(path: Path) -> FabprintConfig:
     # Printer config (optional)
     printer = None
     printer_raw = raw.get("printer")
-    if printer_raw:
+    if printer_raw is not None:
         # Reject secrets in project TOML — they belong in credentials.toml
-        for secret_field in ("ip", "access_code", "serial"):
+        for secret_field in ("ip", "access_code", "serial", "mode"):
             if secret_field in printer_raw:
                 raise FabprintError(
                     f"printer.{secret_field} should not be in project config. "
-                    f"Move it to ~/.config/fabprint/credentials.toml"
+                    f"Use 'fabprint setup' to configure printers in credentials.toml."
                 )
-        mode = printer_raw.get("mode", "bambu-lan")
-        valid_modes = (
-            "bambu-lan",
-            "bambu-connect",
-            "bambu-cloud",
-            "cloud-bridge",
-            "cloud-http",
-            "lan",
-            "cloud",
-        )
-        if mode not in valid_modes:
-            raise FabprintError(f"printer.mode must be one of {valid_modes}, got '{mode}'")
-        printer = PrinterConfig(
-            mode=mode,
-            name=printer_raw.get("name"),
-        )
+        name = printer_raw.get("name")
+        if not name:
+            raise FabprintError("printer.name is required — it references credentials.toml")
+        printer = PrinterConfig(name=name)
 
     return FabprintConfig(
         plate=plate,
