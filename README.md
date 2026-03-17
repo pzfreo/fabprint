@@ -88,14 +88,7 @@ Or with [uv](https://docs.astral.sh/uv/):
 uv pip install fabprint
 ```
 
-### Optional extras
-
-```bash
-pip install "fabprint[lan]"    # LAN printing via MQTT/FTP
-pip install "fabprint[cloud]"  # Bambu Cloud API (experimental)
-pip install "fabprint[step]"   # STEP file support (build123d)
-pip install "fabprint[all]"    # Everything
-```
+Includes LAN printing, cloud API, and STEP file support out of the box.
 
 ## CLI overview
 
