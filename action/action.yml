@@ -1,0 +1,139 @@
+name: "Fabprint Slice"
+description: "Slice 3D models with OrcaSlicer and post build metrics to your PR"
+branding:
+  icon: "box"
+  color: "blue"
+
+inputs:
+  config:
+    description: "Path to fabprint.toml (relative to repo root)"
+    required: false
+    default: "fabprint.toml"
+  orca-version:
+    description: "OrcaSlicer version to use"
+    required: false
+    default: "2.3.1"
+  until:
+    description: "Run pipeline up to this stage (default: slice)"
+    required: false
+    default: "slice"
+  comment:
+    description: "Post a PR comment with build metrics (true/false)"
+    required: false
+    default: "true"
+
+outputs:
+  print-time:
+    description: "Estimated print time (human-readable)"
+  filament-grams:
+    description: "Total filament usage in grams"
+  gcode-path:
+    description: "Path to sliced gcode output directory"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build fabprint image
+      shell: bash
+      run: |
+        IMAGE="fabprint:orca-${{ inputs.orca-version }}"
+        if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+          echo "::group::Building fabprint Docker image"
+          docker build \
+            --build-arg ORCA_VERSION=${{ inputs.orca-version }} \
+            -t "$IMAGE" \
+            "${{ github.action_path }}/.."
+          echo "::endgroup::"
+        fi
+
+    - name: Run fabprint pipeline
+      shell: bash
+      run: |
+        docker run --rm \
+          -v "${{ github.workspace }}:/project" \
+          "fabprint:orca-${{ inputs.orca-version }}" \
+          run "${{ inputs.config }}" \
+          --until "${{ inputs.until }}" \
+          -v \
+          2>&1 | tee /tmp/fabprint-output.log
+
+    - name: Extract build metrics
+      id: metrics
+      shell: bash
+      run: |
+        # Find gcode files and extract stats
+        OUTPUT_DIR="${{ github.workspace }}/output"
+        GCODE=$(find "$OUTPUT_DIR" -name '*.gcode' -type f 2>/dev/null | head -1)
+
+        if [ -z "$GCODE" ]; then
+          # Try inside .gcode.3mf
+          MF=$(find "$OUTPUT_DIR" -name '*.gcode.3mf' -type f 2>/dev/null | head -1)
+          if [ -n "$MF" ]; then
+            echo "gcode-3mf=$MF" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+
+        # Parse metrics from fabprint log output
+        PRINT_TIME=$(grep -oP 'estimated \K.+' /tmp/fabprint-output.log 2>/dev/null || true)
+        FILAMENT=$(grep -oP '[\d.]+(?=g filament)' /tmp/fabprint-output.log 2>/dev/null || true)
+
+        echo "print-time=${PRINT_TIME}" >> "$GITHUB_OUTPUT"
+        echo "filament-grams=${FILAMENT}" >> "$GITHUB_OUTPUT"
+        echo "gcode-path=${OUTPUT_DIR}" >> "$GITHUB_OUTPUT"
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: fabprint-output
+        path: |
+          output/*.gcode
+          output/*.3mf
+          output/*.png
+        if-no-files-found: warn
+
+    - name: Post PR comment
+      if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const printTime = '${{ steps.metrics.outputs.print-time }}' || 'unknown';
+          const filament = '${{ steps.metrics.outputs.filament-grams }}' || 'unknown';
+          const marker = '<!-- fabprint-slice-result -->';
+
+          const body = [
+            marker,
+            '### Fabprint Slice Results',
+            '',
+            '| Metric | Value |',
+            '|--------|-------|',
+            `| Print time | ${printTime} |`,
+            `| Filament | ${filament}g |`,
+            '',
+            `Sliced with OrcaSlicer ${{ inputs.orca-version }}`,
+            '',
+            '> Download the sliced output from the **fabprint-output** artifact above.',
+          ].join('\n');
+
+          // Find existing comment to update
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          const existing = comments.find(c => c.body.includes(marker));
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+          }
