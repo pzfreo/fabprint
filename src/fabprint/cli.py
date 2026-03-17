@@ -25,8 +25,8 @@ def _build_driver(verbose: bool = False):
     # Disable Hamilton telemetry before first import
     os.environ["HAMILTON_TELEMETRY_ENABLED"] = "false"
 
-    # Silence all Hamilton loggers (pandera warnings, tracebacks, extension messages)
-    logging.getLogger("hamilton").setLevel(logging.WARNING)
+    # Silence all Hamilton loggers (pandera warnings, tracebacks, error boxes)
+    logging.getLogger("hamilton").setLevel(logging.CRITICAL + 1)
 
     from hamilton import driver
 
