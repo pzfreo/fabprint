@@ -109,7 +109,7 @@ Default refresh interval is 10 seconds.
 Manage slicer profiles.
 
 ```
-fabprint profiles list [--engine orca|bambu] [--category machine|process|filament]
+fabprint profiles list [--category machine|process|filament]
 fabprint profiles pin [config]
 ```
 

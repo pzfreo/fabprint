@@ -16,19 +16,16 @@ def _system_dirs() -> dict[str, Path]:
     """Return slicer system profile directories for the current platform."""
     if sys.platform == "darwin":
         return {
-            "bambu": Path.home() / "Library/Application Support/BambuStudio/system/BBL",
             "orca": Path.home() / "Library/Application Support/OrcaSlicer/system/BBL",
         }
     elif sys.platform == "win32":
         appdata = Path.home() / "AppData/Roaming"
         return {
-            "bambu": appdata / "BambuStudio/system/BBL",
             "orca": appdata / "OrcaSlicer/system/BBL",
         }
     else:  # Linux and other Unix
         config = Path.home() / ".config"
         return {
-            "bambu": config / "BambuStudio/system/BBL",
             "orca": config / "OrcaSlicer/system/BBL",
         }
 

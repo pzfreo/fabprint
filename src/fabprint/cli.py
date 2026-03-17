@@ -193,7 +193,7 @@ def main(argv: list[str] | None = None) -> None:
     list_cmd.add_argument(
         "--engine",
         default="orca",
-        choices=["orca", "bambu"],
+        choices=["orca"],
         help="Slicer engine (default: orca)",
     )
     list_cmd.add_argument(
@@ -207,6 +207,35 @@ def main(argv: list[str] | None = None) -> None:
         "pin", help="Pin profiles from config into local profiles/ dir"
     )
     pin_cmd.add_argument(
+        "config",
+        nargs="?",
+        type=Path,
+        default=_CONFIG_DEFAULT,
+        help="Path to config file (default: ./fabprint.toml)",
+    )
+
+    # --- init subcommand ---
+    init_cmd = sub.add_parser(
+        "init", parents=[common], help="Create a new fabprint.toml config file"
+    )
+    init_cmd.add_argument(
+        "--template",
+        action="store_true",
+        help="Dump a commented template to stdout (no wizard)",
+    )
+    init_cmd.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=None,
+        help="Output file path (default: ./fabprint.toml)",
+    )
+
+    # --- validate subcommand ---
+    validate_cmd = sub.add_parser(
+        "validate", parents=[common], help="Check a fabprint.toml for issues"
+    )
+    validate_cmd.add_argument(
         "config",
         nargs="?",
         type=Path,
@@ -253,6 +282,10 @@ def main(argv: list[str] | None = None) -> None:
 
         if args.command == "run":
             _cmd_run(args)
+        elif args.command == "init":
+            _cmd_init(args)
+        elif args.command == "validate":
+            _cmd_validate(args)
         elif args.command == "login":
             _cmd_login(args)
         elif args.command == "status":
@@ -303,6 +336,32 @@ def _cmd_run(args: argparse.Namespace) -> None:
 
     result = dr.execute(outputs, inputs=inputs, overrides=overrides)
     _display_results(result)
+
+
+# ---------------------------------------------------------------------------
+# init / validate commands
+# ---------------------------------------------------------------------------
+
+
+def _cmd_init(args: argparse.Namespace) -> None:
+    from fabprint.init import dump_template, run_wizard
+
+    if args.template:
+        print(dump_template(), end="")
+    else:
+        run_wizard(output=args.output)
+
+
+def _cmd_validate(args: argparse.Namespace) -> None:
+    from fabprint.init import validate_config
+
+    warnings = validate_config(args.config)
+    if warnings:
+        for w in warnings:
+            print(f"  warning: {w}")
+        print(f"\n{len(warnings)} warning(s) found.")
+    else:
+        print("Config OK — no issues found.")
 
 
 # ---------------------------------------------------------------------------
