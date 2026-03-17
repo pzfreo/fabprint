@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from fabprint.config import DEFAULT_STAGES, VALID_ORIENTS
@@ -185,27 +186,40 @@ def _closest_match(name: str, candidates: list[str]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _plate_size_from_machine(profile_name: str, engine: str) -> tuple[int, int] | None:
-    """Extract build plate dimensions from a machine profile's printable_area."""
+@dataclass
+class _MachineInfo:
+    """Information extracted from a machine profile."""
+
+    plate_size: tuple[int, int] | None = None
+    multi_material: bool = False
+
+
+def _read_machine_info(profile_name: str, engine: str) -> _MachineInfo:
+    """Extract build plate size and AMS/multi-material capability from a machine profile."""
+    info = _MachineInfo()
     try:
         from fabprint.profiles import resolve_profile_data
 
         data = resolve_profile_data(profile_name, engine, "machine")
+
+        # Plate size from printable_area polygon (e.g. ["0x0", "256x0", "256x256", "0x256"])
         area = data.get("printable_area")
-        if not area or not isinstance(area, list):
-            return None
-        # printable_area is a polygon like ["0x0", "256x0", "256x256", "0x256"]
-        max_x = max_y = 0
-        for pt in area:
-            parts = str(pt).split("x")
-            if len(parts) == 2:
-                max_x = max(max_x, int(float(parts[0])))
-                max_y = max(max_y, int(float(parts[1])))
-        if max_x > 0 and max_y > 0:
-            return (max_x, max_y)
+        if area and isinstance(area, list):
+            max_x = max_y = 0
+            for pt in area:
+                parts = str(pt).split("x")
+                if len(parts) == 2:
+                    max_x = max(max_x, int(float(parts[0])))
+                    max_y = max(max_y, int(float(parts[1])))
+            if max_x > 0 and max_y > 0:
+                info.plate_size = (max_x, max_y)
+
+        # AMS / multi-material support
+        if data.get("single_extruder_multi_material"):
+            info.multi_material = True
     except Exception:
         pass
-    return None
+    return info
 
 
 def _detect_orca_version() -> str | None:
@@ -336,11 +350,13 @@ def run_wizard(output: Path | None = None) -> str:
 
     # --- Step 3: Pick printer profile ---
     printer_profile = None
+    machine_info = _MachineInfo()
     machines = sorted(profiles.get("machine", {}).keys())
     if machines:
         print("Printer profiles:")
         chosen = _prompt_choice("Pick a printer profile: ", machines)
         printer_profile = machines[chosen[0]]
+        machine_info = _read_machine_info(printer_profile, engine)
         print()
     else:
         printer_profile = _prompt_str("Printer profile name (e.g. 'Bambu Lab P1S 0.4 nozzle')")
@@ -362,13 +378,23 @@ def run_wizard(output: Path | None = None) -> str:
     filament_names: list[str] = []
     filament_options = sorted(profiles.get("filament", {}).keys())
     if filament_options:
-        print("Filament profiles:")
-        while True:
-            chosen = _prompt_choice("Pick filament(s): ", filament_options, allow_multi=True)
-            filament_names.extend(filament_options[i] for i in chosen)
-            print(f"  Selected: {', '.join(filament_names)}")
-            if not _prompt_yn("Add another filament?", default=False):
-                break
+        if machine_info.multi_material:
+            print("Printer supports multi-material (AMS). Pick a filament for each slot.")
+            slot = 1
+            while True:
+                print(f"Slot {slot} filament:")
+                chosen = _prompt_choice(f"  Pick filament for slot {slot}: ", filament_options)
+                filament_names.append(filament_options[chosen[0]])
+                print(f"  Slot {slot}: {filament_names[-1]}")
+                if slot >= 4:
+                    break
+                if not _prompt_yn(f"Add slot {slot + 1}?", default=slot < 2):
+                    break
+                slot += 1
+        else:
+            print("Filament profile:")
+            chosen = _prompt_choice("Pick a filament: ", filament_options)
+            filament_names.append(filament_options[chosen[0]])
         print()
     else:
         fil = _prompt_str("Filament profile name", "Generic PLA @base")
@@ -418,11 +444,9 @@ def run_wizard(output: Path | None = None) -> str:
 
     # --- Step 7: Plate size (default from printer profile if available) ---
     default_plate = (256, 256)
-    if printer_profile:
-        detected = _plate_size_from_machine(printer_profile, engine)
-        if detected:
-            default_plate = detected
-            print(f"Detected plate size from printer profile: {detected[0]}x{detected[1]}mm")
+    if machine_info.plate_size:
+        default_plate = machine_info.plate_size
+        print(f"Detected plate size from printer profile: {default_plate[0]}x{default_plate[1]}mm")
     plate_x = _prompt_int("Plate width (mm)?", default_plate[0])
     plate_y = _prompt_int("Plate depth (mm)?", default_plate[1])
     print()
