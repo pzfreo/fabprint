@@ -50,6 +50,14 @@ class PrinterConfig:
     serial: str | None = None
 
 
+DEFAULT_STAGES = ["load", "arrange", "plate", "slice", "print"]
+
+
+@dataclass
+class PipelineConfig:
+    stages: list[str] = field(default_factory=lambda: list(DEFAULT_STAGES))
+
+
 @dataclass
 class FabprintConfig:
     plate: PlateConfig
@@ -57,6 +65,7 @@ class FabprintConfig:
     parts: list[PartConfig]
     base_dir: Path  # directory containing the toml file
     printer: PrinterConfig | None = None
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
 
 def load_config(path: Path) -> FabprintConfig:
@@ -270,6 +279,22 @@ def load_config(path: Path) -> FabprintConfig:
                     )
                 parts[i].object_filaments[obj_name] = obj_fil
 
+    # Pipeline config (optional)
+    from fabprint.pipeline import STAGE_OUTPUTS
+
+    pipeline_raw = raw.get("pipeline", {})
+    pipeline_stages = pipeline_raw.get("stages", list(DEFAULT_STAGES))
+    if not isinstance(pipeline_stages, list):
+        raise ValueError("pipeline.stages must be a list of stage names")
+    for s in pipeline_stages:
+        if not isinstance(s, str) or not s.strip():
+            raise ValueError(f"pipeline.stages: each stage must be a non-empty string, got {s!r}")
+        if s not in STAGE_OUTPUTS:
+            raise ValueError(
+                f"pipeline.stages: unknown stage '{s}'. Valid stages: {sorted(STAGE_OUTPUTS)}"
+            )
+    pipeline = PipelineConfig(stages=pipeline_stages)
+
     # Printer config (optional)
     printer = None
     printer_raw = raw.get("printer")
@@ -299,5 +324,10 @@ def load_config(path: Path) -> FabprintConfig:
         )
 
     return FabprintConfig(
-        plate=plate, slicer=slicer, parts=parts, base_dir=base_dir, printer=printer
+        plate=plate,
+        slicer=slicer,
+        parts=parts,
+        base_dir=base_dir,
+        printer=printer,
+        pipeline=pipeline,
     )

@@ -81,26 +81,26 @@ orient = "upright"
     return toml
 
 
-def test_plate_subcommand(tmp_path):
+def test_run_until_plate(tmp_path):
     config = _write_config(tmp_path)
-    output = tmp_path / "out.3mf"
-    main(["plate", str(config), "-o", str(output)])
-    assert output.exists()
-    assert output.stat().st_size > 0
+    output_dir = tmp_path / "output"
+    main(["run", str(config), "-o", str(output_dir), "--until", "plate"])
+    assert (output_dir / "plate.3mf").exists()
+    assert (output_dir / "plate.3mf").stat().st_size > 0
 
 
-def test_plate_default_output(tmp_path, monkeypatch):
+def test_run_default_output(tmp_path, monkeypatch):
     config = _write_config(tmp_path)
     monkeypatch.chdir(tmp_path)
-    main(["plate", str(config)])
-    assert (tmp_path / "plate.3mf").exists()
+    main(["run", str(config), "--until", "plate"])
+    assert (tmp_path / "output" / "plate.3mf").exists()
 
 
-def test_plate_verbose(tmp_path):
+def test_run_verbose(tmp_path):
     config = _write_config(tmp_path)
-    output = tmp_path / "out.3mf"
-    main(["plate", str(config), "-o", str(output), "-v"])
-    assert output.exists()
+    output_dir = tmp_path / "output"
+    main(["run", str(config), "-o", str(output_dir), "--until", "plate", "-v"])
+    assert (output_dir / "plate.3mf").exists()
 
 
 def test_no_subcommand():
@@ -109,54 +109,81 @@ def test_no_subcommand():
     assert exc_info.value.code == 1
 
 
-def test_missing_config_no_traceback(tmp_path, monkeypatch, capsys):
-    """Missing config should print a clean error, not a traceback."""
-    monkeypatch.chdir(tmp_path)  # no fabprint.toml here
+def test_run_until_and_only_conflict(tmp_path, capsys):
+    config = _write_config(tmp_path)
     with pytest.raises(SystemExit) as exc_info:
-        main(["plate"])
+        main(["run", str(config), "--until", "plate", "--only", "slice"])
     assert exc_info.value.code == 1
-    captured = capsys.readouterr()
-    assert "error:" in captured.err
-    assert "fabprint.toml" in captured.err
-    assert "Traceback" not in captured.err
+    assert "Cannot use both" in capsys.readouterr().err
 
 
-def test_invalid_config_no_traceback(tmp_path, monkeypatch, capsys):
-    """Invalid config should print a clean error, not a traceback."""
+def test_run_only_plate(tmp_path):
+    """--only plate should work without any pre-existing artifacts."""
+    config = _write_config(tmp_path)
+    output_dir = tmp_path / "output"
+    main(["run", str(config), "-o", str(output_dir), "--only", "plate"])
+    assert (output_dir / "plate.3mf").exists()
+
+
+def test_run_only_slice_fails_without_plate(tmp_path, capsys):
+    """--only slice should fail when plate.3mf doesn't exist."""
+    config = _write_config(tmp_path)
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    with pytest.raises(SystemExit) as exc_info:
+        main(["run", str(config), "-o", str(output_dir), "--only", "slice"])
+    assert exc_info.value.code == 1
+    assert "plate 3MF file" in capsys.readouterr().err
+
+
+def test_run_custom_stages(tmp_path):
+    """Config with custom pipeline stages should be respected."""
     toml = tmp_path / "fabprint.toml"
-    toml.write_text("[plate]\nsize = [256, 256]\n")  # missing [[parts]]
-    monkeypatch.chdir(tmp_path)
+    toml.write_text(f"""
+[plate]
+size = [256, 256]
+padding = 5.0
+
+[slicer]
+engine = "orca"
+
+[pipeline]
+stages = ["load", "arrange", "plate"]
+
+[[parts]]
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
+""")
+    output_dir = tmp_path / "output"
+    # Running all stages (only up to plate since that's all that's configured)
+    main(["run", str(toml), "-o", str(output_dir)])
+    assert (output_dir / "plate.3mf").exists()
+
+
+def test_run_invalid_stage_in_config(tmp_path):
+    """Unknown stage in config should raise at parse time."""
+    toml = tmp_path / "fabprint.toml"
+    toml.write_text(f"""
+[plate]
+size = [256, 256]
+
+[slicer]
+engine = "orca"
+
+[pipeline]
+stages = ["load", "arrange", "foobar"]
+
+[[parts]]
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
+""")
     with pytest.raises(SystemExit) as exc_info:
-        main(["plate"])
+        main(["run", str(toml)])
     assert exc_info.value.code == 1
-    captured = capsys.readouterr()
-    assert "error:" in captured.err
-    assert "Traceback" not in captured.err
-
-
-def test_explicit_config_path(tmp_path):
-    """Explicit config path should still work."""
-    config = _write_config(tmp_path)
-    output = tmp_path / "out.3mf"
-    main(["plate", str(config), "-o", str(output)])
-    assert output.exists()
-
-
-def test_auto_discover_config(tmp_path, monkeypatch):
-    """Running without config arg should find ./fabprint.toml."""
-    config = _write_config(tmp_path)
-    # Rename to fabprint.toml (the convention)
-    config.rename(tmp_path / "fabprint.toml")
-    monkeypatch.chdir(tmp_path)
-    main(["plate", "-o", str(tmp_path / "out.3mf")])
-    assert (tmp_path / "out.3mf").exists()
 
 
 def test_profiles_list(capsys):
     """Profiles list should run and produce output."""
     main(["profiles", "list", "--engine", "orca", "--category", "machine"])
     captured = capsys.readouterr()
-    # Should print category header even if no profiles are installed
     assert "machine" in captured.out.lower()
 
 
@@ -183,13 +210,7 @@ file = "{_posix(FIXTURES / "cube_10mm.stl")}"
 
 
 def _docker_work_dir(suffix: str = "") -> Path:
-    """Return a work directory suitable for Docker volume mounts.
-
-    On macOS, pytest's tmp_path resolves to /private/var/... which Docker
-    for Mac cannot mount by default. Use ~/.cache instead.
-    On Linux, tmp_path works fine, but we use ~/.cache uniformly for
-    consistency across platforms.
-    """
+    """Return a work directory suitable for Docker volume mounts."""
     work_dir = Path.home() / ".cache" / f"fabprint-test{suffix}"
     work_dir.mkdir(parents=True, exist_ok=True)
     return work_dir
@@ -234,10 +255,12 @@ def test_slice_docker(monkeypatch):
     try:
         main(
             [
-                "slice",
+                "run",
                 str(config),
                 "-o",
                 str(output_dir),
+                "--until",
+                "slice",
             ]
         )
         gcode_files = list(output_dir.glob("*.gcode"))
@@ -261,10 +284,12 @@ def test_slice_docker_filament_override(monkeypatch):
     try:
         main(
             [
-                "slice",
+                "run",
                 str(config),
                 "-o",
                 str(output_dir),
+                "--until",
+                "slice",
                 "--filament-type",
                 "Generic PLA @base",
                 "--filament-slot",
@@ -288,10 +313,12 @@ def test_slice_docker_version_mismatch(monkeypatch):
         with pytest.raises(SystemExit) as exc_info:
             main(
                 [
-                    "slice",
+                    "run",
                     str(config),
                     "-o",
                     str(work_dir / "output"),
+                    "--until",
+                    "slice",
                 ]
             )
         assert exc_info.value.code == 1
