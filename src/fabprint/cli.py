@@ -115,7 +115,13 @@ def main(argv: list[str] | None = None) -> None:
     run_cmd = sub.add_parser(
         "run", parents=[common], help="Run the pipeline defined in fabprint.toml"
     )
-    run_cmd.add_argument("config", type=Path, help="Path to fabprint.toml")
+    run_cmd.add_argument(
+        "config",
+        nargs="?",
+        type=Path,
+        default=_CONFIG_DEFAULT,
+        help="Path to config file (default: ./fabprint.toml)",
+    )
     run_cmd.add_argument("-o", "--output-dir", type=Path, default=None, help="Output directory")
     run_cmd.add_argument(
         "--until",

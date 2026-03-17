@@ -458,33 +458,23 @@ wheels = [
 
 [[package]]
 name = "fabprint"
-version = "0.1.39"
+version = "0.1.40"
 source = { editable = "." }
 dependencies = [
+    { name = "bambu-lab-cloud-api" },
+    { name = "bambulabs-api" },
     { name = "defusedxml" },
     { name = "rectpack" },
+    { name = "requests" },
     { name = "sf-hamilton" },
     { name = "trimesh", extra = ["easy"] },
 ]
 
 [package.optional-dependencies]
-all = [
-    { name = "bambu-lab-cloud-api" },
-    { name = "bambulabs-api" },
-    { name = "build123d" },
-    { name = "requests" },
-]
-cloud = [
-    { name = "bambu-lab-cloud-api" },
-    { name = "requests" },
-]
 dev = [
     { name = "packaging" },
     { name = "pytest" },
     { name = "ruff" },
-]
-lan = [
-    { name = "bambulabs-api" },
 ]
 step = [
     { name = "build123d" },
@@ -492,20 +482,19 @@ step = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bambu-lab-cloud-api", marker = "extra == 'cloud'" },
-    { name = "bambulabs-api", marker = "extra == 'lan'", specifier = ">=2.6.0" },
+    { name = "bambu-lab-cloud-api" },
+    { name = "bambulabs-api", specifier = ">=2.6.0" },
     { name = "build123d", marker = "extra == 'step'", specifier = ">=0.10.0" },
     { name = "defusedxml", specifier = ">=0.7.0" },
-    { name = "fabprint", extras = ["step", "lan", "cloud"], marker = "extra == 'all'" },
     { name = "packaging", marker = "extra == 'dev'", specifier = ">=23.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "rectpack", specifier = ">=0.2.0" },
-    { name = "requests", marker = "extra == 'cloud'", specifier = ">=2.28" },
+    { name = "requests", specifier = ">=2.28" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "sf-hamilton", specifier = ">=1.82.0" },
     { name = "trimesh", extras = ["easy"], specifier = ">=4.0.0" },
 ]
-provides-extras = ["step", "lan", "cloud", "all", "dev"]
+provides-extras = ["step", "dev"]
 
 [[package]]
 name = "flask"
@@ -971,7 +960,7 @@ name = "manifold3d"
 version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "python_full_version < '3.14'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/81/9b/bad1005d27feec334705488ff4400898a46c4ae7bd75fbd141eea62caf95/manifold3d-3.3.2.tar.gz", hash = "sha256:2e947ab95f40785aa5586b0ee6ad6c4948f6912c44455a8e0520da679905bcdb", size = 268441, upload-time = "2025-11-15T09:10:16.075Z" }
 wheels = [

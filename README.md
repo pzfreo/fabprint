@@ -5,38 +5,56 @@
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-**Immutable 3D print pipeline**: arrange parts on a build plate, slice to gcode, and send to a Bambu Lab printer — all defined in a single TOML config file.
+**Reproducible 3D print pipeline**: define parts, slicer settings, and printer targets in a TOML file — arrange, slice, and print from the command line.
 
 ![fabprint pipeline](docs/images/pipeline.png)
 
 ## Why fabprint?
 
-Code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org) and [cadquery](https://github.com/cadquery/cadquery) let you define physical parts in code — making designs parametric, testable, and version-controlled. But the moment you need to print, that workflow breaks: open a slicer GUI, drag in files, fiddle with settings, hit print. Hard to reproduce, no diffs, the only thing to track are binary project files.
+Code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org) and [cadquery](https://github.com/cadquery/cadquery) let you define parts in code — parametric, testable, version-controlled. But the moment you print, that breaks: open a slicer GUI, drag in files, fiddle with settings. No diffs, no reproducibility.
 
-fabprint is aiming to close that gap. Define your objects, filaments, slicer setting and printer targets in a straightforward TOML file. Use a CLI or CI pipeline to arrange, slice and send to the printer. Pin filament and printer profiles to capture the exact settings. Slicing happens in Docker for platform-agnostic reproducible builds. Everything is text, everything goes in git, and the same config produces the same print every time.
+fabprint closes the gap:
+
+- **Everything is text** — TOML config, git-friendly, diffable
+- **Pinned profiles** — lock exact slicer, filament, and process profiles in your repo
+- **Slicer overrides** — tweak support, bed type, wall count without touching profile files
+- **Versioned Docker slicing** — pin OrcaSlicer version for identical gcode across machines
+- **One command** — `fabprint run` goes from STL files to a running print
 
 ## Quick start
 
-### 1. Install
-
 ```bash
-pip install fabprint
+pip install fabprint                # STL + 3MF support, LAN + cloud printing
+pip install "fabprint[step]"        # add STEP file support (build123d)
 ```
 
-### 2. Create `fabprint.toml`
+Create `fabprint.toml` (see [full config reference](docs/config.md)):
 
 ```toml
+[pipeline]
+stages = ["load", "arrange", "plate", "slice", "print"]
+
+[printer]
+mode = "cloud-bridge"
+name = "workshop"       # references ~/.config/fabprint/credentials.toml
+
 [plate]
 size = [256, 256]       # build plate dimensions in mm
 padding = 5.0
 
 [slicer]
 engine = "orca"
+version = "2.3.1"       # pin OrcaSlicer version for reproducibility
 printer = "Bambu Lab P1S 0.4 nozzle"
 process = "0.20mm Standard @BBL X1C"
 
+[slicer.overrides]
+enable_support = 1
+curr_bed_type = "Textured PEI Plate"
+
 [[parts]]
 file = "frame.stl"
+rotate = [180, 0, 0]    # flip so mounting plate faces down
 filament = "Generic PETG-CF @base"
 
 [[parts]]
@@ -46,140 +64,51 @@ orient = "upright"
 filament = "Generic PETG-CF @base"
 ```
 
-Parts reference filament profiles by name — no need to manually number AMS slots.
-
-### 3. Arrange, slice, print
+Run it (see [full CLI reference](docs/cli.md)):
 
 ```bash
-fabprint run fabprint.toml --until plate     # arrange parts onto a build plate
-fabprint run fabprint.toml --until slice     # arrange and slice to gcode
-fabprint run fabprint.toml                   # arrange, slice and send to printer
-fabprint run fabprint.toml --dry-run         # full pipeline without sending to printer
+fabprint run                   # arrange, slice and send to printer
+fabprint run --until plate     # stop after plating
+fabprint run --until slice     # stop after slicing
+fabprint run --dry-run         # full pipeline without sending to printer
 ```
 
-The plate stage also generates a `plate_preview.3mf` with a bed outline — open it in any 3MF viewer to review placement:
+The plate stage generates a `plate_preview.3mf` — open it in any 3MF viewer to check placement:
 
 ![plate preview](docs/images/plate_preview.png)
 
-## Features
+## Reproducibility
 
-- **Multi-format input** — STL, 3MF, and STEP files
-- **Automatic orientation** — flat, upright, side, or custom rotations
-- **Bin packing** — efficient 2D arrangement with configurable padding
-- **Part scaling** — uniform scale factor per part
-- **Multi-filament** — AMS slot assignment per part with correct extruder mapping
-- **Slicer integration** — OrcaSlicer support
-- **Profile management** — discover, pin, and override slicer profiles
-- **Print delivery** — LAN, Bambu Connect, or cloud API
-- **Docker support** — pre-built images with OrcaSlicer for reproducible CI/CD slicing
-- **Cross-platform** — macOS, Linux, and Windows
-
-## Installation
-
-Requires Python 3.11+.
+Pin profiles into your repo so builds are identical across machines:
 
 ```bash
-pip install fabprint
+fabprint profiles pin          # copies slicer profiles into ./profiles/
+git add profiles/              # commit to lock them
 ```
 
-Or with [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv pip install fabprint
-```
-
-### Optional extras
-
-```bash
-pip install "fabprint[lan]"    # LAN printing via MQTT/FTP
-pip install "fabprint[cloud]"  # Bambu Cloud API (experimental)
-pip install "fabprint[step]"   # STEP file support (build123d)
-pip install "fabprint[all]"    # Everything
-```
+Combined with `version = "2.3.1"` in `[slicer]` (which pins the Docker image), the same config always produces the same gcode.
 
 ## CLI overview
 
-fabprint uses a single `run` command with `--until` and `--only` flags to control how far the pipeline runs:
-
 ```bash
-fabprint run fabprint.toml                    # full pipeline (arrange → slice → print)
-fabprint run fabprint.toml --until plate      # stop after plating
-fabprint run fabprint.toml --only slice       # run just the slice stage
-fabprint run fabprint.toml --dry-run          # everything except sending to printer
-fabprint login                                # log in to Bambu Cloud
-fabprint watch                                # live dashboard for all printers
-fabprint status                               # query printer status
-fabprint profiles list                        # list available slicer profiles
-fabprint profiles pin fabprint.toml           # pin profiles for reproducible builds
+fabprint run                         # full pipeline
+fabprint run --until plate           # stop after plating
+fabprint run --only slice            # run just one stage
+fabprint run --dry-run               # everything except sending to printer
+fabprint login                       # log in to Bambu Cloud
+fabprint watch                       # live printer dashboard
+fabprint status                      # query printer status
+fabprint profiles list               # list available slicer profiles
+fabprint profiles pin                # pin profiles for reproducible builds
 ```
 
 ![fabprint watch](docs/images/watch.png)
 
-See [docs/cli.md](docs/cli.md) for the full CLI reference with all flags and options.
+## Documentation
 
-See [docs/config.md](docs/config.md) for the complete TOML configuration reference.
-
-## Docker
-
-Pre-built images with OrcaSlicer are available on [Docker Hub](https://hub.docker.com/r/fabprint/fabprint):
-
-```bash
-docker pull fabprint/fabprint:orca-2.3.1
-```
-
-By default, fabprint uses Docker if available, falling back to a local slicer install:
-
-```bash
-fabprint run fabprint.toml --until slice                    # Docker first, local fallback
-fabprint run fabprint.toml --until slice --local            # Force local slicer
-fabprint run fabprint.toml --until slice --docker-version 2.3.1  # Pin Docker image version
-```
-
-For fully reproducible builds, pin both profiles and the OrcaSlicer version in your config:
-
-```toml
-[slicer]
-engine = "orca"
-version = "2.3.1"
-```
-
-To build your own image:
-
-```bash
-./scripts/build-docker.sh 2.3.2          # build only
-./scripts/build-docker.sh 2.3.2 --push   # build and push
-```
-
-## Platform support
-
-fabprint auto-detects slicer paths per platform:
-
-| Platform | BambuStudio | OrcaSlicer |
-|----------|-------------|------------|
-| macOS    | `/Applications/BambuStudio.app/...` | `/Applications/OrcaSlicer.app/...` |
-| Linux    | `/usr/bin/bambu-studio` | `/usr/bin/orca-slicer` |
-| Windows  | `C:\Program Files\BambuStudio\...` | `C:\Program Files\OrcaSlicer\...` |
-
-Slicers on PATH are also detected (Flatpak, Snap, custom installs). Profile directories follow platform conventions (`~/Library/Application Support/` on macOS, `~/.config/` on Linux, `%APPDATA%` on Windows).
-
-## How it works
-
-1. **Arrange** — loads meshes, orients them, and bin-packs onto the build plate
-2. **Export** — writes a 3MF with per-object extruder metadata for correct AMS slot mapping
-3. **Slice** — calls OrcaSlicer CLI to produce a Bambu Connect-compatible `.gcode.3mf`
-4. **Post-process** — patches the sliced 3MF to fix metadata issues Bambu Connect requires (see [docs/gcode-3mf-format.md](docs/gcode-3mf-format.md))
-5. **Send** — delivers to the printer via LAN, Bambu Connect, or cloud API
-
-## Contributing
-
-```bash
-git clone https://github.com/pzfreo/fabprint.git
-cd fabprint
-uv sync --extra dev
-uv run pytest              # run tests
-uv run ruff check src tests     # lint
-uv run ruff format src tests    # format
-```
+- [CLI reference](docs/cli.md) — all commands, flags, and pipeline stages
+- [Config reference](docs/config.md) — complete TOML format
+- [Developing](docs/developing.md) — setup, testing, architecture
 
 ## License
 
