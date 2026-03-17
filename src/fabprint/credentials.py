@@ -171,7 +171,12 @@ def cloud_token_json():
         "uid": cloud.get("uid", ""),
     }
 
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="bambu_token_", delete=False)
+    # Use ~/.cache so Docker Desktop on macOS can mount the file (/var/folders is not shared)
+    cache_dir = Path.home() / ".cache" / "fabprint"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", prefix="bambu_token_", dir=cache_dir, delete=False
+    )
     try:
         json.dump(bridge_data, tmp)
         tmp.close()
