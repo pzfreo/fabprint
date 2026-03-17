@@ -11,7 +11,7 @@
 - Printer configs drift across machines
 - There's no easy way to version or diff a print job
 
-**fabprint makes 3D printing reproducible.** Define your models, slicer settings, and printer config once in a TOML file, then arrange, slice, and print from the command line — identically on any machine. It works with any STL or 3MF file, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
+**fabprint makes 3D printing reproducible.** Define your models, slicer settings, and printer config once in a TOML file, then arrange, slice, and print from the command line — identically on any machine. It works with STL, STEP, and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
 
 ```toml
 # fabprint.toml
