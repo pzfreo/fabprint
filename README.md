@@ -1,3 +1,5 @@
+![fabprint pipeline](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/pipeline.png)
+
 # fabprint
 
 [![PyPI version](https://img.shields.io/pypi/v/fabprint)](https://pypi.org/project/fabprint/)
@@ -30,8 +32,6 @@ name = "workshop"
 ```bash
 fabprint run        # arrange → slice → print, one command
 ```
-
-![fabprint pipeline](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/pipeline.png)
 
 ## How it works
 
