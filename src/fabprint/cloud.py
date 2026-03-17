@@ -247,7 +247,13 @@ class PersistentBridge:
             self._container_id = None
 
     def status(self, device_id: str, *, timeout: int = 60) -> dict:
-        """Query printer status via the running container."""
+        """Query printer status via the running container.
+
+        The bridge binary outputs JSON but may not exit afterwards, so we
+        read the first line of stdout and kill the process.
+        """
+        import selectors
+
         cmd = [
             "docker",
             "exec",
@@ -257,16 +263,23 @@ class PersistentBridge:
             device_id,
             "/input/token.json",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
-            data = json.loads(result.stdout.strip())
+            sel = selectors.DefaultSelector()
+            sel.register(proc.stdout, selectors.EVENT_READ)
+            ready = sel.select(timeout=timeout)
+            sel.close()
+            if not ready:
+                raise RuntimeError(f"Status query timed out for printer {device_id}")
+            line = proc.stdout.readline()
+        finally:
+            proc.kill()
+            proc.wait()
+        try:
+            data = json.loads(line.strip())
             return data.get("print", data)
         except json.JSONDecodeError:
-            if result.returncode == 2:
-                raise RuntimeError(f"No status received from printer {device_id}")
-            raise RuntimeError(
-                f"Bridge returned non-JSON (exit {result.returncode}): {result.stdout[:200]}"
-            )
+            raise RuntimeError(f"Bridge returned non-JSON (exit {proc.returncode}): {line[:200]}")
 
 
 def cloud_print(
