@@ -45,9 +45,6 @@ class PartConfig:
 class PrinterConfig:
     mode: str = "bambu-lan"  # "bambu-lan", "bambu-connect", "bambu-cloud", or legacy "lan"/"cloud"
     name: str | None = None  # references a printer in ~/.config/fabprint/credentials.toml
-    ip: str | None = None
-    access_code: str | None = None
-    serial: str | None = None
 
 
 DEFAULT_STAGES = ["load", "arrange", "plate", "slice", "print"]
