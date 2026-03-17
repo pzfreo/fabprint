@@ -222,6 +222,16 @@ def _read_machine_info(profile_name: str, engine: str) -> _MachineInfo:
     return info
 
 
+def _list_configured_printers() -> dict[str, dict]:
+    """Return configured printers from credentials.toml, or empty dict."""
+    try:
+        from fabprint.credentials import list_printers
+
+        return list_printers() or {}
+    except Exception:
+        return {}
+
+
 def _detect_orca_version() -> str | None:
     """Try to detect the installed OrcaSlicer version."""
     try:
@@ -469,10 +479,22 @@ def run_wizard(output: Path | None = None) -> str:
 
     # --- Step 10: Printer connection ---
     printer_name = None
-    if "print" in stages and _prompt_yn("Configure printer connection?", default=False):
-        printer_name = _prompt_str("  Printer name (from 'fabprint setup')", "")
-        if not printer_name:
-            printer_name = None
+    if "print" in stages:
+        configured = _list_configured_printers()
+        if configured:
+            names = list(configured.keys())
+            print("Configured printers:")
+            for i, (n, creds) in enumerate(configured.items(), 1):
+                ptype = creds.get("type", "unknown")
+                print(f"  [{i}] {n} ({ptype})")
+            print(f"  [{len(names) + 1}] Skip")
+            chosen = _prompt_choice("Pick a printer: ", [*names, "Skip (configure later)"])
+            pick = names[chosen[0]] if chosen[0] < len(names) else None
+            printer_name = pick
+        elif _prompt_yn("Configure printer connection?", default=False):
+            printer_name = _prompt_str("  Printer name (from 'fabprint setup')", "")
+            if not printer_name:
+                printer_name = None
         print()
 
     # --- Build TOML ---
