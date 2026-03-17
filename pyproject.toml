@@ -34,7 +34,7 @@ Issues = "https://github.com/pzfreo/fabprint/issues"
 
 [project.optional-dependencies]
 step = ["build123d>=0.10.0"]
-dev = ["pytest>=8.0.0", "ruff>=0.4.0", "packaging>=23.0"]
+dev = ["pytest>=8.0.0", "ruff>=0.4.0", "packaging>=23.0", "mypy>=1.10.0"]
 
 [project.scripts]
 fabprint = "fabprint.cli:main"
@@ -49,6 +49,13 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_configs = true
+check_untyped_defs = true
+disable_error_code = ["import-untyped"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -16,6 +16,11 @@ Two approaches:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import Any
+
 import base64
 import hashlib
 import io
@@ -202,6 +207,7 @@ def _run_bridge(
         )
         return result
     else:
+        assert bridge is not None  # guaranteed by use_docker check above
         cmd = [bridge] + args
 
     if verbose:
@@ -262,6 +268,7 @@ class PersistentBridge:
 
     def status(self, device_id: str, *, timeout: int = BRIDGE_STATUS_TIMEOUT) -> dict:
         """Query printer status via the running container."""
+        assert self._container_id is not None
         cmd = [
             "docker",
             "exec",
@@ -631,7 +638,7 @@ def _build_ams_mapping(
     Returns a dict with all AMS-related task body fields, matching BambuConnect's format.
     Uses the total filament slot count from project_settings.config (not just plate filaments).
     """
-    result = {
+    result: dict[str, list] = {
         "amsDetailMapping": [],
         "amsMapping": [],
         "amsMapping2": [],
@@ -653,7 +660,7 @@ def _build_ams_mapping(
             filament_by_id = {}
             if "Metadata/slice_info.config" in z.namelist():
                 root = ET.fromstring(z.read("Metadata/slice_info.config"))
-                plate_el = None
+                plate_el: ET.Element | None = None
                 for plate in root.findall("plate"):
                     idx_meta = plate.find("metadata[@key='index']")
                     if idx_meta is not None and idx_meta.get("value") == str(plate_index):
@@ -695,11 +702,11 @@ def _build_ams_mapping(
     setting_ids = []
     for slot_idx in range(total_slots):
         filament_id = slot_idx + 1
-        f = filament_by_id.get(filament_id)
-        if f is not None:
-            source_color = f.get("color", "#000000").lstrip("#").upper() + "FF"
-            fil_type = f.get("type", "")
-            tray_idx = f.get("tray_info_idx", "")
+        fil_el = filament_by_id.get(filament_id)
+        if fil_el is not None:
+            source_color = fil_el.get("color", "#000000").lstrip("#").upper() + "FF"
+            fil_type = fil_el.get("type", "")
+            tray_idx = fil_el.get("tray_info_idx", "")
             phys_slot = phys_by_id[slot_idx]  # 0-based physical slot
             # targetColor = actual AMS color; falls back to sourceColor if unknown
             actual_tray = tray_by_phys.get(phys_slot)
@@ -821,7 +828,7 @@ def _build_ams_mapping_from_state(
 
 
 def _poll_task_status(
-    session: requests.Session,  # noqa: F821
+    session: Any,  # requests.Session — imported inside cloud_print_http()
     task_id: int,
     device_id: str = "",
     *,

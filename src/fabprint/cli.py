@@ -447,9 +447,9 @@ def _query_printer_status(name: str, creds: dict) -> dict:
     elif ptype == "bambu-lan":
         from fabprint.printer import get_lan_status
 
-        ip = creds.get("ip")
-        access_code = creds.get("access_code")
-        serial = creds.get("serial")
+        ip = creds.get("ip") or ""
+        access_code = creds.get("access_code") or ""
+        serial = creds.get("serial") or ""
         if not all([ip, access_code, serial]):
             raise ValueError(f"bambu-lan printer '{name}' requires ip, access_code, serial")
         return get_lan_status(ip, access_code, serial)
