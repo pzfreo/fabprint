@@ -1,6 +1,7 @@
 """Tests for fabprint credentials and setup command."""
 
 import json
+import sys
 import tomllib
 
 import pytest
@@ -25,7 +26,8 @@ class TestSetupPrinter:
         setup_printer()
 
         assert cred_path.exists()
-        assert cred_path.stat().st_mode & 0o777 == 0o600
+        if sys.platform != "win32":
+            assert cred_path.stat().st_mode & 0o777 == 0o600
         with open(cred_path, "rb") as f:
             data = tomllib.load(f)
         assert data["printers"]["workshop"]["type"] == "bambu-lan"
