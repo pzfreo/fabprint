@@ -60,6 +60,7 @@ runs:
       run: |
         docker run --rm \
           -v "${WORKSPACE}:/project" \
+          --workdir /project \
           "ghcr.io/${REPO}:orca-${ORCA_VERSION}" \
           run "${CONFIG}" \
           --until "${UNTIL}" \
@@ -88,7 +89,7 @@ runs:
 
         # Parse metrics from fabprint log output
         PRINT_TIME=$(grep -oP 'estimated \K.+' /tmp/fabprint-output.log 2>/dev/null || true)
-        FILAMENT=$(grep -oP '[\d.]+(?=g filament)' /tmp/fabprint-output.log 2>/dev/null || true)
+        FILAMENT=$(grep -oP '[0-9.]+(?=g filament)' /tmp/fabprint-output.log 2>/dev/null || true)
 
         echo "print-time=${PRINT_TIME}" >> "$GITHUB_OUTPUT"
         echo "filament-grams=${FILAMENT}" >> "$GITHUB_OUTPUT"
@@ -107,7 +108,7 @@ runs:
         if-no-files-found: warn
 
     - name: Post PR comment
-      if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
       uses: actions/github-script@v7
       env:
         PRINT_TIME: ${{ steps.metrics.outputs.print-time }}
