@@ -16,14 +16,34 @@
 **fabprint makes 3D printing reproducible.** Define your models, slicer settings, and printer config once in a TOML file, then arrange, slice, and print from the command line — identically on any machine. It works with STL, STEP, and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
 
 ```toml
-# fabprint.toml
+# fabprint.toml — a multi-part print with slicer overrides
+
 [[parts]]
-file = "benchy.stl"
+file = "enclosure_base.step"
+orient = "flat"
+filament = 1                    # AMS slot 1: PETG-CF
+
+[[parts]]
+file = "enclosure_lid.step"
+orient = "upright"
+filament = 1
+
+[[parts]]
+file = "button_cap.stl"
+copies = 4
+filament = 2                    # AMS slot 2: PLA
 
 [slicer]
 engine = "orca"
+version = "2.3.1"               # pinned for reproducibility
 printer = "Bambu Lab P1S 0.4 nozzle"
 process = "0.20mm Standard @BBL X1C"
+filaments = ["Generic PETG-CF @base", "Generic PLA @base"]
+
+[slicer.overrides]
+sparse_infill_density = "25%"
+enable_support = 1
+brim_type = "auto_brim"
 
 [printer]
 name = "workshop"
@@ -93,11 +113,14 @@ printer = "Bambu Lab P1S 0.4 nozzle"
 process = "0.20mm Standard @BBL X1C"
 
 [slicer.overrides]
+sparse_infill_density = "30%"       # stronger infill
+wall_loops = 3                       # extra wall strength
 enable_support = 1
+brim_type = "auto_brim"             # help adhesion
 curr_bed_type = "Textured PEI Plate"
 
 [[parts]]
-file = "frame.stl"
+file = "frame.step"
 rotate = [180, 0, 0]    # flip so mounting plate faces down
 filament = "Generic PETG-CF @base"
 
@@ -167,7 +190,6 @@ fabprint run                         # full pipeline
 fabprint run --until plate           # stop after plating
 fabprint run --only slice            # run just one stage
 fabprint run --dry-run               # everything except sending to printer
-fabprint login                       # log in to Bambu Cloud
 fabprint watch                       # live printer dashboard
 fabprint status                      # query printer status
 fabprint profiles list               # list available slicer profiles
