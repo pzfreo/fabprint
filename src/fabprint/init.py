@@ -412,21 +412,13 @@ def run_wizard(output: Path | None = None) -> str:
         else:
             print("  Continuing without printer setup.\n")
 
-    # --- Query AMS trays from configured printer ---
-    ams_trays: list[dict] = []
+    # --- Query AMS trays in background while we ask other questions ---
+    ams_future = None
     if configured:
-        print("Checking printer AMS status...")
-        ams_trays = _query_ams_trays(configured)
-        if ams_trays:
-            print(f"  Found {len(ams_trays)} loaded AMS slot(s):")
-            for t in ams_trays:
-                c = t["color"]
-                r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
-                swatch = f"\033[48;2;{r};{g};{b}m  \033[0m"
-                print(f"    Slot {t['phys_slot'] + 1}: {t['type']}  {swatch}")
-        else:
-            print("  Could not read AMS trays (printer may be offline).")
-        print()
+        from concurrent.futures import ThreadPoolExecutor
+
+        _ams_pool = ThreadPoolExecutor(max_workers=1)
+        ams_future = _ams_pool.submit(_query_ams_trays, configured)
 
     # --- Step 1: Discover profiles ---
     try:
@@ -459,6 +451,22 @@ def run_wizard(output: Path | None = None) -> str:
     else:
         process_profile = _prompt_str("Process profile name (e.g. '0.20mm Standard @BBL X1C')")
         print()
+
+    # --- Collect AMS results (should be done by now) ---
+    ams_trays: list[dict] = []
+    if ams_future is not None:
+        try:
+            ams_trays = ams_future.result(timeout=10)
+        except Exception:
+            pass
+        if ams_trays:
+            print(f"AMS loaded ({len(ams_trays)} slot(s)):")
+            for t in ams_trays:
+                c = t["color"]
+                r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+                swatch = f"\033[48;2;{r};{g};{b}m  \033[0m"
+                print(f"  Slot {t['phys_slot'] + 1}: {t['type']}  {swatch}")
+            print()
 
     # --- Step 5: Pick filament(s) ---
     filament_names: list[str] = []
