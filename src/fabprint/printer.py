@@ -171,6 +171,86 @@ def get_printer_status(serial: str) -> dict:
         return cloud_status(serial, token_file)
 
 
+def get_lan_status(ip: str, access_code: str, serial: str) -> dict:
+    """Query printer status via LAN (MQTT).
+
+    Returns a normalised status dict compatible with the cloud status format.
+    """
+    try:
+        from bambulabs_api import Printer
+    except ImportError:
+        raise ImportError(
+            "bambulabs-api is required for LAN status. Install with: pip install fabprint[lan]"
+        ) from None
+
+    import time
+
+    printer = Printer(ip_address=ip, access_code=access_code, serial=serial)
+    try:
+        printer.connect()
+        # Give MQTT a moment to receive the first status push
+        time.sleep(3)
+        status = printer.get_device_status() or {}
+        return status
+    finally:
+        printer.disconnect()
+
+
+def get_moonraker_status(url: str, api_key: str | None = None) -> dict:
+    """Query printer status via Moonraker REST API.
+
+    Returns a normalised status dict with keys matching the rendering format.
+    """
+    try:
+        import requests
+    except ImportError:
+        raise ImportError(
+            "requests is required for Moonraker status. Install with: pip install requests"
+        ) from None
+
+    base = url.rstrip("/")
+    headers = {}
+    if api_key:
+        headers["X-Api-Key"] = api_key
+
+    # Query print stats and temperatures in one call
+    resp = requests.get(
+        f"{base}/printer/objects/query?print_stats&heater_bed&extruder&display_status",
+        headers=headers,
+        timeout=10,
+    )
+    resp.raise_for_status()
+    result = resp.json().get("result", {}).get("status", {})
+
+    ps = result.get("print_stats", {})
+    extruder = result.get("extruder", {})
+    bed = result.get("heater_bed", {})
+    display = result.get("display_status", {})
+
+    # Map Moonraker state to Bambu-style state
+    state_map = {
+        "standby": "IDLE",
+        "printing": "RUNNING",
+        "paused": "PAUSE",
+        "complete": "FINISH",
+        "cancelled": "IDLE",
+        "error": "FAILED",
+    }
+    klipper_state = ps.get("state", "standby")
+
+    return {
+        "gcode_state": state_map.get(klipper_state, klipper_state.upper()),
+        "subtask_name": ps.get("filename", ""),
+        "mc_percent": int((display.get("progress", 0)) * 100),
+        "nozzle_temper": extruder.get("temperature", 0),
+        "nozzle_target_temper": extruder.get("target", 0),
+        "bed_temper": bed.get("temperature", 0),
+        "bed_target_temper": bed.get("target", 0),
+        "layer_num": ps.get("info", {}).get("current_layer", 0),
+        "total_layer_num": ps.get("info", {}).get("total_layer", 0),
+    }
+
+
 def _send_cloud_bridge(
     gcode_path: Path,
     serial: str,

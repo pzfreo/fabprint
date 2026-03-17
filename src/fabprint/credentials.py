@@ -113,6 +113,15 @@ def load_printer_credentials(name: str | None) -> dict[str, str | None]:
     }
 
 
+def list_printers() -> dict[str, dict[str, str]]:
+    """Return all configured printers from credentials.toml.
+
+    Returns dict mapping printer name → credentials dict (including 'type').
+    """
+    raw = _load_raw()
+    return raw.get("printers", {})
+
+
 def load_cloud_credentials() -> dict[str, str] | None:
     """Load cloud credentials from the [cloud] section.
 

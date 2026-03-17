@@ -276,6 +276,99 @@ serial = "SN123"
         )
 
 
+def test_get_moonraker_status(monkeypatch):
+    """Test that Moonraker status query returns normalised dict."""
+    import sys
+    from unittest.mock import MagicMock
+
+    mock_response = {
+        "result": {
+            "status": {
+                "print_stats": {
+                    "state": "printing",
+                    "filename": "test.gcode",
+                    "info": {"current_layer": 10, "total_layer": 50},
+                },
+                "extruder": {"temperature": 210.5, "target": 215.0},
+                "heater_bed": {"temperature": 60.0, "target": 60.0},
+                "display_status": {"progress": 0.25},
+            }
+        }
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json.return_value = mock_response
+
+    mock_requests = MagicMock()
+    mock_requests.get.return_value = mock_resp
+    monkeypatch.setitem(sys.modules, "requests", mock_requests)
+
+    # Force re-import so the function picks up the mocked requests
+    import importlib
+
+    import fabprint.printer
+
+    importlib.reload(fabprint.printer)
+
+    try:
+        status = fabprint.printer.get_moonraker_status(
+            "http://voron.local:7125", api_key="test-key"
+        )
+        assert status["gcode_state"] == "RUNNING"
+        assert status["subtask_name"] == "test.gcode"
+        assert status["mc_percent"] == 25
+        assert status["nozzle_temper"] == 210.5
+        assert status["bed_temper"] == 60.0
+        mock_requests.get.assert_called_once()
+    finally:
+        # Restore original module
+        importlib.reload(fabprint.printer)
+
+
+def test_resolve_status_printers_by_name(tmp_path, monkeypatch):
+    """Test --printer flag resolves a single printer."""
+    from types import SimpleNamespace
+
+    from fabprint.cli import _resolve_status_printers
+
+    args = SimpleNamespace(printer="workshop", serial=None)
+    creds = {"type": "bambu-lan", "ip": "10.0.0.1"}
+    result = _resolve_status_printers(args, lambda: {}, lambda name: creds)
+    assert len(result) == 1
+    assert result[0] == ("workshop", creds)
+
+
+def test_resolve_status_printers_all(tmp_path, monkeypatch):
+    """Test default resolves all configured printers."""
+    from types import SimpleNamespace
+
+    from fabprint.cli import _resolve_status_printers
+
+    args = SimpleNamespace(printer=None, serial=None)
+    all_printers = {
+        "workshop": {"type": "bambu-lan"},
+        "voron": {"type": "moonraker"},
+    }
+    result = _resolve_status_printers(args, lambda: all_printers, lambda name: {})
+    assert len(result) == 2
+    names = [n for n, _ in result]
+    assert "workshop" in names
+    assert "voron" in names
+
+
+def test_resolve_status_printers_no_printers():
+    """Test error when no printers configured."""
+    from types import SimpleNamespace
+
+    from fabprint import FabprintError
+    from fabprint.cli import _resolve_status_printers
+
+    args = SimpleNamespace(printer=None, serial=None)
+    with pytest.raises(FabprintError, match="No printers configured"):
+        _resolve_status_printers(args, lambda: {}, lambda name: {})
+
+
 def test_parse_gcode_metadata(tmp_path):
     gcode = tmp_path / "test.gcode"
     gcode.write_text("; total estimated time: 1h 7m 32s\nG28\n; total filament used [g] = 14.02\n")

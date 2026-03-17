@@ -8,6 +8,7 @@ import pytest
 
 from fabprint.credentials import (
     cloud_token_json,
+    list_printers,
     load_cloud_credentials,
     save_cloud_credentials,
     setup_printer,
@@ -109,6 +110,28 @@ class TestSetupPrinter:
             data = tomllib.load(f)
         assert data["printers"]["test"]["type"] == "bambu-lan"
         assert data["printers"]["test"]["ip"] == "1.2.3.4"
+
+
+class TestListPrinters:
+    def test_lists_all(self, tmp_path, monkeypatch):
+        cred_path = tmp_path / "credentials.toml"
+        cred_path.write_text(
+            '[printers.workshop]\ntype = "bambu-lan"\nip = "10.0.0.1"\n\n'
+            '[printers.voron]\ntype = "moonraker"\nurl = "http://voron:7125"\n'
+        )
+        monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
+
+        printers = list_printers()
+        assert "workshop" in printers
+        assert "voron" in printers
+        assert printers["workshop"]["type"] == "bambu-lan"
+        assert printers["voron"]["type"] == "moonraker"
+
+    def test_returns_empty_when_no_file(self, tmp_path, monkeypatch):
+        cred_path = tmp_path / "credentials.toml"
+        monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
+
+        assert list_printers() == {}
 
 
 class TestCloudCredentials:
