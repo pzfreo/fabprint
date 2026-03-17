@@ -43,7 +43,6 @@ Or create `fabprint.toml` by hand (see [full config reference](https://github.co
 stages = ["load", "arrange", "plate", "slice", "print"]
 
 [printer]
-mode = "cloud-bridge"
 name = "workshop"       # references ~/.config/fabprint/credentials.toml
 
 [plate]
@@ -102,6 +101,7 @@ Combined with `version = "2.3.1"` in `[slicer]` (which pins the Docker image), t
 fabprint init                        # interactive config wizard
 fabprint init --template             # dump commented TOML template
 fabprint validate                    # check config for issues
+fabprint setup                       # set up a printer (credentials + connection type)
 fabprint run                         # full pipeline
 fabprint run --until plate           # stop after plating
 fabprint run --only slice            # run just one stage

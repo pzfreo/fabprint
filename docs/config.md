@@ -9,7 +9,6 @@ fabprint is configured with a single TOML file (typically `fabprint.toml`). This
 stages = ["load", "arrange", "plate", "slice", "print"]
 
 [printer]
-mode = "cloud-bridge"
 name = "workshop"
 
 [plate]
@@ -58,37 +57,49 @@ stages = ["load", "arrange", "plate", "slice"]
 
 ## `[printer]`
 
-Defines how to send gcode to the printer. Optional — omit if you only need to plate and slice.
+Defines which printer to send gcode to. Optional — omit if you only need to plate and slice.
 
-| Key    | Type     | Default       | Description                                        |
-|--------|----------|---------------|----------------------------------------------------|
-| `mode` | `string` | `"bambu-lan"` | Print delivery mode (see below)                    |
-| `name` | `string` | —             | Printer name in `~/.config/fabprint/credentials.toml` |
+| Key    | Type     | Default | Description                                           |
+|--------|----------|---------|-------------------------------------------------------|
+| `name` | `string` | —       | Printer name in `~/.config/fabprint/credentials.toml` |
 
-**Printer modes:**
+The `name` field references a printer configured via `fabprint setup`. All connection details (type, IP, credentials) are stored in `credentials.toml`, not in the project config.
 
-| Mode             | Description                                                       |
-|------------------|-------------------------------------------------------------------|
-| `bambu-lan`      | Direct LAN connection via MQTT + FTP. Fastest, works offline.     |
-| `bambu-connect`  | Opens sliced file in [Bambu Connect](https://wiki.bambulab.com/en/software/bambu-connect) app. No credentials in config. |
-| `bambu-cloud`    | Experimental cloud API. Requires `BAMBU_EMAIL`/`BAMBU_PASSWORD` env vars. |
-| `cloud-bridge`   | Cloud printing via the C++ bridge to `libbambu_networking.so`.    |
-| `cloud-http`     | Experimental pure-Python cloud mode (requires `--experimental`).  |
+### Credentials file
 
-### Credentials
-
-Printer secrets (IP, access code, serial) live in `~/.config/fabprint/credentials.toml`, **not** in the project config:
+Run `fabprint setup` to create `~/.config/fabprint/credentials.toml`. It stores printer connection details and optional cloud login:
 
 ```toml
 # ~/.config/fabprint/credentials.toml
 
+[cloud]
+token = "..."
+refresh_token = "..."
+email = "user@example.com"
+uid = "12345"
+
 [printers.workshop]
+type = "bambu-lan"
 ip = "192.168.1.100"
 access_code = "12345678"
 serial = "01P00A451601106"
+
+[printers.p1s-cloud]
+type = "bambu-cloud"
+serial = "01P00A451601106"
+
+[printers.voron]
+type = "moonraker"
+url = "http://voron.local:7125"
 ```
 
-The `name` field in `[printer]` references a key under `[printers]` in this file.
+### Printer types
+
+| Type          | Required fields              | Description                          |
+|---------------|------------------------------|--------------------------------------|
+| `bambu-lan`   | ip, access_code, serial      | Direct LAN connection (fastest)      |
+| `bambu-cloud` | serial                       | Cloud bridge (requires `[cloud]` login) |
+| `moonraker`   | url (+ optional api_key)     | Klipper/Moonraker REST API           |
 
 **Environment variable overrides** (take precedence over credentials.toml):
 
@@ -97,8 +108,6 @@ The `name` field in `[printer]` references a key under `[printers]` in this file
 | `BAMBU_PRINTER_IP`   | `ip`           |
 | `BAMBU_ACCESS_CODE`  | `access_code`  |
 | `BAMBU_SERIAL`       | `serial`       |
-| `BAMBU_EMAIL`        | Cloud email    |
-| `BAMBU_PASSWORD`     | Cloud password |
 
 ## `[plate]`
 

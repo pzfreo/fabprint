@@ -5,12 +5,10 @@ from __future__ import annotations
 import json
 import os
 import sys
-from pathlib import Path
 
 import requests
 
 API_BASE = "https://api.bambulab.com"
-TOKEN_FILE = Path.home() / ".bambu_cloud_token"
 
 SLICER_HEADERS = {
     "X-BBL-Client-Name": "OrcaSlicer",
@@ -115,7 +113,9 @@ def _get_devices(token: str) -> list[dict]:
 
 
 def cloud_login(email: str | None = None, password: str | None = None) -> None:
-    """Interactive Bambu Cloud login. Saves token to ~/.bambu_cloud_token."""
+    """Interactive Bambu Cloud login. Saves token to credentials.toml."""
+    from fabprint.credentials import load_cloud_credentials, save_cloud_credentials
+
     email = email or os.environ.get("BAMBU_EMAIL")
     password = password or os.environ.get("BAMBU_PASSWORD")
     if not email or not password:
@@ -127,18 +127,16 @@ def cloud_login(email: str | None = None, password: str | None = None) -> None:
     print(f"  Account: {email}")
 
     # Check for existing token
-    if TOKEN_FILE.exists():
+    cloud = load_cloud_credentials()
+    if cloud and cloud.get("email") == email and cloud.get("token"):
         try:
-            cached = json.loads(TOKEN_FILE.read_text())
-            if cached.get("email") == email and cached.get("token"):
-                print(f"\n  Found cached token in {TOKEN_FILE}")
-                profile = _get_user_profile(cached["token"])
-                print(f"  Token is valid! User: {profile['name'] or profile['uid']}")
+            profile = _get_user_profile(cloud["token"])
+            print(f"\n  Found cached token (valid for {profile['name'] or profile['uid']})")
 
-                refresh = input("  Refresh token anyway? [y/N]: ").strip().lower()
-                if refresh != "y":
-                    _show_devices(cached["token"])
-                    return
+            refresh = input("  Refresh token anyway? [y/N]: ").strip().lower()
+            if refresh != "y":
+                _show_devices(cloud["token"])
+                return
         except Exception:
             pass
 
@@ -147,24 +145,16 @@ def cloud_login(email: str | None = None, password: str | None = None) -> None:
     token, refresh_token = _login(email, password)
     profile = _get_user_profile(token)
 
-    # Save token
-    TOKEN_FILE.write_text(
-        json.dumps(
-            {
-                "token": token,
-                "refreshToken": refresh_token,
-                "email": email,
-                "uid": profile["uid"],
-                "name": profile["name"],
-                "avatar": profile["avatar"],
-            }
-        )
+    save_cloud_credentials(
+        token=token,
+        refresh_token=refresh_token,
+        email=email,
+        uid=profile["uid"],
     )
-    TOKEN_FILE.chmod(0o600)
 
     print("\n  Login successful!")
     print(f"  User: {profile['name'] or profile['uid']}")
-    print(f"  Token saved to: {TOKEN_FILE}")
+    print("  Token saved to credentials.toml")
 
     _show_devices(token)
 

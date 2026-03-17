@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -243,6 +242,13 @@ def main(argv: list[str] | None = None) -> None:
         help="Path to config file (default: ./fabprint.toml)",
     )
 
+    # --- setup subcommand ---
+    sub.add_parser(
+        "setup",
+        parents=[common],
+        help="Set up a printer (credentials, cloud login, connection type)",
+    )
+
     # --- login subcommand ---
     login_cmd = sub.add_parser(
         "login", parents=[common], help="Login to Bambu Cloud and cache token"
@@ -286,6 +292,8 @@ def main(argv: list[str] | None = None) -> None:
             _cmd_init(args)
         elif args.command == "validate":
             _cmd_validate(args)
+        elif args.command == "setup":
+            _cmd_setup(args)
         elif args.command == "login":
             _cmd_login(args)
         elif args.command == "status":
@@ -352,6 +360,12 @@ def _cmd_init(args: argparse.Namespace) -> None:
         run_wizard(output=args.output)
 
 
+def _cmd_setup(args: argparse.Namespace) -> None:
+    from fabprint.credentials import setup_printer
+
+    setup_printer()
+
+
 def _cmd_validate(args: argparse.Namespace) -> None:
     from fabprint.init import validate_config
 
@@ -369,15 +383,6 @@ def _cmd_validate(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _get_token_file() -> Path:
-    """Return the Bambu Cloud token file path, raising if it doesn't exist."""
-    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
-    token_file = Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
-    if not token_file.exists():
-        raise FabprintError(f"Token file not found: {token_file}\nRun 'fabprint login' first.")
-    return token_file
-
-
 def _cmd_login(args: argparse.Namespace) -> None:
     from fabprint.auth import cloud_login
 
@@ -386,27 +391,27 @@ def _cmd_login(args: argparse.Namespace) -> None:
 
 def _cmd_status(args: argparse.Namespace) -> None:
     from fabprint.cloud import cloud_list_devices, cloud_status
+    from fabprint.credentials import cloud_token_json
 
-    token_file = _get_token_file()
+    with cloud_token_json() as token_file:
+        if args.serial:
+            serials = [(args.serial, args.serial)]
+        else:
+            devices = cloud_list_devices(token_file)
+            if not devices:
+                print("No printers found.")
+                return
+            serials = [(d["dev_id"], d.get("name", d["dev_id"])) for d in devices]
 
-    if args.serial:
-        serials = [(args.serial, args.serial)]
-    else:
-        devices = cloud_list_devices(token_file)
-        if not devices:
-            print("No printers found.")
-            return
-        serials = [(d["dev_id"], d.get("name", d["dev_id"])) for d in devices]
-
-    for serial, name in serials:
-        print(f"\033[1m{name}\033[0m  ({serial})")
-        try:
-            status = cloud_status(serial, token_file)
-            for line in _render_printer(status, name, serial):
-                print(line)
-        except Exception as e:
-            print(f"  \033[31merror: {e}\033[0m")
-        print()
+        for serial, name in serials:
+            print(f"\033[1m{name}\033[0m  ({serial})")
+            try:
+                status = cloud_status(serial, token_file)
+                for line in _render_printer(status, name, serial):
+                    print(line)
+            except Exception as e:
+                print(f"  \033[31merror: {e}\033[0m")
+            print()
 
 
 def _render_printer(status: dict, name: str, serial: str) -> list[str]:
@@ -504,48 +509,49 @@ def _cmd_watch(args: argparse.Namespace) -> None:
     import time
 
     from fabprint.cloud import PersistentBridge, cloud_list_devices
+    from fabprint.credentials import cloud_token_json
 
-    token_file = _get_token_file()
     interval = args.interval
 
-    print("Discovering printers...")
-    devices = cloud_list_devices(token_file)
-    if not devices:
-        print("No printers found.")
-        return
+    with cloud_token_json() as token_file:
+        print("Discovering printers...")
+        devices = cloud_list_devices(token_file)
+        if not devices:
+            print("No printers found.")
+            return
 
-    printer_names = {d["dev_id"]: d.get("name", d["dev_id"]) for d in devices}
-    serials = [d["dev_id"] for d in devices]
-    print(f"Found {len(serials)} printer(s): {', '.join(printer_names.values())}")
+        printer_names = {d["dev_id"]: d.get("name", d["dev_id"]) for d in devices}
+        serials = [d["dev_id"] for d in devices]
+        print(f"Found {len(serials)} printer(s): {', '.join(printer_names.values())}")
 
-    with PersistentBridge(token_file) as bridge:
-        try:
-            while True:
-                t0 = time.monotonic()
-                output_lines = []
+        with PersistentBridge(token_file) as bridge:
+            try:
+                while True:
+                    t0 = time.monotonic()
+                    output_lines = []
 
-                for serial in serials:
-                    name = printer_names[serial]
-                    output_lines.append(f"\033[1m{name}\033[0m  ({serial})")
-                    try:
-                        status = bridge.status(serial)
-                        output_lines.extend(_render_printer(status, name, serial))
-                    except Exception as e:
-                        output_lines.append(f"  \033[31merror: {e}\033[0m")
-                    output_lines.append("")
+                    for serial in serials:
+                        name = printer_names[serial]
+                        output_lines.append(f"\033[1m{name}\033[0m  ({serial})")
+                        try:
+                            status = bridge.status(serial)
+                            output_lines.extend(_render_printer(status, name, serial))
+                        except Exception as e:
+                            output_lines.append(f"  \033[31merror: {e}\033[0m")
+                        output_lines.append("")
 
-                elapsed = time.monotonic() - t0
-                now = time.strftime("%H:%M:%S")
-                header = f"fabprint watch  {now}  (polled in {elapsed:.1f}s, Ctrl-C to quit)"
+                    elapsed = time.monotonic() - t0
+                    now = time.strftime("%H:%M:%S")
+                    header = f"fabprint watch  {now}  (polled in {elapsed:.1f}s, Ctrl-C to quit)"
 
-                sys.stdout.write("\033[2J\033[H")
-                sys.stdout.write(header + "\n\n" + "\n".join(output_lines))
-                sys.stdout.flush()
+                    sys.stdout.write("\033[2J\033[H")
+                    sys.stdout.write(header + "\n\n" + "\n".join(output_lines))
+                    sys.stdout.flush()
 
-                sleep_time = max(1, interval - elapsed)
-                time.sleep(sleep_time)
-        except KeyboardInterrupt:
-            print("\n")
+                    sleep_time = max(1, interval - elapsed)
+                    time.sleep(sleep_time)
+            except KeyboardInterrupt:
+                print("\n")
 
 
 def _cmd_profiles(args: argparse.Namespace) -> None:

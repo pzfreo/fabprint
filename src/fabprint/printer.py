@@ -1,15 +1,14 @@
-"""Send gcode to a Bambu Lab printer via LAN or Bambu Connect."""
+"""Send gcode to a printer — dispatches by printer type from credentials.toml."""
 
 from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import zipfile
 from pathlib import Path
 
 from fabprint.config import PrinterConfig
-from fabprint.credentials import load_printer_credentials
+from fabprint.credentials import cloud_token_json, load_printer_credentials
 from fabprint.gcode import parse_gcode_metadata
 
 log = logging.getLogger(__name__)
@@ -117,16 +116,6 @@ def wrap_gcode_3mf(gcode_path: Path, output_path: Path | None = None) -> Path:
     return output_path
 
 
-def _resolve_credentials(config: PrinterConfig) -> dict[str, str | None]:
-    """Load credentials from credentials.toml (by printer name), with env var overrides.
-
-    Resolution: env vars > credentials.toml > None.
-    """
-    creds = load_printer_credentials(config.name)
-    creds["mode"] = config.mode
-    return creds
-
-
 def _send_lan(
     gcode_path: Path,
     ip: str,
@@ -170,120 +159,6 @@ def _send_lan(
         log.info("Disconnected from printer")
 
 
-def _send_cloud(
-    gcode_path: Path,
-    dry_run: bool = False,
-) -> None:
-    """Send gcode to printer via Bambu Cloud API (experimental).
-
-    Uses bambu-lab-cloud-api to upload gcode and start a print via
-    the HTTP + MQTT cloud APIs. This is experimental — Bambu's cloud
-    broker currently rejects third-party MQTT print commands with
-    "MQTT Command verification failed".
-    """
-    try:
-        from bambu_lab_cloud_api import BambuClient
-    except ImportError:
-        raise ImportError(
-            "bambu-lab-cloud-api is required for cloud printing. "
-            "Install with: pip install fabprint[cloud]"
-        ) from None
-
-    email = os.environ.get("BAMBU_EMAIL")
-    password = os.environ.get("BAMBU_PASSWORD")
-    if not email or not password:
-        raise ValueError("bambu-cloud mode requires BAMBU_EMAIL and BAMBU_PASSWORD env vars.")
-
-    print(f"Sending {gcode_path.name} via Bambu Cloud (experimental)")
-
-    if dry_run:
-        print(f"  [dry-run] Would upload {gcode_path.name} via cloud API")
-        return
-
-    client = BambuClient(email, password)
-    client.login()
-    log.info("Logged in to Bambu Cloud")
-
-    devices = client.get_devices()
-    if not devices:
-        raise RuntimeError("No printers found in Bambu Cloud account")
-
-    device = devices[0]
-    device_id = device["dev_id"]
-    device_name = device.get("name", device_id)
-    print(f"  Printer: {device_name} ({device_id})")
-
-    file_url = client.upload_file(str(gcode_path))
-    log.info("Uploaded to %s", file_url)
-    print(f"  Uploaded {gcode_path.name}")
-
-    # Attempt to start print via cloud API — currently returns 405 or
-    # MQTT command verification failure. Kept for future compatibility.
-    try:
-        client.start_print_job(device_id, gcode_path.name, file_url)
-        print("  Print started via cloud")
-    except (RuntimeError, OSError, ValueError) as e:
-        print(f"  Warning: Could not start print via cloud API: {e}")
-        print("  File uploaded — start manually from Bambu Handy or printer touchscreen")
-
-
-def _send_bambu_connect(
-    gcode_path: Path,
-    dry_run: bool = False,
-) -> None:
-    """Send gcode to printer via Bambu Connect.
-
-    Wraps gcode in a .gcode.3mf and opens it in Bambu Connect using
-    the bambu-connect:// URL scheme. The user confirms and starts the
-    print from the Bambu Connect UI.
-    """
-    import subprocess
-    import sys
-    from urllib.parse import quote
-
-    # Prefer the slicer's --min-save export (has proper project_settings).
-    # Fall back to wrap_gcode_3mf for pre-sliced gcode not produced by fabprint.
-    sliced_3mf = gcode_path.parent / "plate_sliced.gcode.3mf"
-    if sliced_3mf.exists():
-        threemf_path = sliced_3mf
-        print(f"  Using {threemf_path.name}")
-    else:
-        threemf_path = wrap_gcode_3mf(gcode_path)
-        print(f"  Wrapped as {threemf_path.name}")
-
-    if dry_run:
-        print(f"  [dry-run] Would open {threemf_path.name} in Bambu Connect")
-        return
-
-    # Ensure Bambu Connect is running before sending the URL
-    import time
-
-    if sys.platform == "darwin":
-        subprocess.run(["open", "-a", "Bambu Connect"], check=True)
-    elif sys.platform == "win32":
-        os.startfile("Bambu Connect")  # noqa: S606
-    print("  Waiting for Bambu Connect...")
-    time.sleep(5)
-
-    encoded_path = quote(str(threemf_path), safe="")
-    encoded_name = quote(gcode_path.stem, safe="")
-    url = f"bambu-connect://import-file?path={encoded_path}&name={encoded_name}&version=1.0.0"
-
-    if sys.platform == "darwin":
-        subprocess.run(["open", url], check=True)
-    elif sys.platform == "win32":
-        os.startfile(url)  # noqa: S606
-    else:
-        subprocess.run(["xdg-open", url], check=True)
-
-    print("  Opened in Bambu Connect — confirm and print from there")
-
-
-def _get_token_file() -> Path:
-    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
-    return Path(token_file_str) if token_file_str else Path.home() / ".bambu_cloud_token"
-
-
 def get_printer_status(serial: str) -> dict:
     """Query live printer status via the cloud bridge.
 
@@ -292,43 +167,19 @@ def get_printer_status(serial: str) -> dict:
     """
     from fabprint.cloud import cloud_status
 
-    token_file = _get_token_file()
-    if not token_file.exists():
-        raise FileNotFoundError(
-            f"Token file not found: {token_file}. Run 'python scripts/bambu_cloud_login.py' first."
-        )
-    return cloud_status(serial, token_file)
+    with cloud_token_json() as token_file:
+        return cloud_status(serial, token_file)
 
 
 def _send_cloud_bridge(
     gcode_path: Path,
-    serial: str | None = None,
+    serial: str,
     dry_run: bool = False,
     verbose: bool = False,
     skip_ams_mapping: bool = False,
 ) -> None:
-    """Send gcode to printer via the bambu_cloud_bridge binary.
-
-    Uses the C++ bridge to libbambu_networking.so for cloud printing.
-    Requires a token file at ~/.bambu_cloud_token or BAMBU_TOKEN_FILE env var.
-    """
+    """Send gcode to printer via the bambu_cloud_bridge binary."""
     from fabprint.cloud import cloud_print
-
-    token_file = _get_token_file()
-
-    if not token_file.exists():
-        raise FileNotFoundError(
-            f"Token file not found: {token_file}. "
-            "Run 'python scripts/bambu_cloud_login.py' first, or set BAMBU_TOKEN_FILE."
-        )
-
-    if not serial:
-        serial = os.environ.get("BAMBU_SERIAL")
-    if not serial:
-        raise ValueError(
-            "cloud-bridge mode requires serial. "
-            "Set in ~/.config/fabprint/credentials.toml or BAMBU_SERIAL env var."
-        )
 
     # Check printer availability before sending, and capture AMS state for mapping
     ams_trays = None
@@ -369,15 +220,16 @@ def _send_cloud_bridge(
         print(f"  [dry-run] Would upload {threemf_path.name} to printer {serial}")
         return
 
-    result = cloud_print(
-        threemf_path=threemf_path,
-        device_id=serial,
-        token_file=token_file,
-        project_name=gcode_path.stem,
-        ams_trays=ams_trays,
-        verbose=verbose,
-        skip_ams_mapping=skip_ams_mapping,
-    )
+    with cloud_token_json() as token_file:
+        result = cloud_print(
+            threemf_path=threemf_path,
+            device_id=serial,
+            token_file=token_file,
+            project_name=gcode_path.stem,
+            ams_trays=ams_trays,
+            verbose=verbose,
+            skip_ams_mapping=skip_ams_mapping,
+        )
 
     status = result.get("result", "unknown")
     if status in ("success", "sent"):
@@ -390,77 +242,53 @@ def _send_cloud_bridge(
         raise RuntimeError(f"Cloud print failed: {result}")
 
 
-def _send_cloud_http(
+def _send_moonraker(
     gcode_path: Path,
-    serial: str | None = None,
+    url: str,
+    api_key: str | None = None,
     dry_run: bool = False,
-    experimental: bool = False,
+    upload_only: bool = False,
 ) -> None:
-    """Send gcode to printer via pure Python HTTP (no C++ bridge needed).
+    """Send gcode to a Klipper/Moonraker printer via REST API."""
+    try:
+        import requests
+    except ImportError:
+        raise ImportError(
+            "requests is required for Moonraker printing. Install with: pip install requests"
+        ) from None
 
-    Uses BambuConnect REST API with BambuConnect client headers.
-    Requires token file at ~/.bambu_cloud_token or BAMBU_TOKEN_FILE env var.
-
-    This mode is EXPERIMENTAL: POST /my/task requires a request signature that
-    cannot yet be reproduced in pure Python (Bambu rotated the key since the
-    Hackaday extraction). Without the correct signature the printer rejects the
-    MQTT command. Use cloud-bridge mode for reliable cloud printing.
-    """
-    if not experimental:
-        raise RuntimeError(
-            "cloud-http mode is experimental and currently non-functional "
-            "(request signing not yet solved — see docs/cloud-print-research.md).\n"
-            'Use mode = "cloud-bridge" in fabprint.toml, or pass --experimental '
-            "to run anyway."
-        )
-    from fabprint.cloud import cloud_print_http
-
-    token_file_str = os.environ.get("BAMBU_TOKEN_FILE")
-    if token_file_str:
-        token_file = Path(token_file_str)
-    else:
-        token_file = Path.home() / ".bambu_cloud_token"
-
-    if not token_file.exists():
-        raise FileNotFoundError(
-            f"Token file not found: {token_file}. "
-            "Run 'python scripts/bambu_cloud_login.py' first, or set BAMBU_TOKEN_FILE."
-        )
-
-    if not serial:
-        serial = os.environ.get("BAMBU_SERIAL")
-    if not serial:
-        raise ValueError(
-            "cloud-http mode requires serial. "
-            "Set in ~/.config/fabprint/credentials.toml or BAMBU_SERIAL env var."
-        )
-
-    sliced_3mf = gcode_path.parent / "plate_sliced.gcode.3mf"
-    if sliced_3mf.exists():
-        threemf_path = sliced_3mf
-    else:
-        threemf_path = wrap_gcode_3mf(gcode_path)
-
-    print(f"Sending {threemf_path.name} via cloud HTTP")
+    base = url.rstrip("/")
+    print(f"Sending {gcode_path.name} to Moonraker at {base}")
 
     if dry_run:
-        print(f"  [dry-run] Would upload {threemf_path.name} to printer {serial}")
+        action = "upload" if upload_only else "upload and start print"
+        print(f"  [dry-run] Would {action} {gcode_path.name}")
         return
 
-    result = cloud_print_http(
-        threemf_path=threemf_path,
-        device_id=serial,
-        token_file=token_file,
-        project_name=gcode_path.stem,
-        bed_type="textured_plate",
-        verbose=True,
-    )
+    headers = {}
+    if api_key:
+        headers["X-Api-Key"] = api_key
 
-    status = result.get("task_status", "unknown")
-    if result.get("result") == "success":
-        print(f"  Print job sent to {serial} (task_id={result.get('task_id')}, status={status})")
+    # Upload file
+    with open(gcode_path, "rb") as f:
+        resp = requests.post(
+            f"{base}/server/files/upload",
+            files={"file": (gcode_path.name, f)},
+            headers=headers,
+        )
+    resp.raise_for_status()
+    print(f"  Uploaded {gcode_path.name}")
+
+    if upload_only:
+        print("  File ready — start from Mainsail/Fluidd or printer screen")
     else:
-        raise RuntimeError(f"Cloud print failed (status={status}): {result}")
+        resp = requests.post(
+            f"{base}/printer/print/start",
+            json={"filename": gcode_path.name},
+            headers=headers,
+        )
+        resp.raise_for_status()
+        print("  Print started")
 
 
 def send_print(
@@ -471,21 +299,26 @@ def send_print(
     experimental: bool = False,
     skip_ams_mapping: bool = False,
 ) -> None:
-    """Send gcode to a Bambu Lab printer.
+    """Send gcode to a printer.
 
-    Dispatches to LAN or cloud mode based on config.
-    Env vars override config values (see _resolve_credentials).
-    If upload_only is True, uploads without starting the print.
+    Dispatches based on printer type from credentials.toml.
+    Env vars override credential values (see load_printer_credentials).
     """
-    creds = _resolve_credentials(config)
+    creds = load_printer_credentials(config.name)
+    ptype = creds.get("type")
 
-    if creds["mode"] in ("bambu-lan", "lan"):
+    if not ptype:
+        raise ValueError(
+            f"Printer '{config.name}' has no 'type' in credentials.toml. "
+            "Run 'fabprint setup' to configure it."
+        )
+
+    if ptype == "bambu-lan":
         for field in ("ip", "access_code", "serial"):
             if not creds[field]:
-                env_var = f"BAMBU_{field.upper()}" if field != "ip" else "BAMBU_PRINTER_IP"
                 raise ValueError(
-                    f"LAN mode requires {field}. "
-                    f"Set in ~/.config/fabprint/credentials.toml or {env_var} env var."
+                    f"bambu-lan printer '{config.name}' requires {field}. "
+                    "Run 'fabprint setup' to configure it."
                 )
         _send_lan(
             gcode_path,
@@ -496,19 +329,12 @@ def send_print(
             upload_only=upload_only,
         )
 
-    elif creds["mode"] in ("bambu-connect", "cloud"):
-        _send_bambu_connect(
-            gcode_path,
-            dry_run=dry_run,
-        )
-
-    elif creds["mode"] == "bambu-cloud":
-        _send_cloud(
-            gcode_path,
-            dry_run=dry_run,
-        )
-
-    elif creds["mode"] == "cloud-bridge":
+    elif ptype == "bambu-cloud":
+        if not creds["serial"]:
+            raise ValueError(
+                f"bambu-cloud printer '{config.name}' requires serial. "
+                "Run 'fabprint setup' to configure it."
+            )
         _send_cloud_bridge(
             gcode_path,
             serial=creds["serial"],
@@ -517,10 +343,22 @@ def send_print(
             skip_ams_mapping=skip_ams_mapping,
         )
 
-    elif creds["mode"] == "cloud-http":
-        _send_cloud_http(
+    elif ptype == "moonraker":
+        if not creds["url"]:
+            raise ValueError(
+                f"moonraker printer '{config.name}' requires url. "
+                "Run 'fabprint setup' to configure it."
+            )
+        _send_moonraker(
             gcode_path,
-            serial=creds["serial"],
+            url=creds["url"],
+            api_key=creds.get("api_key"),
             dry_run=dry_run,
-            experimental=experimental,
+            upload_only=upload_only,
+        )
+
+    else:
+        raise ValueError(
+            f"Unknown printer type '{ptype}' for printer '{config.name}'. "
+            f"Valid types: bambu-lan, bambu-cloud, moonraker"
         )
