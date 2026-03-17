@@ -28,7 +28,15 @@ pip install fabprint                # STL + 3MF support, LAN + cloud printing
 pip install "fabprint[step]"        # add STEP file support (build123d)
 ```
 
-Create `fabprint.toml` (see [full config reference](docs/config.md)):
+Generate a config with the interactive wizard, or dump a commented template:
+
+```bash
+fabprint init                       # interactive wizard — discovers profiles and CAD files
+fabprint init --template            # dump a commented template to stdout
+fabprint init --template > fabprint.toml   # save template and edit manually
+```
+
+Or create `fabprint.toml` by hand (see [full config reference](docs/config.md)):
 
 ```toml
 [pipeline]
@@ -91,6 +99,9 @@ Combined with `version = "2.3.1"` in `[slicer]` (which pins the Docker image), t
 ## CLI overview
 
 ```bash
+fabprint init                        # interactive config wizard
+fabprint init --template             # dump commented TOML template
+fabprint validate                    # check config for issues
 fabprint run                         # full pipeline
 fabprint run --until plate           # stop after plating
 fabprint run --only slice            # run just one stage
