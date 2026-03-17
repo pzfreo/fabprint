@@ -300,6 +300,7 @@ class TestWizard:
         # 5. Select files -> 1
         inputs = iter(
             [
+                "n",  # Run setup first? -> no
                 "Bambu Lab P1S 0.4 nozzle",  # Printer profile name
                 "0.20mm Standard @BBL X1C",  # Process profile name
                 "Generic PLA @base",  # Filament name
@@ -334,6 +335,7 @@ class TestWizard:
 
         inputs = iter(
             [
+                "n",  # Run setup first? -> no
                 "My Printer",  # Printer profile name
                 "My Process",  # Process profile name
                 "My PLA",  # Filament name

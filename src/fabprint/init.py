@@ -352,6 +352,21 @@ def run_wizard(output: Path | None = None) -> str:
 
     engine = "orca"
 
+    # --- Step 0: Check for configured printers ---
+    configured = _list_configured_printers()
+    if not configured:
+        print("No printers configured yet.")
+        if _prompt_yn("Run 'fabprint setup' to add a printer first?"):
+            from fabprint.credentials import setup_printer
+
+            print()
+            setup_printer()
+            print()
+            # Refresh after setup
+            configured = _list_configured_printers()
+        else:
+            print("  Continuing without printer setup.\n")
+
     # --- Step 1: Discover profiles ---
     try:
         profiles = discover_profiles(engine)
