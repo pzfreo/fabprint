@@ -51,10 +51,12 @@ OrcaSlicer CLI slices one plate of pre-arranged models. fabprint is a pipeline a
 - **Multi-part filament mapping** — per-part filament slot assignment and paint color preservation, injected into the 3MF metadata
 - **Reproducible builds** — pin slicer profiles into your repo + lock OrcaSlicer version in Docker = identical gcode on any machine
 - **Partial execution** — `--until plate` to inspect layout, `--only slice` to re-slice, `--dry-run` to test everything
-- **Send to printer** — Bambu LAN, Bambu Cloud, and Moonraker (experimental), with live status monitoring
+- **Send to printer** — Bambu LAN, Bambu Cloud, and Moonraker/Klipper (experimental), with live status monitoring. PrusaLink and OctoPrint support is on the roadmap
 - **Headless Docker slicing** — no GUI, no display server, works in CI
 
 ## Quick start
+
+**Prerequisites:** Python 3.11+ is required. [Docker](https://docs.docker.com/get-docker/) is optional but recommended — it enables pinned OrcaSlicer versions for fully reproducible slicing. Without Docker, fabprint uses your locally installed OrcaSlicer.
 
 ```bash
 pip install fabprint                # STL + 3MF support, LAN + cloud printing
@@ -132,6 +134,28 @@ git add profiles/              # commit to lock them
 
 Combined with `version = "2.3.1"` in `[slicer]` (which pins the Docker image), the same config always produces the same gcode.
 
+### CI/CD example
+
+Automate slicing in GitHub Actions — push a commit, get G-code as a build artifact:
+
+```yaml
+# .github/workflows/slice.yml
+name: Slice
+on: [push]
+jobs:
+  slice:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv tool install fabprint
+      - run: fabprint run --until slice
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gcode
+          path: output/*.3mf
+```
+
 ## CLI overview
 
 ```bash
@@ -151,6 +175,10 @@ fabprint profiles pin                # pin profiles for reproducible builds
 ```
 
 ![fabprint watch](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/watch.png)
+
+## Credentials
+
+Printer credentials are stored in `~/.config/fabprint/credentials.toml`, created by `fabprint setup`. The file is set to `600` permissions (owner read/write only) and is never committed to your repo — only the printer *name* appears in `fabprint.toml`. Credentials can also be supplied via environment variables (`BAMBU_PRINTER_IP`, `BAMBU_ACCESS_CODE`, `BAMBU_SERIAL`) for CI or shared environments.
 
 ## Documentation
 
