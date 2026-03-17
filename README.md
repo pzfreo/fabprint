@@ -26,17 +26,30 @@ pip install fabprint
 ### 2. Create `fabprint.toml`
 
 ```toml
+[pipeline]
+stages = ["load", "arrange", "plate", "slice", "print"]
+
+[printer]
+mode = "cloud-bridge"
+name = "workshop"       # references ~/.config/fabprint/credentials.toml
+
 [plate]
 size = [256, 256]       # build plate dimensions in mm
 padding = 5.0
 
 [slicer]
 engine = "orca"
+version = "2.3.1"       # pin OrcaSlicer version for reproducibility
 printer = "Bambu Lab P1S 0.4 nozzle"
 process = "0.20mm Standard @BBL X1C"
 
+[slicer.overrides]
+enable_support = 1
+curr_bed_type = "Textured PEI Plate"
+
 [[parts]]
 file = "frame.stl"
+rotate = [180, 0, 0]    # flip so mounting plate faces down
 filament = "Generic PETG-CF @base"
 
 [[parts]]
@@ -46,7 +59,7 @@ orient = "upright"
 filament = "Generic PETG-CF @base"
 ```
 
-Parts reference filament profiles by name — no need to manually number AMS slots.
+Parts reference filament profiles by name — no need to manually number AMS slots. The `[pipeline]` section controls which stages run; omit `print` if you only need to plate and slice. See [docs/config.md](docs/config.md) for the full reference.
 
 ### 3. Arrange, slice, print
 
