@@ -7,12 +7,14 @@ fabprint uses a single `run` command that executes a pipeline defined in your `f
 Run all or part of the pipeline.
 
 ```
-fabprint run <config> [options]
+fabprint run [config] [options]
 ```
+
+If `config` is omitted, fabprint looks for `fabprint.toml` in the current directory.
 
 | Option              | Description                                          |
 |---------------------|------------------------------------------------------|
-| `<config>`          | Path to `fabprint.toml`                              |
+| `[config]`          | Path to config file (default: `./fabprint.toml`)     |
 | `-o, --output-dir`  | Output directory (default: `output/`)                |
 | `--until STAGE`     | Run pipeline up to and including this stage           |
 | `--only STAGE`      | Run only this stage (fails if prerequisites missing)  |
@@ -43,23 +45,26 @@ The default pipeline runs these stages in order:
 ### Examples
 
 ```bash
-# Full pipeline: arrange, slice, and print
-fabprint run fabprint.toml
+# Full pipeline: arrange, slice, and print (uses ./fabprint.toml)
+fabprint run
 
 # Stop after plating (no slicer needed)
-fabprint run fabprint.toml --until plate
+fabprint run --until plate
 
 # Only slice (requires plate.3mf already in output/)
-fabprint run fabprint.toml --only slice
+fabprint run --only slice
 
 # Slice with a specific Docker image version
-fabprint run fabprint.toml --until slice --docker-version 2.3.1
+fabprint run --until slice --docker-version 2.3.1
 
 # Dry run — do everything except actually send to printer
-fabprint run fabprint.toml --dry-run
+fabprint run --dry-run
 
 # Verbose mode — shows per-stage timing
-fabprint run fabprint.toml -v
+fabprint run -v
+
+# Explicit config path
+fabprint run myproject.toml --until plate
 ```
 
 ### `--until` vs `--only`
@@ -105,7 +110,7 @@ Manage slicer profiles.
 
 ```
 fabprint profiles list [--engine orca|bambu] [--category machine|process|filament]
-fabprint profiles pin <config>
+fabprint profiles pin [config]
 ```
 
 - **`list`** — show available profiles from your slicer installation.

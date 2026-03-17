@@ -64,11 +64,13 @@ Parts reference filament profiles by name — no need to manually number AMS slo
 ### 3. Arrange, slice, print
 
 ```bash
-fabprint run fabprint.toml --until plate     # arrange parts onto a build plate
-fabprint run fabprint.toml --until slice     # arrange and slice to gcode
-fabprint run fabprint.toml                   # arrange, slice and send to printer
-fabprint run fabprint.toml --dry-run         # full pipeline without sending to printer
+fabprint run --until plate     # arrange parts onto a build plate
+fabprint run --until slice     # arrange and slice to gcode
+fabprint run                   # arrange, slice and send to printer
+fabprint run --dry-run         # full pipeline without sending to printer
 ```
+
+If the config file isn't named `fabprint.toml`, pass it explicitly: `fabprint run myconfig.toml`.
 
 The plate stage also generates a `plate_preview.3mf` with a bed outline — open it in any 3MF viewer to review placement:
 
@@ -108,15 +110,15 @@ Includes LAN printing, cloud API, and STEP file support out of the box.
 fabprint uses a single `run` command with `--until` and `--only` flags to control how far the pipeline runs:
 
 ```bash
-fabprint run fabprint.toml                    # full pipeline (arrange → slice → print)
-fabprint run fabprint.toml --until plate      # stop after plating
-fabprint run fabprint.toml --only slice       # run just the slice stage
-fabprint run fabprint.toml --dry-run          # everything except sending to printer
-fabprint login                                # log in to Bambu Cloud
-fabprint watch                                # live dashboard for all printers
-fabprint status                               # query printer status
-fabprint profiles list                        # list available slicer profiles
-fabprint profiles pin fabprint.toml           # pin profiles for reproducible builds
+fabprint run                         # full pipeline (arrange → slice → print)
+fabprint run --until plate           # stop after plating
+fabprint run --only slice            # run just the slice stage
+fabprint run --dry-run               # everything except sending to printer
+fabprint login                       # log in to Bambu Cloud
+fabprint watch                       # live dashboard for all printers
+fabprint status                      # query printer status
+fabprint profiles list               # list available slicer profiles
+fabprint profiles pin                # pin profiles for reproducible builds
 ```
 
 ![fabprint watch](docs/images/watch.png)
@@ -136,9 +138,9 @@ docker pull fabprint/fabprint:orca-2.3.1
 By default, fabprint uses Docker if available, falling back to a local slicer install:
 
 ```bash
-fabprint run fabprint.toml --until slice                    # Docker first, local fallback
-fabprint run fabprint.toml --until slice --local            # Force local slicer
-fabprint run fabprint.toml --until slice --docker-version 2.3.1  # Pin Docker image version
+fabprint run --until slice                          # Docker first, local fallback
+fabprint run --until slice --local                  # Force local slicer
+fabprint run --until slice --docker-version 2.3.1   # Pin Docker image version
 ```
 
 For fully reproducible builds, pin both profiles and the OrcaSlicer version in your config:

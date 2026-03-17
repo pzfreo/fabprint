@@ -109,6 +109,25 @@ def test_no_subcommand():
     assert exc_info.value.code == 1
 
 
+def test_run_auto_discover_config(tmp_path, monkeypatch):
+    """Running without config arg should find ./fabprint.toml."""
+    _write_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    main(["run", "--until", "plate"])
+    assert (tmp_path / "output" / "plate.3mf").exists()
+
+
+def test_run_missing_config_no_traceback(tmp_path, monkeypatch, capsys):
+    """Missing config should print a clean error, not a traceback."""
+    monkeypatch.chdir(tmp_path)  # no fabprint.toml here
+    with pytest.raises(SystemExit) as exc_info:
+        main(["run"])
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "error:" in captured.err
+    assert "fabprint.toml" in captured.err
+
+
 def test_run_until_and_only_conflict(tmp_path, capsys):
     config = _write_config(tmp_path)
     with pytest.raises(SystemExit) as exc_info:
