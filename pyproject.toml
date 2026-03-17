@@ -4,6 +4,11 @@ version = "0.1.41"
 description = "Immutable 3D print pipeline: arrange, slice, and print"
 readme = "README.md"
 requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "trimesh[easy]>=4.0.0",
     "rectpack>=0.2.0",
