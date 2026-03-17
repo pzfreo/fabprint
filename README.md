@@ -24,7 +24,8 @@ fabprint closes the gap:
 ## Quick start
 
 ```bash
-pip install fabprint
+pip install fabprint                # STL + 3MF support, LAN + cloud printing
+pip install "fabprint[step]"        # add STEP file support (build123d)
 ```
 
 Create `fabprint.toml` (see [full config reference](docs/config.md)):

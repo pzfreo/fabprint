@@ -463,7 +463,6 @@ source = { editable = "." }
 dependencies = [
     { name = "bambu-lab-cloud-api" },
     { name = "bambulabs-api" },
-    { name = "build123d" },
     { name = "defusedxml" },
     { name = "rectpack" },
     { name = "requests" },
@@ -477,12 +476,15 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
+step = [
+    { name = "build123d" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "bambu-lab-cloud-api" },
     { name = "bambulabs-api", specifier = ">=2.6.0" },
-    { name = "build123d", specifier = ">=0.10.0" },
+    { name = "build123d", marker = "extra == 'step'", specifier = ">=0.10.0" },
     { name = "defusedxml", specifier = ">=0.7.0" },
     { name = "packaging", marker = "extra == 'dev'", specifier = ">=23.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -492,7 +494,7 @@ requires-dist = [
     { name = "sf-hamilton", specifier = ">=1.82.0" },
     { name = "trimesh", extras = ["easy"], specifier = ">=4.0.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["step", "dev"]
 
 [[package]]
 name = "flask"
