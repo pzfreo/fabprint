@@ -27,7 +27,7 @@ fabprint closes the gap:
 pip install fabprint
 ```
 
-Create `fabprint.toml`:
+Create `fabprint.toml` (see [full config reference](docs/config.md)):
 
 ```toml
 [pipeline]
@@ -63,7 +63,7 @@ orient = "upright"
 filament = "Generic PETG-CF @base"
 ```
 
-Run it:
+Run it (see [full CLI reference](docs/cli.md)):
 
 ```bash
 fabprint run                   # arrange, slice and send to printer
