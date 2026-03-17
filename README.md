@@ -51,12 +51,13 @@ Parts reference filament profiles by name — no need to manually number AMS slo
 ### 3. Arrange, slice, print
 
 ```bash
-fabprint plate fabprint.toml -o plate.3mf   # arrange parts onto a build plate
-fabprint slice fabprint.toml                 # arrange and slice to gcode
-fabprint print fabprint.toml                 # arrange, slice and send to printer
+fabprint run fabprint.toml --until plate     # arrange parts onto a build plate
+fabprint run fabprint.toml --until slice     # arrange and slice to gcode
+fabprint run fabprint.toml                   # arrange, slice and send to printer
+fabprint run fabprint.toml --dry-run         # full pipeline without sending to printer
 ```
 
-The `plate` command also generates a `plate_preview.3mf` with a bed outline — open it in any 3MF viewer to review placement:
+The plate stage also generates a `plate_preview.3mf` with a bed outline — open it in any 3MF viewer to review placement:
 
 ![plate preview](docs/images/plate_preview.png)
 
@@ -96,165 +97,27 @@ pip install "fabprint[step]"   # STEP file support (build123d)
 pip install "fabprint[all]"    # Everything
 ```
 
-## CLI reference
+## CLI overview
 
-```
-fabprint plate <config>                     # Arrange and export 3MF (+ preview)
-fabprint slice <config>                     # Arrange, export, and slice to gcode
-fabprint print <config>                     # Arrange, slice, and send to printer
-fabprint print <config> --dry-run           # Do everything except send to printer
-fabprint print <config> --gcode plate.gcode # Send pre-sliced gcode
-fabprint print <config> --upload-only       # Upload without starting print
-fabprint print <config> --sequence 1        # Print only sequence 1
-fabprint gcode-info plate.gcode             # Analyze extruder usage per layer
-fabprint login                              # Log in to Bambu Cloud, cache token
-fabprint watch                              # Live dashboard for all printers 
-fabprint status                             # Query status of all printers
-fabprint profiles list                      # List available slicer profiles
-fabprint profiles pin <config>              # Pin profiles for reproducible builds
+fabprint uses a single `run` command with `--until` and `--only` flags to control how far the pipeline runs:
+
+```bash
+fabprint run fabprint.toml                    # full pipeline (arrange → slice → print)
+fabprint run fabprint.toml --until plate      # stop after plating
+fabprint run fabprint.toml --only slice       # run just the slice stage
+fabprint run fabprint.toml --dry-run          # everything except sending to printer
+fabprint login                                # log in to Bambu Cloud
+fabprint watch                                # live dashboard for all printers
+fabprint status                               # query printer status
+fabprint profiles list                        # list available slicer profiles
+fabprint profiles pin fabprint.toml           # pin profiles for reproducible builds
 ```
 
 ![fabprint watch](docs/images/watch.png)
 
-## Config reference
+See [docs/cli.md](docs/cli.md) for the full CLI reference with all flags and options.
 
-### `[printer]`
-
-| Key           | Type     | Default       | Description                            |
-|---------------|----------|---------------|----------------------------------------|
-| `mode`        | `string` | `"bambu-lan"` | `"bambu-lan"`, `"bambu-connect"`, or `"bambu-cloud"` |
-| `ip`          | `string` | —             | Printer IP address (LAN mode)          |
-| `access_code` | `string` | —             | Printer access code (LAN mode)         |
-| `serial`      | `string` | —             | Printer serial number (LAN mode)       |
-
-**Printer modes:**
-
-- **`bambu-lan`** — Direct LAN connection via MQTT + FTP. Requires `ip`, `access_code`, and `serial`. Fastest, works offline.
-- **`bambu-connect`** — Sends sliced `.gcode.3mf` to the [Bambu Connect](https://wiki.bambulab.com/en/software/bambu-connect) app. No credentials needed; you confirm and start from the app.
-- **`bambu-cloud`** — Experimental cloud API. Requires `BAMBU_EMAIL` and `BAMBU_PASSWORD` env vars.
-
-**Environment variable overrides:**
-
-| Env var            | Overrides             |
-|--------------------|-----------------------|
-| `BAMBU_PRINTER_IP` | `printer.ip`         |
-| `BAMBU_ACCESS_CODE`| `printer.access_code` |
-| `BAMBU_SERIAL`     | `printer.serial`     |
-| `BAMBU_EMAIL`      | Cloud login email     |
-| `BAMBU_PASSWORD`   | Cloud login password  |
-
-### `[plate]`
-
-| Key       | Type      | Default | Description              |
-|-----------|-----------|---------|--------------------------|
-| `size`    | `[w, h]`  | —       | Build plate size in mm   |
-| `padding` | `float`   | `5.0`   | Gap between parts in mm  |
-
-### `[slicer]`
-
-| Key         | Type       | Default  | Description                            |
-|-------------|------------|----------|----------------------------------------|
-| `engine`    | `string`   | `"orca"` | `"orca"` or `"bambu"`                  |
-| `version`   | `string`   | —        | Required OrcaSlicer version (e.g. `"2.3.1"`) |
-| `printer`   | `string`   | —        | Printer profile name                   |
-| `process`   | `string`   | —        | Process profile name                   |
-| `filaments` | `[string]` | —        | Filament profiles (auto-derived from parts if omitted) |
-
-### `[slicer.slots]`
-
-Map slot numbers to filament profiles for explicit AMS placement:
-
-```toml
-[slicer.slots]
-1 = "Generic PLA @base"
-3 = "Generic PETG-CF @base"
-5 = "Generic TPU @base"        # direct feed (bypass AMS)
-```
-
-Parts can use `filament = 3` to target a specific slot, or `filament = "Generic PLA @base"` to auto-assign.
-
-### `[slicer.overrides]`
-
-Key-value pairs applied on top of the process profile:
-
-```toml
-[slicer.overrides]
-enable_support = 1
-wall_loops = 4
-curr_bed_type = "Textured PEI Plate"
-```
-
-Common bed types: `"Cool Plate"`, `"Engineering Plate"`, `"High Temp Plate"`, `"Textured PEI Plate"`.
-
-### `[[parts]]`
-
-| Key        | Type          | Default  | Description                          |
-|------------|---------------|----------|--------------------------------------|
-| `file`     | `string`      | —        | Path to mesh file (STL/3MF/STEP)     |
-| `copies`   | `int`         | `1`      | Number of copies                     |
-| `orient`   | `string`      | `"flat"` | `"flat"`, `"upright"`, or `"side"`   |
-| `rotate`   | `[x, y, z]`  | —        | Custom rotation in degrees (overrides `orient`) |
-| `filament` | `int\|string` | `1`      | Filament profile name or slot index  |
-| `scale`    | `float`       | `1.0`    | Uniform scale factor                 |
-| `object`   | `string`      | —        | Select a named object from a multi-object 3MF |
-| `sequence` | `int`         | `1`      | Print order for sequential printing  |
-
-### `[parts.filaments]`
-
-Per-object filament overrides for multi-object 3MF files:
-
-```toml
-[[parts]]
-file = "widget.3mf"
-filament = "Generic PETG-CF @base"       # default for objects not listed
-
-[parts.filaments]
-inlay = "Bambu PLA Basic @BBL X1C"       # override for object named "inlay"
-```
-
-Objects are grouped as a single unit for bin packing.
-
-## Sequential printing
-
-For workflows like bottom inlay printing — print one object first (e.g. text inlay in PLA), then print the body on top (e.g. PETG-CF):
-
-```toml
-[[parts]]
-file = "widget.3mf"
-object = "inlay"
-filament = "Generic PLA @base"
-sequence = 1
-
-[[parts]]
-file = "widget.3mf"
-object = "body"
-filament = "Generic PETG-CF @base"
-sequence = 2
-```
-
-Both objects come from the same 3MF, so fabprint guarantees identical bed positioning:
-
-```bash
-fabprint print fabprint.toml --sequence 1   # print the inlay
-# wait for completion...
-fabprint print fabprint.toml --sequence 2   # print the body on top
-```
-
-## Profile management
-
-fabprint resolves slicer profiles in this order:
-
-1. Direct file path (if the name contains `/` or `\`)
-2. Pinned profiles in `<project>/profiles/<category>/`
-3. Slicer system directory
-
-Pin profiles to lock your build against slicer updates:
-
-```bash
-fabprint profiles pin fabprint.toml
-```
-
-Commit the `profiles/` directory to git for identical slicing across machines.
+See [docs/config.md](docs/config.md) for the complete TOML configuration reference.
 
 ## Docker
 
@@ -264,26 +127,20 @@ Pre-built images with OrcaSlicer are available on [Docker Hub](https://hub.docke
 docker pull fabprint/fabprint:orca-2.3.1
 ```
 
-Run from your project directory:
-
-```bash
-docker run --rm -v "$PWD:/project" fabprint/fabprint:orca-2.3.1 slice fabprint.toml
-docker run --rm -v "$PWD:/project" fabprint/fabprint:orca-2.3.1 plate fabprint.toml -o plate.3mf
-```
-
 By default, fabprint uses Docker if available, falling back to a local slicer install:
 
 ```bash
-fabprint slice fabprint.toml                  # Docker first, local fallback
-fabprint slice fabprint.toml --local          # Force local slicer
-fabprint slice fabprint.toml --docker-version 2.3.1  # Pin Docker image version
+fabprint run fabprint.toml --until slice                    # Docker first, local fallback
+fabprint run fabprint.toml --until slice --local            # Force local slicer
+fabprint run fabprint.toml --until slice --docker-version 2.3.1  # Pin Docker image version
 ```
 
-For fully reproducible builds, pin both profiles and the OrcaSlicer version:
+For fully reproducible builds, pin both profiles and the OrcaSlicer version in your config:
 
-```bash
-fabprint profiles pin fabprint.toml
-fabprint slice fabprint.toml --docker-version 2.3.1
+```toml
+[slicer]
+engine = "orca"
+version = "2.3.1"
 ```
 
 To build your own image:
