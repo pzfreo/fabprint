@@ -19,7 +19,7 @@ class PlateConfig:
 
 @dataclass
 class SlicerConfig:
-    engine: str = "bambu"
+    engine: str = "orca"
     version: str | None = None  # required OrcaSlicer version (e.g. "2.3.1")
     printer: str | None = None
     process: str | None = None
@@ -99,7 +99,7 @@ def load_config(path: Path) -> FabprintConfig:
             )
         slots_parsed[slot_num] = profile
     slicer = SlicerConfig(
-        engine=slicer_raw.get("engine", "bambu"),
+        engine=slicer_raw.get("engine", "orca"),
         version=slicer_raw.get("version"),
         printer=slicer_raw.get("printer"),
         process=slicer_raw.get("process"),
@@ -107,8 +107,8 @@ def load_config(path: Path) -> FabprintConfig:
         slots=slots_parsed,
         overrides=slicer_raw.get("overrides", {}),
     )
-    if slicer.engine not in ("bambu", "orca"):
-        raise FabprintError(f"slicer.engine must be 'bambu' or 'orca', got '{slicer.engine}'")
+    if slicer.engine != "orca":
+        raise FabprintError(f"slicer.engine must be 'orca', got '{slicer.engine}'")
 
     # Parts — first pass: parse everything except filament resolution
     parts_raw = raw.get("parts", [])

@@ -76,7 +76,7 @@ file = "cube.stl"
     cfg = load_config(path)
     assert cfg.plate.size == (256.0, 256.0)
     assert cfg.plate.padding == 5.0
-    assert cfg.slicer.engine == "bambu"
+    assert cfg.slicer.engine == "orca"
     assert cfg.parts[0].copies == 1
     assert cfg.parts[0].orient == "flat"
 

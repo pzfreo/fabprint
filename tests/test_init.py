@@ -263,16 +263,8 @@ class TestWizard:
         # 3. Process profile name -> 0.20mm Standard @BBL X1C
         # 4. Filament name -> Generic PLA @base
         # 5. Select files -> 1
-        # 6. copies -> 1
-        # 7. orient -> flat
-        # 8. Plate width -> 256
-        # 9. Plate depth -> 256
-        # 10. Slicer version -> (blank)
-        # 11. Include print stage? -> n
-        # 12. Write to fabprint.toml? -> y
         inputs = iter(
             [
-                "y",  # Use OrcaSlicer?
                 "Bambu Lab P1S 0.4 nozzle",  # Printer profile name
                 "0.20mm Standard @BBL X1C",  # Process profile name
                 "Generic PLA @base",  # Filament name
@@ -307,7 +299,6 @@ class TestWizard:
 
         inputs = iter(
             [
-                "y",  # Use OrcaSlicer?
                 "My Printer",  # Printer profile name
                 "My Process",  # Process profile name
                 "My PLA",  # Filament name

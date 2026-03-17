@@ -23,7 +23,7 @@ size = [256, 256]       # bed size in mm [x, y]
 padding = 5.0           # gap between parts in mm
 
 [slicer]
-engine = "orca"                            # "orca" or "bambu"
+engine = "orca"
 # version = "2.3.1"                        # pin OrcaSlicer version for reproducibility
 printer = "Bambu Lab P1S 0.4 nozzle"       # machine profile name
 process = "0.20mm Standard @BBL X1C"       # process/quality profile
@@ -244,13 +244,9 @@ def run_wizard(output: Path | None = None) -> str:
 
     print("fabprint init — interactive config wizard\n")
 
-    # --- Step 1: Slicer engine ---
     engine = "orca"
-    if not _prompt_yn("Use OrcaSlicer?"):
-        engine = "bambu"
-    print()
 
-    # --- Step 2: Discover profiles ---
+    # --- Step 1: Discover profiles ---
     try:
         profiles = discover_profiles(engine)
     except ValueError:

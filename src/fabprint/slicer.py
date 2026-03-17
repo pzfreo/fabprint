@@ -25,18 +25,15 @@ def _slicer_paths() -> dict[str, Path]:
     """Return default slicer executable paths for the current platform."""
     if sys.platform == "darwin":
         return {
-            "bambu": Path("/Applications/BambuStudio.app/Contents/MacOS/BambuStudio"),
             "orca": Path("/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer"),
         }
     elif sys.platform == "win32":
         pf = Path("C:/Program Files")
         return {
-            "bambu": pf / "BambuStudio/bambu-studio.exe",
             "orca": pf / "OrcaSlicer/orca-slicer.exe",
         }
     else:  # Linux and other Unix
         return {
-            "bambu": Path("/usr/bin/bambu-studio"),
             "orca": Path("/usr/bin/orca-slicer"),
         }
 
@@ -65,19 +62,12 @@ def find_slicer(engine: str) -> Path:
         return path
 
     # Fall back to PATH lookup (handles AppImage, Flatpak, AUR, custom installs)
-    exe_names = {
-        "bambu": ["bambu-studio", "BambuStudio", "BambuStudio.AppImage"],
-        "orca": ["orca-slicer", "OrcaSlicer", "OrcaSlicer.AppImage"],
-    }
-    for name in exe_names.get(engine, []):
+    for name in ("orca-slicer", "OrcaSlicer", "OrcaSlicer.AppImage"):
         found = shutil.which(name)
         if found:
             return Path(found)
 
-    app_name = "BambuStudio" if engine == "bambu" else "OrcaSlicer"
-    raise FileNotFoundError(
-        f"{engine} slicer not found at {path} or on PATH. Is {app_name} installed?"
-    )
+    raise FileNotFoundError(f"OrcaSlicer not found at {path} or on PATH. Is OrcaSlicer installed?")
 
 
 def _write_tmp_profile(data: dict, tmp_dir: Path, name: str) -> Path:
@@ -642,7 +632,7 @@ def _fix_sliced_3mf(path: Path, plate_3mf: Path | None = None) -> None:
 
 def slice_plate(
     input_3mf: Path,
-    engine: str = "bambu",
+    engine: str = "orca",
     output_dir: Path | None = None,
     printer: str | None = None,
     process: str | None = None,

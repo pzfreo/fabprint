@@ -42,11 +42,11 @@ fabprint auto-detects Docker and uses it for slicing when available, falling bac
 
 fabprint auto-detects slicer paths per platform:
 
-| Platform | BambuStudio | OrcaSlicer |
-|----------|-------------|------------|
-| macOS    | `/Applications/BambuStudio.app/...` | `/Applications/OrcaSlicer.app/...` |
-| Linux    | `/usr/bin/bambu-studio` | `/usr/bin/orca-slicer` |
-| Windows  | `C:\Program Files\BambuStudio\...` | `C:\Program Files\OrcaSlicer\...` |
+| Platform | OrcaSlicer |
+|----------|------------|
+| macOS    | `/Applications/OrcaSlicer.app/...` |
+| Linux    | `/usr/bin/orca-slicer` |
+| Windows  | `C:\Program Files\OrcaSlicer\...` |
 
 Slicers on PATH are also detected (Flatpak, Snap, custom installs). Profile directories follow platform conventions (`~/Library/Application Support/` on macOS, `~/.config/` on Linux, `%APPDATA%` on Windows).
 

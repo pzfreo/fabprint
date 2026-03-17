@@ -193,7 +193,7 @@ def main(argv: list[str] | None = None) -> None:
     list_cmd.add_argument(
         "--engine",
         default="orca",
-        choices=["orca", "bambu"],
+        choices=["orca"],
         help="Slicer engine (default: orca)",
     )
     list_cmd.add_argument(

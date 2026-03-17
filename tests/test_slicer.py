@@ -19,12 +19,6 @@ from fabprint.slicer import (
 # --- find_slicer ---
 
 
-def test_find_bambu():
-    if not SLICER_PATHS["bambu"].exists():
-        pytest.skip("BambuStudio not installed")
-    assert find_slicer("bambu") == SLICER_PATHS["bambu"]
-
-
 def test_find_orca():
     if not SLICER_PATHS["orca"].exists():
         pytest.skip("OrcaSlicer not installed")
