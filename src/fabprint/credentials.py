@@ -233,8 +233,26 @@ def setup_printer() -> None:
     entry: dict[str, str] = {"type": ptype}
     type_info = PRINTER_TYPES[ptype]
 
-    # Collect required fields
+    # For bambu-cloud: login first, then offer printer selection from the account
+    if ptype == "bambu-cloud":
+        cloud = existing.get("cloud")
+        if cloud and cloud.get("token"):
+            print(f"\n  Cloud login already configured ({cloud.get('email', 'unknown')})")
+        else:
+            print("\n  Cloud printing requires a Bambu Lab account login.")
+            do_login = input("  Log in now? [Y/n]: ").strip().lower()
+            if do_login != "n":
+                _cloud_login_flow(existing)
+
+        # Try to list bound printers so user can pick instead of typing serial
+        picked = _pick_cloud_printer(existing.get("cloud"))
+        if picked:
+            entry["serial"] = picked
+
+    # Collect any remaining required fields not yet filled
     for field in type_info["required"]:
+        if field in entry:
+            continue
         while True:
             val = input(f"  {field}: ").strip()
             if val:
@@ -248,17 +266,6 @@ def setup_printer() -> None:
         if val:
             entry[field] = val
 
-    # Handle cloud login for bambu-cloud type
-    if ptype == "bambu-cloud":
-        cloud = existing.get("cloud")
-        if cloud and cloud.get("token"):
-            print(f"\n  Cloud login already configured ({cloud.get('email', 'unknown')})")
-        else:
-            print("\n  Cloud printing requires a Bambu Lab account login.")
-            do_login = input("  Log in now? [Y/n]: ").strip().lower()
-            if do_login != "n":
-                _cloud_login_flow(existing)
-
     # Merge into existing config
     if "printers" not in existing:
         existing["printers"] = {}
@@ -271,12 +278,72 @@ def setup_printer() -> None:
     print(f'  name = "{name}"')
 
 
+def _pick_cloud_printer(cloud: dict | None) -> str | None:
+    """If we have a valid cloud token, list bound printers and let user pick one.
+
+    Returns the serial number of the chosen printer, or None.
+    """
+    if not cloud or not cloud.get("token"):
+        return None
+    try:
+        from fabprint.auth import _get_devices
+
+        devices = _get_devices(cloud["token"])
+    except Exception:
+        return None
+    if not devices:
+        return None
+
+    print("\n  Printers on your Bambu account:")
+    for i, d in enumerate(devices, 1):
+        dname = d.get("name", "unnamed")
+        model = d.get("dev_product_name", d.get("dev_model_name", "?"))
+        serial = d.get("dev_id", "?")
+        online = "online" if d.get("online") else "offline"
+        print(f"    [{i}] {dname} ({model}) — {serial} [{online}]")
+
+    while True:
+        raw = input("  Pick a printer [1]: ").strip()
+        if not raw:
+            idx = 0
+            break
+        try:
+            idx = int(raw) - 1
+            if 0 <= idx < len(devices):
+                break
+        except ValueError:
+            pass
+        print(f"    Enter a number 1-{len(devices)}")
+
+    chosen = devices[idx]
+    serial = chosen.get("dev_id", "")
+    dname = chosen.get("name", "")
+    print(f"  Selected: {dname} (serial: {serial})")
+    return serial
+
+
 def _cloud_login_flow(existing: dict) -> None:
     """Run the Bambu Cloud login flow and save credentials."""
+    import os
+
     from fabprint.auth import _get_user_profile, _login, _show_devices
 
-    email = input("  Email: ").strip()
-    password = input("  Password: ").strip()
+    # Check for existing valid token
+    cloud = existing.get("cloud")
+    if cloud and cloud.get("token"):
+        try:
+            profile = _get_user_profile(cloud["token"])
+            print(f"  Cached token is valid ({profile.get('name') or profile['uid']})")
+            _show_devices(cloud["token"])
+            refresh = input("  Re-login anyway? [y/N]: ").strip().lower()
+            if refresh != "y":
+                return
+        except Exception:
+            print("  Cached token is invalid or expired.")
+
+    # Accept env vars or prompt
+    email = os.environ.get("BAMBU_EMAIL") or input("  Email: ").strip()
+    password = os.environ.get("BAMBU_PASSWORD") or input("  Password: ").strip()
     if not email or not password:
         print("  Skipped — email and password required.")
         return

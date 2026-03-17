@@ -222,6 +222,61 @@ def _read_machine_info(profile_name: str, engine: str) -> _MachineInfo:
     return info
 
 
+def _list_configured_printers() -> dict[str, dict]:
+    """Return configured printers from credentials.toml, or empty dict."""
+    try:
+        from fabprint.credentials import list_printers
+
+        return list_printers() or {}
+    except Exception:
+        return {}
+
+
+def _query_ams_trays(configured: dict[str, dict]) -> list[dict]:
+    """Query a configured cloud printer for AMS tray info.
+
+    Returns list of tray dicts with 'type', 'color', 'phys_slot' keys,
+    or empty list if unavailable.
+    """
+    # Find the first bambu-cloud printer
+    for name, creds in configured.items():
+        if creds.get("type") != "bambu-cloud":
+            continue
+        serial = creds.get("serial")
+        if not serial:
+            continue
+        try:
+            from fabprint.cloud import cloud_status, parse_ams_trays
+            from fabprint.credentials import cloud_token_json
+
+            with cloud_token_json() as token_file:
+                status = cloud_status(serial, token_file)
+            return parse_ams_trays(status)
+        except Exception:
+            return []
+    return []
+
+
+def _match_filament_profile(tray_type: str, profile_names: list[str]) -> str | None:
+    """Best-effort match an AMS tray type (e.g. 'PLA') to a slicer profile name.
+
+    Looks for 'Generic <type>' first, then any profile containing the type string.
+    """
+    tray_upper = tray_type.upper()
+    # Prefer "Generic PLA @base" style
+    for name in profile_names:
+        if name.upper().startswith(f"GENERIC {tray_upper}") and "@base" in name.lower():
+            return name
+    for name in profile_names:
+        if name.upper().startswith(f"GENERIC {tray_upper}"):
+            return name
+    # Fallback: any profile containing the type
+    for name in profile_names:
+        if tray_upper in name.upper():
+            return name
+    return None
+
+
 def _detect_orca_version() -> str | None:
     """Try to detect the installed OrcaSlicer version."""
     try:
@@ -342,6 +397,37 @@ def run_wizard(output: Path | None = None) -> str:
 
     engine = "orca"
 
+    # --- Step 0: Check for configured printers ---
+    configured = _list_configured_printers()
+    if not configured:
+        print("No printers configured yet.")
+        if _prompt_yn("Run 'fabprint setup' to add a printer first?"):
+            from fabprint.credentials import setup_printer
+
+            print()
+            setup_printer()
+            print()
+            # Refresh after setup
+            configured = _list_configured_printers()
+        else:
+            print("  Continuing without printer setup.\n")
+
+    # --- Query AMS trays from configured printer ---
+    ams_trays: list[dict] = []
+    if configured:
+        print("Checking printer AMS status...")
+        ams_trays = _query_ams_trays(configured)
+        if ams_trays:
+            print(f"  Found {len(ams_trays)} loaded AMS slot(s):")
+            for t in ams_trays:
+                c = t["color"]
+                r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+                swatch = f"\033[48;2;{r};{g};{b}m  \033[0m"
+                print(f"    Slot {t['phys_slot'] + 1}: {t['type']}  {swatch}")
+        else:
+            print("  Could not read AMS trays (printer may be offline).")
+        print()
+
     # --- Step 1: Discover profiles ---
     try:
         profiles = discover_profiles(engine)
@@ -377,7 +463,23 @@ def run_wizard(output: Path | None = None) -> str:
     # --- Step 5: Pick filament(s) ---
     filament_names: list[str] = []
     filament_options = sorted(profiles.get("filament", {}).keys())
-    if filament_options:
+
+    # Try to pre-populate from AMS trays
+    ams_suggestions: list[str | None] = []
+    if ams_trays and filament_options:
+        ams_suggestions = [_match_filament_profile(t["type"], filament_options) for t in ams_trays]
+
+    if ams_suggestions and any(ams_suggestions):
+        # Show what we matched from AMS and let user confirm/edit
+        print("Filament profiles (matched from AMS):")
+        for i, (tray, suggestion) in enumerate(zip(ams_trays, ams_suggestions)):
+            label = suggestion or "? (no match)"
+            print(f"  Slot {tray['phys_slot'] + 1}: {tray['type']} → {label}")
+        if _prompt_yn("Use these filaments?"):
+            filament_names = [s for s in ams_suggestions if s]
+        print()
+
+    if not filament_names and filament_options:
         if machine_info.multi_material:
             print("Printer supports multi-material (AMS). Pick a filament for each slot.")
             slot = 1
@@ -396,7 +498,8 @@ def run_wizard(output: Path | None = None) -> str:
             chosen = _prompt_choice("Pick a filament: ", filament_options)
             filament_names.append(filament_options[chosen[0]])
         print()
-    else:
+
+    if not filament_names:
         fil = _prompt_str("Filament profile name", "Generic PLA @base")
         filament_names = [fil]
         print()
@@ -469,10 +572,22 @@ def run_wizard(output: Path | None = None) -> str:
 
     # --- Step 10: Printer connection ---
     printer_name = None
-    if "print" in stages and _prompt_yn("Configure printer connection?", default=False):
-        printer_name = _prompt_str("  Printer name (from 'fabprint setup')", "")
-        if not printer_name:
-            printer_name = None
+    if "print" in stages:
+        configured = _list_configured_printers()
+        if configured:
+            names = list(configured.keys())
+            print("Configured printers:")
+            for i, (n, creds) in enumerate(configured.items(), 1):
+                ptype = creds.get("type", "unknown")
+                print(f"  [{i}] {n} ({ptype})")
+            print(f"  [{len(names) + 1}] Skip")
+            chosen = _prompt_choice("Pick a printer: ", [*names, "Skip (configure later)"])
+            pick = names[chosen[0]] if chosen[0] < len(names) else None
+            printer_name = pick
+        elif _prompt_yn("Configure printer connection?", default=False):
+            printer_name = _prompt_str("  Printer name (from 'fabprint setup')", "")
+            if not printer_name:
+                printer_name = None
         print()
 
     # --- Build TOML ---

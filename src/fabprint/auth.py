@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 
 import requests
@@ -110,53 +109,6 @@ def _get_devices(token: str) -> list[dict]:
     )
     resp.raise_for_status()
     return resp.json().get("devices", [])
-
-
-def cloud_login(email: str | None = None, password: str | None = None) -> None:
-    """Interactive Bambu Cloud login. Saves token to credentials.toml."""
-    from fabprint.credentials import load_cloud_credentials, save_cloud_credentials
-
-    email = email or os.environ.get("BAMBU_EMAIL")
-    password = password or os.environ.get("BAMBU_PASSWORD")
-    if not email or not password:
-        print("Set BAMBU_EMAIL and BAMBU_PASSWORD environment variables,")
-        print("or pass --email and --password.")
-        sys.exit(1)
-
-    print("\nBambu Cloud Login")
-    print(f"  Account: {email}")
-
-    # Check for existing token
-    cloud = load_cloud_credentials()
-    if cloud and cloud.get("email") == email and cloud.get("token"):
-        try:
-            profile = _get_user_profile(cloud["token"])
-            print(f"\n  Found cached token (valid for {profile['name'] or profile['uid']})")
-
-            refresh = input("  Refresh token anyway? [y/N]: ").strip().lower()
-            if refresh != "y":
-                _show_devices(cloud["token"])
-                return
-        except Exception:
-            pass
-
-    # Fresh login
-    print("\n  Logging in...")
-    token, refresh_token = _login(email, password)
-    profile = _get_user_profile(token)
-
-    save_cloud_credentials(
-        token=token,
-        refresh_token=refresh_token,
-        email=email,
-        uid=profile["uid"],
-    )
-
-    print("\n  Login successful!")
-    print(f"  User: {profile['name'] or profile['uid']}")
-    print("  Token saved to credentials.toml")
-
-    _show_devices(token)
 
 
 def _show_devices(token: str) -> None:
