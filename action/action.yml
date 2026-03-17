@@ -17,6 +17,10 @@ inputs:
     description: "Run pipeline up to this stage (default: slice)"
     required: false
     default: "slice"
+  output-dir:
+    description: "Output directory for sliced files (relative to repo root)"
+    required: false
+    default: "fabprint_output"
   comment:
     description: "Post a PR comment with build metrics (true/false)"
     required: false
@@ -35,39 +39,52 @@ runs:
   steps:
     - name: Build fabprint image
       shell: bash
+      env:
+        ORCA_VERSION: ${{ inputs.orca-version }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
-        IMAGE="fabprint:orca-${{ inputs.orca-version }}"
+        IMAGE="fabprint:orca-${ORCA_VERSION}"
         if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
           echo "::group::Building fabprint Docker image"
           docker build \
-            --build-arg ORCA_VERSION=${{ inputs.orca-version }} \
+            --build-arg "ORCA_VERSION=${ORCA_VERSION}" \
             -t "$IMAGE" \
-            "${{ github.action_path }}/.."
+            "${ACTION_PATH}/.."
           echo "::endgroup::"
         fi
 
     - name: Run fabprint pipeline
       shell: bash
+      env:
+        ORCA_VERSION: ${{ inputs.orca-version }}
+        CONFIG: ${{ inputs.config }}
+        UNTIL: ${{ inputs.until }}
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        WORKSPACE: ${{ github.workspace }}
       run: |
         docker run --rm \
-          -v "${{ github.workspace }}:/project" \
-          "fabprint:orca-${{ inputs.orca-version }}" \
-          run "${{ inputs.config }}" \
-          --until "${{ inputs.until }}" \
+          -v "${WORKSPACE}:/project" \
+          "fabprint:orca-${ORCA_VERSION}" \
+          run "${CONFIG}" \
+          --until "${UNTIL}" \
+          --output "/project/${OUTPUT_DIR}" \
           -v \
           2>&1 | tee /tmp/fabprint-output.log
 
     - name: Extract build metrics
       id: metrics
       shell: bash
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
+        WORKSPACE: ${{ github.workspace }}
       run: |
         # Find gcode files and extract stats
-        OUTPUT_DIR="${{ github.workspace }}/output"
-        GCODE=$(find "$OUTPUT_DIR" -name '*.gcode' -type f 2>/dev/null | head -1)
+        FULL_OUTPUT_DIR="${WORKSPACE}/${OUTPUT_DIR}"
+        GCODE=$(find "$FULL_OUTPUT_DIR" -name '*.gcode' -type f 2>/dev/null | head -1)
 
         if [ -z "$GCODE" ]; then
           # Try inside .gcode.3mf
-          MF=$(find "$OUTPUT_DIR" -name '*.gcode.3mf' -type f 2>/dev/null | head -1)
+          MF=$(find "$FULL_OUTPUT_DIR" -name '*.gcode.3mf' -type f 2>/dev/null | head -1)
           if [ -n "$MF" ]; then
             echo "gcode-3mf=$MF" >> "$GITHUB_OUTPUT"
           fi
@@ -79,25 +96,32 @@ runs:
 
         echo "print-time=${PRINT_TIME}" >> "$GITHUB_OUTPUT"
         echo "filament-grams=${FILAMENT}" >> "$GITHUB_OUTPUT"
-        echo "gcode-path=${OUTPUT_DIR}" >> "$GITHUB_OUTPUT"
+        echo "gcode-path=${FULL_OUTPUT_DIR}" >> "$GITHUB_OUTPUT"
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
+      env:
+        OUTPUT_DIR: ${{ inputs.output-dir }}
       with:
         name: fabprint-output
         path: |
-          output/*.gcode
-          output/*.3mf
-          output/*.png
+          ${{ inputs.output-dir }}/*.gcode
+          ${{ inputs.output-dir }}/*.3mf
+          ${{ inputs.output-dir }}/*.png
         if-no-files-found: warn
 
     - name: Post PR comment
       if: inputs.comment == 'true' && github.event_name == 'pull_request'
       uses: actions/github-script@v7
+      env:
+        PRINT_TIME: ${{ steps.metrics.outputs.print-time }}
+        FILAMENT_GRAMS: ${{ steps.metrics.outputs.filament-grams }}
+        ORCA_VERSION: ${{ inputs.orca-version }}
       with:
         script: |
-          const printTime = '${{ steps.metrics.outputs.print-time }}' || 'unknown';
-          const filament = '${{ steps.metrics.outputs.filament-grams }}' || 'unknown';
+          const printTime = process.env.PRINT_TIME || 'unknown';
+          const filament = process.env.FILAMENT_GRAMS || 'unknown';
+          const orcaVersion = process.env.ORCA_VERSION || 'unknown';
           const marker = '<!-- fabprint-slice-result -->';
 
           const body = [
@@ -109,7 +133,7 @@ runs:
             `| Print time | ${printTime} |`,
             `| Filament | ${filament}g |`,
             '',
-            `Sliced with OrcaSlicer ${{ inputs.orca-version }}`,
+            `Sliced with OrcaSlicer ${orcaVersion}`,
             '',
             '> Download the sliced output from the **fabprint-output** artifact above.',
           ].join('\n');
