@@ -47,6 +47,8 @@ fabprint init --template            # dump a commented template to stdout
 fabprint init --template > fabprint.toml   # save template and edit manually
 ```
 
+[![fabprint init --template](https://asciinema.org/a/xt0yrvXEuYxlPCXz.svg)](https://asciinema.org/a/xt0yrvXEuYxlPCXz)
+
 Or create `fabprint.toml` by hand (see [full config reference](https://github.com/pzfreo/fabprint/blob/main/docs/config.md)):
 
 ```toml
@@ -90,6 +92,8 @@ fabprint run --until plate     # stop after plating
 fabprint run --until slice     # stop after slicing
 fabprint run --dry-run         # full pipeline without sending to printer
 ```
+
+[![fabprint run --until plate](https://asciinema.org/a/3MqHI4Y7Yjearcag.svg)](https://asciinema.org/a/3MqHI4Y7Yjearcag)
 
 The plate stage generates a `plate_preview.3mf` — open it in any 3MF viewer to check placement:
 
