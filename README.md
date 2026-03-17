@@ -5,21 +5,41 @@
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-**Reproducible 3D print pipeline**: define parts, slicer settings, and printer targets in a TOML file — arrange, slice, and print from the command line.
+3D prints are hard to reproduce:
+
+- Slicer settings get lost between sessions
+- Printer configs drift across machines
+- There's no easy way to version or diff a print job
+
+**fabprint makes 3D printing reproducible.** Define your models, slicer settings, and printer config once in a TOML file, then arrange, slice, and print from the command line — identically on any machine. It works with any STL or 3MF file, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
+
+```toml
+# fabprint.toml
+[[parts]]
+file = "benchy.stl"
+
+[slicer]
+engine = "orca"
+printer = "Bambu Lab P1S 0.4 nozzle"
+process = "0.20mm Standard @BBL X1C"
+
+[printer]
+name = "workshop"
+```
+
+```bash
+fabprint run        # arrange → slice → print, one command
+```
 
 ![fabprint pipeline](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/pipeline.png)
 
-## Why fabprint?
+## How it works
 
-Code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org) and [cadquery](https://github.com/cadquery/cadquery) let you define parts in code — parametric, testable, version-controlled. But the moment you print, that breaks: open a slicer GUI, drag in files, fiddle with settings. No diffs, no reproducibility.
-
-fabprint closes the gap:
-
-- **Everything is text** — TOML config, git-friendly, diffable
+- **Everything is text** — one TOML config per project, git-friendly and diffable
 - **Pinned profiles** — lock exact slicer, filament, and process profiles in your repo
 - **Slicer overrides** — tweak support, bed type, wall count without touching profile files
-- **Versioned Docker slicing** — pin OrcaSlicer version for identical gcode across machines
-- **One command** — `fabprint run` goes from STL files to a running print
+- **Versioned Docker slicing** — pin OrcaSlicer version for identical G-code across machines
+- **One command** — `fabprint run` goes from STL/STEP files to a running print
 
 ### How is this different from OrcaSlicer CLI?
 
