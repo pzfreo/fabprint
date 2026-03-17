@@ -273,10 +273,26 @@ def setup_printer() -> None:
 
 def _cloud_login_flow(existing: dict) -> None:
     """Run the Bambu Cloud login flow and save credentials."""
+    import os
+
     from fabprint.auth import _get_user_profile, _login, _show_devices
 
-    email = input("  Email: ").strip()
-    password = input("  Password: ").strip()
+    # Check for existing valid token
+    cloud = existing.get("cloud")
+    if cloud and cloud.get("token"):
+        try:
+            profile = _get_user_profile(cloud["token"])
+            print(f"  Cached token is valid ({profile.get('name') or profile['uid']})")
+            _show_devices(cloud["token"])
+            refresh = input("  Re-login anyway? [y/N]: ").strip().lower()
+            if refresh != "y":
+                return
+        except Exception:
+            print("  Cached token is invalid or expired.")
+
+    # Accept env vars or prompt
+    email = os.environ.get("BAMBU_EMAIL") or input("  Email: ").strip()
+    password = os.environ.get("BAMBU_PASSWORD") or input("  Password: ").strip()
     if not email or not password:
         print("  Skipped — email and password required.")
         return

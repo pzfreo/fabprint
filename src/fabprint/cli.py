@@ -257,13 +257,6 @@ def main(argv: list[str] | None = None) -> None:
         help="Set up a printer (credentials, cloud login, connection type)",
     )
 
-    # --- login subcommand ---
-    login_cmd = sub.add_parser(
-        "login", parents=[common], help="Login to Bambu Cloud and cache token"
-    )
-    login_cmd.add_argument("--email", type=str, default=None, help="Bambu account email")
-    login_cmd.add_argument("--password", type=str, default=None, help="Bambu account password")
-
     # --- status subcommand ---
     status_cmd = sub.add_parser(
         "status", parents=[common], help="Query printer status (all configured or by name)"
@@ -308,8 +301,6 @@ def main(argv: list[str] | None = None) -> None:
             _cmd_validate(args)
         elif args.command == "setup":
             _cmd_setup(args)
-        elif args.command == "login":
-            _cmd_login(args)
         elif args.command == "status":
             _cmd_status(args)
         elif args.command == "watch":
@@ -396,11 +387,6 @@ def _cmd_validate(args: argparse.Namespace) -> None:
 # Non-pipeline subcommand handlers
 # ---------------------------------------------------------------------------
 
-
-def _cmd_login(args: argparse.Namespace) -> None:
-    from fabprint.auth import cloud_login
-
-    cloud_login(email=args.email, password=args.password)
 
 
 def _cmd_status(args: argparse.Namespace) -> None:
