@@ -184,30 +184,69 @@ def _closest_match(name: str, candidates: list[str]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+_FILTER_THRESHOLD = 20  # show search prompt when list exceeds this size
+
+
 def _prompt_choice(prompt: str, options: list[str], allow_multi: bool = False) -> list[int]:
-    """Show a numbered list and return selected indices."""
-    for i, opt in enumerate(options, 1):
+    """Show a numbered list and return selected indices.
+
+    For long lists (>20 items), prompts user to type a search term first,
+    then shows only matching entries.
+    """
+    filtered = options
+    filter_indices = list(range(len(options)))
+
+    if len(options) > _FILTER_THRESHOLD:
+        filtered, filter_indices = _search_filter(options)
+
+    for i, opt in enumerate(filtered, 1):
         print(f"  [{i}] {opt}")
 
     while True:
         raw = input(prompt).strip()
         if not raw:
             continue
+        # Allow re-searching from the selection prompt
+        if not raw[0].isdigit() and raw.lower() != "all":
+            filtered, filter_indices = _search_filter(options, raw)
+            for i, opt in enumerate(filtered, 1):
+                print(f"  [{i}] {opt}")
+            continue
         if allow_multi and raw.lower() == "all":
-            return list(range(len(options)))
+            return list(filter_indices)
         try:
             if allow_multi:
-                indices = [int(x.strip()) - 1 for x in raw.split(",")]
+                picks = [int(x.strip()) - 1 for x in raw.split(",")]
             else:
-                indices = [int(raw) - 1]
-            if all(0 <= i < len(options) for i in indices):
-                return indices
+                picks = [int(raw) - 1]
+            if all(0 <= p < len(filtered) for p in picks):
+                return [filter_indices[p] for p in picks]
         except ValueError:
             pass
         print(
-            f"  Please enter a number 1-{len(options)}"
-            + (" (comma-separated or 'all')" if allow_multi else "")
+            f"  Enter a number 1-{len(filtered)}"
+            + (" (comma-separated, 'all', or type to search)" if allow_multi else "")
+            + (" or type to search" if not allow_multi and len(options) > _FILTER_THRESHOLD else "")
         )
+
+
+def _search_filter(options: list[str], query: str | None = None) -> tuple[list[str], list[int]]:
+    """Prompt for a search term and return matching options with original indices."""
+    while True:
+        if query is None:
+            query = input(f"  Search ({len(options)} available, type to filter): ").strip()
+        if not query:
+            query = None
+            continue
+        q = query.lower()
+        matches = [(i, o) for i, o in enumerate(options) if q in o.lower()]
+        if matches:
+            print(f"  {len(matches)} match(es) for '{query}':")
+            indices = [i for i, _ in matches]
+            names = [o for _, o in matches]
+            return names, indices
+        print(f"  No matches for '{query}'. Try again.")
+        query = None
 
 
 def _prompt_str(prompt: str, default: str | None = None) -> str:

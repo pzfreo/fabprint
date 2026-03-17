@@ -6,7 +6,13 @@ from unittest.mock import patch
 import pytest
 
 from fabprint.cli import main
-from fabprint.init import _build_toml, _closest_match, dump_template, validate_config
+from fabprint.init import (
+    _build_toml,
+    _closest_match,
+    _search_filter,
+    dump_template,
+    validate_config,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -154,6 +160,37 @@ class TestClosestMatch:
     def test_no_match(self):
         result = _closest_match("xyz_nothing", ["abc", "def"])
         assert result is None or isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# Search filter helper
+# ---------------------------------------------------------------------------
+
+
+class TestSearchFilter:
+    def test_filter_matches(self):
+        options = ["Generic PLA @base", "Generic PETG @base", "Bambu PLA Basic"]
+        names, indices = _search_filter(options, "PLA")
+        assert len(names) == 2
+        assert "Generic PLA @base" in names
+        assert "Bambu PLA Basic" in names
+        # indices should map back to original positions
+        assert all(options[i] in names for i in indices)
+
+    def test_filter_case_insensitive(self):
+        options = ["Generic PLA @base", "Generic PETG @base"]
+        names, indices = _search_filter(options, "pla")
+        assert len(names) == 1
+        assert names[0] == "Generic PLA @base"
+
+    def test_filter_no_match_reprompts(self, monkeypatch):
+        options = ["Generic PLA @base", "Generic PETG @base"]
+        # First query has no match, second does
+        inputs = iter(["xyz", "PLA"])
+        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
+        names, indices = _search_filter(options, "nothing")
+        assert len(names) == 1
+        assert names[0] == "Generic PLA @base"
 
 
 # ---------------------------------------------------------------------------
