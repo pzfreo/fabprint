@@ -1,0 +1,458 @@
+"""fabprint init and validate commands."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fabprint.config import DEFAULT_STAGES, VALID_ORIENTS
+
+# ---------------------------------------------------------------------------
+# Template
+# ---------------------------------------------------------------------------
+
+_TEMPLATE = """\
+# fabprint.toml — reproducible 3D print pipeline config
+# Docs: https://github.com/pzfreo/fabprint/blob/main/docs/config.md
+
+[pipeline]
+# Stages to run: load, arrange, plate, slice, print
+stages = ["load", "arrange", "plate", "slice"]
+
+[plate]
+size = [256, 256]       # bed size in mm [x, y]
+padding = 5.0           # gap between parts in mm
+
+[slicer]
+engine = "orca"                            # "orca" or "bambu"
+# version = "2.3.1"                        # pin OrcaSlicer version for reproducibility
+printer = "Bambu Lab P1S 0.4 nozzle"       # machine profile name
+process = "0.20mm Standard @BBL X1C"       # process/quality profile
+filaments = ["Generic PLA @base"]          # filament profiles (one per AMS slot)
+
+# Per-slot filament mapping (alternative to filaments list):
+# [slicer.slots]
+# 1 = "Generic PLA @base"
+# 2 = "Generic PETG @base"
+
+# Slicer setting overrides:
+# [slicer.overrides]
+# sparse_infill_density = "25%"
+# wall_loops = 3
+
+[[parts]]
+file = "my-part.stl"          # path relative to this file
+copies = 1                     # number of copies
+orient = "flat"                # flat, upright, or side
+# filament = "Generic PLA @base"  # filament name or slot number (default: 1)
+# scale = 1.0                     # uniform scale factor
+# rotate = [0, 0, 45]            # [rx, ry, rz] in degrees (overrides orient)
+# sequence = 1                    # print order for sequential printing
+
+# Add more parts:
+# [[parts]]
+# file = "another-part.step"
+# copies = 2
+# orient = "upright"
+
+# Printer connection (optional — requires credentials.toml):
+# [printer]
+# mode = "bambu-lan"            # bambu-lan, bambu-connect, or cloud-bridge
+# name = "my-printer"           # references [printers.my-printer] in credentials.toml
+"""
+
+
+def dump_template() -> str:
+    """Return the commented TOML template string."""
+    return _TEMPLATE
+
+
+# ---------------------------------------------------------------------------
+# Validate
+# ---------------------------------------------------------------------------
+
+
+def validate_config(path: Path) -> list[str]:
+    """Validate a fabprint.toml and return a list of warnings.
+
+    Raises FabprintError for hard errors (via load_config).
+    Returns a list of actionable warning strings for soft issues.
+    """
+    from fabprint.config import load_config
+    from fabprint.pipeline import STAGE_OUTPUTS
+    from fabprint.profiles import discover_profiles
+
+    cfg = load_config(path)
+    warnings: list[str] = []
+
+    # Check slicer version pinning
+    if not cfg.slicer.version:
+        warnings.append(
+            'slicer.version is not set — pin it for reproducible builds (e.g. version = "2.3.1")'
+        )
+
+    # Check profile availability
+    try:
+        profiles = discover_profiles(cfg.slicer.engine)
+    except ValueError:
+        profiles = {}
+
+    if profiles:
+        if cfg.slicer.printer:
+            machines = profiles.get("machine", {})
+            if cfg.slicer.printer not in machines:
+                close = _closest_match(cfg.slicer.printer, list(machines.keys()))
+                hint = f" Did you mean '{close}'?" if close else ""
+                warnings.append(
+                    f"slicer.printer '{cfg.slicer.printer}' not found in "
+                    f"installed {cfg.slicer.engine} profiles.{hint}"
+                )
+
+        if cfg.slicer.process:
+            processes = profiles.get("process", {})
+            if cfg.slicer.process not in processes:
+                close = _closest_match(cfg.slicer.process, list(processes.keys()))
+                hint = f" Did you mean '{close}'?" if close else ""
+                warnings.append(
+                    f"slicer.process '{cfg.slicer.process}' not found in "
+                    f"installed {cfg.slicer.engine} profiles.{hint}"
+                )
+
+        filament_profiles = profiles.get("filament", {})
+        for fil in cfg.slicer.filaments:
+            if fil not in filament_profiles:
+                close = _closest_match(fil, list(filament_profiles.keys()))
+                hint = f" Did you mean '{close}'?" if close else ""
+                warnings.append(
+                    f"slicer filament '{fil}' not found in "
+                    f"installed {cfg.slicer.engine} profiles.{hint}"
+                )
+
+    # Check printer credentials reference
+    if cfg.printer and cfg.printer.name:
+        from fabprint.credentials import _credentials_path
+
+        cred_path = _credentials_path()
+        if not cred_path.exists():
+            warnings.append(
+                f"printer.name = '{cfg.printer.name}' but credentials file not found: {cred_path}"
+            )
+        else:
+            import tomllib
+
+            with open(cred_path, "rb") as f:
+                creds = tomllib.load(f)
+            printers = creds.get("printers", {})
+            if cfg.printer.name not in printers:
+                available = list(printers.keys())
+                warnings.append(
+                    f"printer '{cfg.printer.name}' not found in {cred_path}. Available: {available}"
+                )
+
+    # Check for absolute part paths
+    for i, part in enumerate(cfg.parts):
+        if part.file.is_absolute():
+            warnings.append(
+                f"parts[{i}].file is an absolute path — consider making it relative for portability"
+            )
+
+    # Check pipeline stages
+    for stage in cfg.pipeline.stages:
+        if stage not in STAGE_OUTPUTS:
+            warnings.append(f"pipeline stage '{stage}' is unknown")
+
+    return warnings
+
+
+def _closest_match(name: str, candidates: list[str]) -> str | None:
+    """Return the closest matching string from candidates, or None."""
+    if not candidates:
+        return None
+    name_lower = name.lower()
+    # Try substring match first
+    for c in candidates:
+        if name_lower in c.lower() or c.lower() in name_lower:
+            return c
+    # Simple prefix match
+    for c in candidates:
+        if c.lower().startswith(name_lower[:8]):
+            return c
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Interactive wizard
+# ---------------------------------------------------------------------------
+
+
+def _prompt_choice(prompt: str, options: list[str], allow_multi: bool = False) -> list[int]:
+    """Show a numbered list and return selected indices."""
+    for i, opt in enumerate(options, 1):
+        print(f"  [{i}] {opt}")
+
+    while True:
+        raw = input(prompt).strip()
+        if not raw:
+            continue
+        if allow_multi and raw.lower() == "all":
+            return list(range(len(options)))
+        try:
+            if allow_multi:
+                indices = [int(x.strip()) - 1 for x in raw.split(",")]
+            else:
+                indices = [int(raw) - 1]
+            if all(0 <= i < len(options) for i in indices):
+                return indices
+        except ValueError:
+            pass
+        print(
+            f"  Please enter a number 1-{len(options)}"
+            + (" (comma-separated or 'all')" if allow_multi else "")
+        )
+
+
+def _prompt_str(prompt: str, default: str | None = None) -> str:
+    """Prompt for a string value with optional default."""
+    suffix = f" [{default}]" if default else ""
+    raw = input(f"{prompt}{suffix}: ").strip()
+    return raw or (default or "")
+
+
+def _prompt_int(prompt: str, default: int) -> int:
+    """Prompt for an integer with a default."""
+    raw = input(f"{prompt} [{default}]: ").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"  Using default: {default}")
+        return default
+
+
+def _prompt_yn(prompt: str, default: bool = True) -> bool:
+    """Prompt yes/no with a default."""
+    hint = "Y/n" if default else "y/N"
+    raw = input(f"{prompt} [{hint}]: ").strip().lower()
+    if not raw:
+        return default
+    return raw.startswith("y")
+
+
+def run_wizard(output: Path | None = None) -> str:
+    """Run the interactive init wizard and return generated TOML."""
+    from fabprint.profiles import discover_profiles
+
+    print("fabprint init — interactive config wizard\n")
+
+    # --- Step 1: Slicer engine ---
+    engine = "orca"
+    if not _prompt_yn("Use OrcaSlicer?"):
+        engine = "bambu"
+    print()
+
+    # --- Step 2: Discover profiles ---
+    try:
+        profiles = discover_profiles(engine)
+    except ValueError:
+        profiles = {"machine": {}, "process": {}, "filament": {}}
+
+    # --- Step 3: Pick printer profile ---
+    printer_profile = None
+    machines = sorted(profiles.get("machine", {}).keys())
+    if machines:
+        print("Printer profiles:")
+        chosen = _prompt_choice("Pick a printer profile: ", machines)
+        printer_profile = machines[chosen[0]]
+        print()
+    else:
+        printer_profile = _prompt_str("Printer profile name (e.g. 'Bambu Lab P1S 0.4 nozzle')")
+        print()
+
+    # --- Step 4: Pick process profile ---
+    process_profile = None
+    processes = sorted(profiles.get("process", {}).keys())
+    if processes:
+        print("Process profiles:")
+        chosen = _prompt_choice("Pick a process profile: ", processes)
+        process_profile = processes[chosen[0]]
+        print()
+    else:
+        process_profile = _prompt_str("Process profile name (e.g. '0.20mm Standard @BBL X1C')")
+        print()
+
+    # --- Step 5: Pick filament(s) ---
+    filament_names: list[str] = []
+    filament_options = sorted(profiles.get("filament", {}).keys())
+    if filament_options:
+        print("Filament profiles (comma-separated or 'all'):")
+        chosen = _prompt_choice("Pick filament(s): ", filament_options, allow_multi=True)
+        filament_names = [filament_options[i] for i in chosen]
+        print()
+    else:
+        fil = _prompt_str("Filament profile name", "Generic PLA @base")
+        filament_names = [fil]
+        print()
+
+    # --- Step 6: Discover CAD files ---
+    cwd = Path.cwd()
+    candidates = sorted(
+        p for ext in ("*.stl", "*.3mf", "*.step", "*.STL", "*.3MF", "*.STEP") for p in cwd.glob(ext)
+    )
+    parts_config: list[dict] = []
+    if candidates:
+        print(f"Found {len(candidates)} CAD file(s) in current directory:")
+        names = [p.name for p in candidates]
+        chosen = _prompt_choice(
+            "Select files to include (comma-separated or 'all'): ",
+            names,
+            allow_multi=True,
+        )
+        print()
+        for idx in chosen:
+            f = candidates[idx]
+            copies = _prompt_int(f"  {f.name} — copies?", 1)
+            print("  Orient options: flat, upright, side")
+            orient = _prompt_str(f"  {f.name} — orient?", "flat")
+            if orient not in VALID_ORIENTS:
+                orient = "flat"
+            fil_slot = 1
+            if len(filament_names) > 1:
+                fil_slot = _prompt_int(f"  {f.name} — filament slot (1-{len(filament_names)})?", 1)
+            parts_config.append(
+                {
+                    "file": f.name,
+                    "copies": copies,
+                    "orient": orient,
+                    "filament": fil_slot,
+                }
+            )
+        print()
+
+    if not parts_config:
+        # No CAD files found or selected — add a placeholder
+        file_name = _prompt_str("Part file path (relative to this directory)", "my-part.stl")
+        parts_config.append({"file": file_name, "copies": 1, "orient": "flat", "filament": 1})
+        print()
+
+    # --- Step 7: Plate size ---
+    plate_x = _prompt_int("Plate width (mm)?", 256)
+    plate_y = _prompt_int("Plate depth (mm)?", 256)
+    print()
+
+    # --- Step 8: Slicer version ---
+    slicer_version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)")
+    print()
+
+    # --- Step 9: Pipeline stages ---
+    stages = list(DEFAULT_STAGES)
+    if not _prompt_yn("Include print stage in pipeline?"):
+        stages = [s for s in stages if s != "print"]
+    print()
+
+    # --- Step 10: Printer connection ---
+    printer_section = None
+    if "print" in stages and _prompt_yn("Configure printer connection?", default=False):
+        print("  Modes: bambu-lan, bambu-connect, cloud-bridge")
+        mode = _prompt_str("  Printer mode", "bambu-lan")
+        name = _prompt_str("  Printer name (from credentials.toml)", "")
+        if name:
+            printer_section = {"mode": mode, "name": name}
+        else:
+            printer_section = {"mode": mode}
+        print()
+
+    # --- Build TOML ---
+    toml = _build_toml(
+        engine=engine,
+        printer_profile=printer_profile,
+        process_profile=process_profile,
+        filament_names=filament_names,
+        parts=parts_config,
+        plate_size=(plate_x, plate_y),
+        slicer_version=slicer_version or None,
+        stages=stages,
+        printer_section=printer_section,
+    )
+
+    # --- Preview and confirm ---
+    print("--- Generated fabprint.toml ---")
+    print(toml)
+    print("-------------------------------")
+
+    dest = output or Path("fabprint.toml")
+    if dest.exists():
+        if not _prompt_yn(f"{dest} already exists. Overwrite?", default=False):
+            print("Aborted.")
+            return toml
+
+    if _prompt_yn(f"Write to {dest}?"):
+        dest.write_text(toml)
+        print(f"Wrote {dest}")
+    else:
+        print("Not written. Copy the output above to create your config.")
+
+    return toml
+
+
+def _build_toml(
+    *,
+    engine: str,
+    printer_profile: str | None,
+    process_profile: str | None,
+    filament_names: list[str],
+    parts: list[dict],
+    plate_size: tuple[int, int],
+    slicer_version: str | None,
+    stages: list[str],
+    printer_section: dict | None,
+) -> str:
+    """Build a TOML string from wizard answers."""
+    lines: list[str] = []
+
+    # Pipeline
+    stage_list = ", ".join(f'"{s}"' for s in stages)
+    lines.append("[pipeline]")
+    lines.append(f"stages = [{stage_list}]")
+    lines.append("")
+
+    # Plate
+    lines.append("[plate]")
+    lines.append(f"size = [{plate_size[0]}, {plate_size[1]}]")
+    lines.append("padding = 5.0")
+    lines.append("")
+
+    # Slicer
+    lines.append("[slicer]")
+    lines.append(f'engine = "{engine}"')
+    if slicer_version:
+        lines.append(f'version = "{slicer_version}"')
+    if printer_profile:
+        lines.append(f'printer = "{printer_profile}"')
+    if process_profile:
+        lines.append(f'process = "{process_profile}"')
+    if filament_names:
+        fil_list = ", ".join(f'"{f}"' for f in filament_names)
+        lines.append(f"filaments = [{fil_list}]")
+    lines.append("")
+
+    # Parts
+    for p in parts:
+        lines.append("[[parts]]")
+        lines.append(f'file = "{p["file"]}"')
+        if p.get("copies", 1) != 1:
+            lines.append(f"copies = {p['copies']}")
+        if p.get("orient", "flat") != "flat":
+            lines.append(f'orient = "{p["orient"]}"')
+        if p.get("filament", 1) != 1:
+            lines.append(f"filament = {p['filament']}")
+        lines.append("")
+
+    # Printer
+    if printer_section:
+        lines.append("[printer]")
+        lines.append(f'mode = "{printer_section["mode"]}"')
+        if printer_section.get("name"):
+            lines.append(f'name = "{printer_section["name"]}"')
+        lines.append("")
+
+    return "\n".join(lines)
