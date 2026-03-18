@@ -204,13 +204,109 @@ def run(
 ) -> None:
     """Run the pipeline defined in fabprint.toml."""
     _setup_logging(verbose)
-    from fabprint.pipeline import resolve_outputs, resolve_overrides
 
     if until and only:
         raise ValueError("Cannot use both --until and --only")
 
     resolved_config = _resolve_config_path(config)
+    _run_pipeline(
+        config=resolved_config,
+        output_dir=output_dir,
+        until=until,
+        only=only,
+        local=local,
+        docker_version=docker_version,
+        verbose=verbose,
+        scale=scale,
+        filament_type=filament_type,
+        filament_slot=filament_slot,
+        dry_run=dry_run,
+        upload_only=upload_only,
+        experimental=experimental,
+        no_ams_mapping=no_ams_mapping,
+    )
+
+
+@app.command()
+def watch(
+    config: Annotated[Optional[Path], typer.Argument(help="Path to config file")] = None,
+    output_dir: Annotated[
+        Optional[Path], typer.Option("-o", "--output-dir", help="Output directory")
+    ] = None,
+    until: Annotated[
+        Optional[str], typer.Option(help="Run pipeline up to and including this stage")
+    ] = None,
+    local: Annotated[
+        bool, typer.Option("--local", help="Force local slicer (fail if not installed)")
+    ] = False,
+    docker_version: Annotated[
+        Optional[str],
+        typer.Option(help="Use a specific OrcaSlicer Docker image version"),
+    ] = None,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """Watch input files and re-run the pipeline on changes."""
+    _setup_logging(verbose)
+    try:
+        from watchfiles import watch as watchfiles_watch
+    except ImportError:
+        raise SystemExit(
+            "watchfiles is required for watch mode. Install with: pip install watchfiles"
+        )
+
+    resolved_config = _resolve_config_path(config)
     cfg = load_config(resolved_config)
+
+    # Collect files to watch: config + all part files
+    watch_paths: set[Path] = {resolved_config.resolve()}
+    for part in cfg.parts:
+        watch_paths.add(part.file.resolve())
+
+    print(f"Watching {len(watch_paths)} file(s) for changes (Ctrl-C to stop):")
+    for p in sorted(watch_paths):
+        print(f"  {p}")
+    print()
+
+    # Initial run
+    _run_pipeline(resolved_config, output_dir, until, None, local, docker_version, verbose)
+
+    # Watch loop
+    try:
+        for changes in watchfiles_watch(*watch_paths):
+            changed_names = ", ".join(Path(c[1]).name for c in changes)
+            print(f"\n--- {changed_names} changed, re-running ---\n")
+            # Reload config in case it changed
+            resolved_config = _resolve_config_path(config)
+            try:
+                _run_pipeline(
+                    resolved_config, output_dir, until, None, local, docker_version, verbose
+                )
+            except Exception as e:
+                print(f"\033[31mError: {e}\033[0m\n")
+    except KeyboardInterrupt:
+        print("\n")
+
+
+def _run_pipeline(
+    config: Path,
+    output_dir: Path | None,
+    until: str | None,
+    only: str | None,
+    local: bool,
+    docker_version: str | None,
+    verbose: bool,
+    scale: float | None = None,
+    filament_type: str | None = None,
+    filament_slot: int = 1,
+    dry_run: bool = False,
+    upload_only: bool = False,
+    experimental: bool = False,
+    no_ams_mapping: bool = False,
+) -> None:
+    """Execute the pipeline (shared by run and watch commands)."""
+    from fabprint.pipeline import resolve_outputs, resolve_overrides
+
+    cfg = load_config(config)
     stages = cfg.pipeline.stages
 
     if output_dir:
@@ -230,7 +326,7 @@ def run(
 
     dr = _build_driver(verbose=verbose)
     inputs = _gather_inputs(
-        config=resolved_config,
+        config=config,
         output_dir=out_dir,
         output_3mf=output_3mf,
         scale=scale,

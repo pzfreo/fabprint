@@ -2,6 +2,11 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.90 — 2026-03-18
+
+- Add `fabprint watch` command — watches input files and re-runs pipeline on changes
+- Refactor `run` command to share pipeline logic with `watch`
+
 ## 0.1.89 — 2026-03-18
 
 - Add bundled OrcaSlicer profile name lists for Docker-only environments

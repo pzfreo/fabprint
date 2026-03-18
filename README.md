@@ -194,6 +194,7 @@ fabprint run                         # full pipeline
 fabprint run --until plate           # stop after plating
 fabprint run --only slice            # run just one stage
 fabprint run --dry-run               # everything except sending to printer
+fabprint watch                       # re-run pipeline when input files change
 fabprint status                      # query printer status
 fabprint status -w                   # live printer dashboard
 fabprint profiles list               # list available slicer profiles
