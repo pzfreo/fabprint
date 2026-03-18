@@ -688,6 +688,10 @@ def slice_plate(
             try:
                 slicer = find_slicer(engine)
                 use_docker = False
+                print(
+                    "  \033[33mWarning: Docker not available, using local slicer. "
+                    "Builds may not be reproducible across machines.\033[0m"
+                )
             except FileNotFoundError:
                 raise FileNotFoundError(
                     "No slicer available. Install OrcaSlicer locally or "
