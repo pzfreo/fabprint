@@ -2,6 +2,10 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.80 — 2026-03-18
+
+- Fix GitHub Action: use `--local` to avoid Docker-in-Docker failure when slicing
+
 ## 0.1.79 — 2026-03-18
 
 - Include `gcode_stats` in `slice` stage so metrics are always available after slicing
