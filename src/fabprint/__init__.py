@@ -1,6 +1,6 @@
 """fabprint — Headless 3D print pipeline."""
 
-__version__ = "0.1.76"
+__version__ = "0.1.77"
 
 
 class FabprintError(Exception):
