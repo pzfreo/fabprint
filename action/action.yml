@@ -29,10 +29,13 @@ inputs:
 outputs:
   print-time:
     description: "Estimated print time (human-readable)"
+    value: ${{ steps.metrics.outputs.print-time }}
   filament-grams:
     description: "Total filament usage in grams"
+    value: ${{ steps.metrics.outputs.filament-grams }}
   gcode-path:
     description: "Path to sliced gcode output directory"
+    value: ${{ steps.metrics.outputs.gcode-path }}
 
 runs:
   using: "composite"
@@ -66,6 +69,9 @@ runs:
           -v \
           2>&1 | tee /tmp/fabprint-output.log
 
+        # Docker creates files as root — fix ownership so later steps can read them
+        sudo chown -R "$(id -u):$(id -g)" "${WORKSPACE}/${OUTPUT_DIR}" 2>/dev/null || true
+
     - name: Extract build metrics
       id: metrics
       shell: bash
@@ -86,8 +92,9 @@ runs:
         fi
 
         # Parse metrics from fabprint log output
-        PRINT_TIME=$(grep -oP 'estimated \K.+' /tmp/fabprint-output.log 2>/dev/null || true)
-        FILAMENT=$(grep -oP '[0-9.]+(?=g filament)' /tmp/fabprint-output.log 2>/dev/null || true)
+        # Output format: "  123.4g filament, estimated 1h 7m 32s"
+        PRINT_TIME=$(grep -oE 'estimated .+' /tmp/fabprint-output.log 2>/dev/null | sed 's/estimated //' || true)
+        FILAMENT=$(grep -oE '[0-9.]+g filament' /tmp/fabprint-output.log 2>/dev/null | sed 's/g filament//' || true)
 
         echo "print-time=${PRINT_TIME}" >> "$GITHUB_OUTPUT"
         echo "filament-grams=${FILAMENT}" >> "$GITHUB_OUTPUT"
@@ -95,14 +102,9 @@ runs:
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
-      env:
-        OUTPUT_DIR: ${{ inputs.output-dir }}
       with:
         name: fabprint-output
-        path: |
-          ${{ inputs.output-dir }}/*.gcode
-          ${{ inputs.output-dir }}/*.3mf
-          ${{ inputs.output-dir }}/*.png
+        path: ${{ inputs.output-dir }}/
         if-no-files-found: warn
 
     - name: Post PR comment
