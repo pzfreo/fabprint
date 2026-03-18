@@ -93,7 +93,7 @@ def test_run_default_output(tmp_path, monkeypatch):
     config = _write_config(tmp_path)
     monkeypatch.chdir(tmp_path)
     main(["run", str(config), "--until", "plate"])
-    assert (tmp_path / "output" / "plate.3mf").exists()
+    assert (tmp_path / "fabprint_output" / "plate.3mf").exists()
 
 
 def test_run_verbose(tmp_path):
@@ -114,7 +114,7 @@ def test_run_auto_discover_config(tmp_path, monkeypatch):
     _write_config(tmp_path)
     monkeypatch.chdir(tmp_path)
     main(["run", "--until", "plate"])
-    assert (tmp_path / "output" / "plate.3mf").exists()
+    assert (tmp_path / "fabprint_output" / "plate.3mf").exists()
 
 
 def test_run_missing_config_no_traceback(tmp_path, monkeypatch, capsys):
@@ -178,8 +178,8 @@ file = "{_posix(FIXTURES / "cube_10mm.stl")}"
     assert (output_dir / "plate.3mf").exists()
 
 
-def test_run_name_prefix(tmp_path):
-    """Project name should prefix output filenames."""
+def test_run_name_output_dir(tmp_path, monkeypatch):
+    """Project name should create a subdirectory under fabprint_output/."""
     toml = tmp_path / "fabprint.toml"
     toml.write_text(f"""
 name = "benchy"
@@ -193,10 +193,29 @@ engine = "orca"
 [[parts]]
 file = "{_posix(FIXTURES / "cube_10mm.stl")}"
 """)
-    output_dir = tmp_path / "output"
+    monkeypatch.chdir(tmp_path)
+    main(["run", str(toml), "--until", "plate"])
+    assert (tmp_path / "fabprint_output" / "benchy" / "plate.3mf").exists()
+
+
+def test_run_name_explicit_output_dir(tmp_path):
+    """Explicit -o should override name-based default."""
+    toml = tmp_path / "fabprint.toml"
+    toml.write_text(f"""
+name = "benchy"
+
+[plate]
+size = [256, 256]
+
+[slicer]
+engine = "orca"
+
+[[parts]]
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
+""")
+    output_dir = tmp_path / "custom"
     main(["run", str(toml), "-o", str(output_dir), "--until", "plate"])
-    assert (output_dir / "benchy-plate.3mf").exists()
-    assert not (output_dir / "plate.3mf").exists()
+    assert (output_dir / "plate.3mf").exists()
 
 
 def test_run_invalid_stage_in_config(tmp_path):

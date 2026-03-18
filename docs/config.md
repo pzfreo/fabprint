@@ -42,11 +42,11 @@ filament = "Generic PETG-CF @base"
 
 ## `name`
 
-Optional project name. When set, all output filenames are prefixed with this name (e.g. `benchy-plate.3mf`, `benchy-plate_preview.3mf`, `benchy-plate.gcode`).
+Optional project name. When set, outputs go into `fabprint_output/{name}/` by default (e.g. `fabprint_output/benchy/plate.3mf`). This keeps outputs from different configs separated. Explicit `-o` overrides this.
 
-| Key    | Type     | Default | Description                     |
-|--------|----------|---------|---------------------------------|
-| `name` | `string` | —       | Project name prefix for outputs |
+| Key    | Type     | Default | Description                              |
+|--------|----------|---------|------------------------------------------|
+| `name` | `string` | —       | Project name, used for output directory  |
 
 ```toml
 name = "benchy"

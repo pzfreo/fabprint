@@ -82,7 +82,7 @@ def _build_driver(verbose: bool = False):
 def _gather_inputs(
     *,
     config: Path,
-    output_dir: Optional[Path],
+    output_dir: Path,
     output_3mf: Path,
     scale: Optional[float],
     local: bool,
@@ -99,7 +99,7 @@ def _gather_inputs(
         "config_path": config,
         "global_scale": scale,
         "output_3mf": output_3mf,
-        "output_dir": output_dir or Path("output"),
+        "output_dir": output_dir,
         "slicer_local": local,
         "docker_version": docker_version,
         "filament_type_override": filament_type,
@@ -211,10 +211,14 @@ def run(
     cfg = load_config(resolved_config)
     stages = cfg.pipeline.stages
 
-    out_dir = output_dir or Path("output")
+    if output_dir:
+        out_dir = output_dir
+    elif cfg.name:
+        out_dir = Path("fabprint_output") / cfg.name
+    else:
+        out_dir = Path("fabprint_output")
     out_dir.mkdir(parents=True, exist_ok=True)
-    prefix = f"{cfg.name}-" if cfg.name else ""
-    output_3mf = out_dir / f"{prefix}plate.3mf"
+    output_3mf = out_dir / "plate.3mf"
 
     outputs = resolve_outputs(stages, until=until, only=only)
 
@@ -225,7 +229,7 @@ def run(
     dr = _build_driver(verbose=verbose)
     inputs = _gather_inputs(
         config=resolved_config,
-        output_dir=output_dir,
+        output_dir=out_dir,
         output_3mf=output_3mf,
         scale=scale,
         local=local,
