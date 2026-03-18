@@ -55,6 +55,15 @@ name = "workshop"
 fabprint run        # arrange → slice → print, one command
 ```
 
+```
+✔ Loaded 3 parts
+✔ Arranged 3 parts onto plate  (256×256mm)
+✔ Plate exported
+✔ Sliced with OrcaSlicer 2.3.1  48s
+✔ 3h 42m, 24.6g filament
+✔ Sent to printer "workshop"
+```
+
 ## How it works
 
 1. **Define** parts + settings in `fabprint.toml`
