@@ -168,7 +168,24 @@ wall_loops = 4
 curr_bed_type = "Textured PEI Plate"
 ```
 
-Common bed types: `"Cool Plate"`, `"Engineering Plate"`, `"High Temp Plate"`, `"Textured PEI Plate"`.
+Keys are OrcaSlicer's internal names — you can find them in any OrcaSlicer process profile JSON. Here are the most commonly used overrides:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `curr_bed_type` | string | Bed surface: `"Cool Plate"`, `"Engineering Plate"`, `"High Temp Plate"`, `"Textured PEI Plate"` |
+| `enable_support` | 0/1 | Enable auto-generated supports |
+| `support_type` | string | `"normal(auto)"` or `"tree(auto)"` |
+| `wall_loops` | int | Number of perimeter walls |
+| `sparse_infill_density` | string | Infill percentage, e.g. `"15%"`, `"100%"` |
+| `sparse_infill_pattern` | string | `"grid"`, `"gyroid"`, `"rectilinear"`, `"crosshatch"`, etc. |
+| `brim_type` | string | `"no_brim"`, `"outer_only"`, `"inner_only"`, `"auto_brim"` |
+| `layer_height` | float | Layer height in mm |
+| `initial_layer_print_height` | float | First layer height in mm |
+| `top_shell_layers` | int | Number of solid top layers |
+| `bottom_shell_layers` | int | Number of solid bottom layers |
+| `ironing_type` | string | `"no ironing"`, `"top"`, `"topmost"`, `"all solid layer"` |
+| `print_sequence` | string | `"by layer"` or `"by object"` |
+| `timelapse_type` | int | 0 = off, 1 = traditional |
 
 ## `[[parts]]`
 

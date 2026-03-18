@@ -80,6 +80,8 @@ OrcaSlicer CLI slices one plate of pre-arranged models. fabprint is a pipeline a
 
 ```bash
 pip install fabprint
+# or, to install as an isolated CLI tool:
+pipx install fabprint
 ```
 
 Generate a config with the interactive wizard, or dump a commented template:

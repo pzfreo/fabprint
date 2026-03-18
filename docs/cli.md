@@ -16,10 +16,14 @@ fabprint init [--template] [-o OUTPUT]
 | `-o, --output`| Output file path (default: `./fabprint.toml`)       |
 
 Without `--template`, runs an interactive wizard that:
-1. Discovers installed OrcaSlicer profiles (printer, process, filament)
-2. Auto-discovers CAD files (STL, 3MF, STEP) in the current directory
-3. Walks through plate size, slicer version, pipeline stages, and printer setup
-4. Previews the generated TOML before writing
+1. Checks for configured printers (offers to run `fabprint setup` if none found)
+2. Discovers installed OrcaSlicer profiles (printer, process, filament) with search/filter
+3. Detects printer capabilities from the selected machine profile (plate size, multi-material support)
+4. Queries AMS tray contents in the background and auto-suggests matching filament profiles
+5. Auto-discovers CAD files (STL, 3MF, STEP) in the current directory
+6. Prompts for per-part copies, orientation, and filament slot assignment
+7. Detects installed OrcaSlicer version and offers to pin it for reproducibility
+8. Previews the generated TOML before writing
 
 ### Examples
 
