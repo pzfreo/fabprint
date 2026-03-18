@@ -454,41 +454,34 @@ def status(
     serial: Annotated[
         Optional[str], typer.Option(help="Bambu printer serial (cloud only, legacy)")
     ] = None,
+    watch: Annotated[bool, typer.Option("-w", "--watch", help="Live dashboard mode")] = False,
+    interval: Annotated[int, typer.Option(help="Refresh interval in seconds (with --watch)")] = 10,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
 ) -> None:
-    """Query printer status (all configured or by name)."""
+    """Query printer status (all configured or by name).
+
+    Use --watch / -w for a live dashboard that refreshes automatically.
+    """
     _setup_logging(verbose)
     from fabprint.credentials import list_printers, load_printer_credentials
 
     printers = _resolve_status_printers(printer, serial, list_printers, load_printer_credentials)
 
-    for name, creds in printers:
-        ptype = creds.get("type", "unknown")
-        print(f"\033[1m{name}\033[0m  ({ptype})")
-        try:
-            st = _query_printer_status(name, creds)
-            for line in _render_printer(st, name, creds.get("serial", "")):
-                print(line)
-        except Exception as e:
-            print(f"  \033[31merror: {e}\033[0m")
-        print()
+    if not watch:
+        for name, creds in printers:
+            ptype = creds.get("type", "unknown")
+            print(f"\033[1m{name}\033[0m  ({ptype})")
+            try:
+                st = _query_printer_status(name, creds)
+                for line in _render_printer(st, name, creds.get("serial", "")):
+                    print(line)
+            except Exception as e:
+                print(f"  \033[31merror: {e}\033[0m")
+            print()
+        return
 
-
-@app.command()
-def watch(
-    printer: Annotated[
-        Optional[str], typer.Option(help="Printer name from credentials.toml")
-    ] = None,
-    interval: Annotated[int, typer.Option(help="Refresh interval in seconds")] = 10,
-    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
-) -> None:
-    """Live dashboard for all configured printers."""
-    _setup_logging(verbose)
     import time
 
-    from fabprint.credentials import list_printers, load_printer_credentials
-
-    printers = _resolve_status_printers(printer, None, list_printers, load_printer_credentials)
     print(f"Watching {len(printers)} printer(s): {', '.join(n for n, _ in printers)}")
 
     cloud_printers = [(n, c) for n, c in printers if c.get("type") == "bambu-cloud"]
@@ -522,7 +515,7 @@ def watch(
 
             elapsed = time.monotonic() - t0
             now = time.strftime("%H:%M:%S")
-            header = f"fabprint watch  {now}  (polled in {elapsed:.1f}s, Ctrl-C to quit)"
+            header = f"fabprint status  {now}  (polled in {elapsed:.1f}s, Ctrl-C to quit)"
 
             sys.stdout.write("\033[2J\033[H")
             sys.stdout.write(header + "\n\n" + "\n".join(output_lines))

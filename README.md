@@ -188,13 +188,13 @@ fabprint run                         # full pipeline
 fabprint run --until plate           # stop after plating
 fabprint run --only slice            # run just one stage
 fabprint run --dry-run               # everything except sending to printer
-fabprint watch                       # live printer dashboard
 fabprint status                      # query printer status
+fabprint status -w                   # live printer dashboard
 fabprint profiles list               # list available slicer profiles
 fabprint profiles pin                # pin profiles for reproducible builds
 ```
 
-![fabprint watch](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/watch.png)
+![fabprint status --watch](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/watch.png)
 
 ## Credentials
 

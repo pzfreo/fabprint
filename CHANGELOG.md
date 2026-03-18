@@ -2,6 +2,11 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.78 — 2026-03-18
+
+- Merge `watch` command into `status --watch` / `status -w`
+- Remove standalone `watch` subcommand
+
 ## 0.1.77 — 2026-03-18
 
 - Fix GitHub Action: project name extraction matched `[printer] name` in addition to top-level `name`

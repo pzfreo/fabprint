@@ -96,7 +96,7 @@ fabprint setup  # choose moonraker, url = http://localhost:7125
 
 # Test
 fabprint status --printer <name>
-fabprint watch --printer <name>
+fabprint status --printer <name> --watch
 ```
 
 **Verified operations (2026-03-18):**
@@ -105,7 +105,7 @@ fabprint watch --printer <name>
 - `_send_moonraker()` upload-only — file appears in Moonraker file list
 - `_send_moonraker()` upload + start — print runs to completion
 - `fabprint status` — renders state, task name, temperatures
-- `fabprint watch` — live dashboard with polling
+- `fabprint status --watch` — live dashboard with polling
 
 **Note:** The simulavr virtual printer executes gcode nearly instantly, so `RUNNING` state is brief. On real hardware, progress and layer tracking will update over time.
 

@@ -66,7 +66,7 @@ The `TimingAdapter` in `src/fabprint/adapters.py` hooks into Hamilton's lifecycl
 |------|---------|
 | `src/fabprint/pipeline.py` | Hamilton DAG nodes and stage registry |
 | `src/fabprint/adapters.py` | TimingAdapter for observability |
-| `src/fabprint/cli.py` | CLI entry point (`run`, `login`, `status`, `watch`, `profiles`) |
+| `src/fabprint/cli.py` | CLI entry point (`run`, `login`, `status`, `profiles`) |
 | `src/fabprint/config.py` | TOML parsing and validation |
 | `src/fabprint/arrange.py` | 2D bin-packing |
 | `src/fabprint/plate.py` | 3MF export with extruder metadata |
