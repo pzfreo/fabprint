@@ -9,6 +9,14 @@ Before pushing any PR branch, always run locally:
 
 Do NOT push a PR until all four checks pass locally.
 
+## Changelog (MANDATORY)
+Every PR must include a CHANGELOG.md update:
+1. Add an entry at the top of CHANGELOG.md under a new version heading
+2. Use the format: `## <next-version> — YYYY-MM-DD`
+3. Bump the patch version from the latest entry (e.g. 0.1.53 → 0.1.54)
+4. Use today's date
+5. List changes as bullet points — concise, user-facing descriptions
+
 ## Post-PR Checklist (MANDATORY)
 After pushing a PR or merging to main:
 1. Check GitHub Actions CI status with `gh run list --limit 3`

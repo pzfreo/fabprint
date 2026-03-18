@@ -2,6 +2,15 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.74 — 2026-03-18
+
+- Add top-level `name` field to `fabprint.toml` to prefix all output filenames
+- Add `docs/printers.md` documenting all printer types and testing status
+- Mark bambu-lan as experimental (untested against real hardware)
+- Verify Moonraker support against virtual-klipper-printer Docker image
+- Fix GitHub Action: metrics parsing, artifact upload, and output wiring
+- Fix wizard tests depending on user's real credentials file
+
 ## 0.1.53 — 2026-03-17
 
 - Fix LICENSE copyright placeholder
