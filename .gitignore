@@ -13,3 +13,7 @@ output/
 *.png
 !docs/images/*.png
 scripts/bambu_cloud_bridge
+squashfs-root/
+fabprint_output/
+bc_tls*.log
+docs/bc_https_hook.py

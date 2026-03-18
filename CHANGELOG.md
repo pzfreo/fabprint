@@ -2,6 +2,15 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.85 — 2026-03-18
+
+- Add code-CAD workflow tutorial (`docs/code-cad.md`) for OpenSCAD, build123d, CadQuery
+- Add common slicer overrides reference table to `docs/config.md`
+- Expand `fabprint init` wizard documentation with full feature list
+- Add `pipx install fabprint` recommendation in README
+- Gitignore `squashfs-root/`, `fabprint_output/`, debug logs
+- Remove tracked debug scratch files from docs/
+
 ## 0.1.84 — 2026-03-18
 
 - Make `build123d` a default dependency (STEP file support out of the box)
