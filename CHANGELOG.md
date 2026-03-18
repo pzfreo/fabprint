@@ -2,6 +2,14 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.89 — 2026-03-18
+
+- Add bundled OrcaSlicer profile name lists for Docker-only environments
+- Add `fabprint profiles add` command to import custom/third-party profiles from files or URLs
+- Add Docker fallback for `fabprint profiles pin` when OrcaSlicer isn't installed locally
+- Fix false-positive profile warnings in `fabprint validate` for Docker-only users
+- Unify profile discovery with three-tier fallback: system install → pinned → bundled
+
 ## 0.1.85 — 2026-03-18
 
 - Add code-CAD workflow tutorial (`docs/code-cad.md`) for OpenSCAD, build123d, CadQuery
