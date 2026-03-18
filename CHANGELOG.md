@@ -2,6 +2,12 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.82 — 2026-03-18
+
+- Default output directory is now `fabprint_output/{name}/` when `name` is set
+- Default output directory without `name` is `fabprint_output/`
+- Explicit `-o` overrides the default
+
 ## 0.1.81 — 2026-03-18
 
 - Avoid resolving the same filament profile multiple times for gap slots
