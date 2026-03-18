@@ -66,6 +66,7 @@ runs:
           run "${CONFIG}" \
           --until "${UNTIL}" \
           --output-dir "/project/${OUTPUT_DIR}" \
+          --local \
           -v \
           2>&1 | tee /tmp/fabprint-output.log
 
