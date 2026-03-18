@@ -329,29 +329,23 @@ def test_get_moonraker_status(monkeypatch):
 
 def test_resolve_status_printers_by_name(tmp_path, monkeypatch):
     """Test --printer flag resolves a single printer."""
-    from types import SimpleNamespace
-
     from fabprint.cli import _resolve_status_printers
 
-    args = SimpleNamespace(printer="workshop", serial=None)
     creds = {"type": "bambu-lan", "ip": "10.0.0.1"}
-    result = _resolve_status_printers(args, lambda: {}, lambda name: creds)
+    result = _resolve_status_printers("workshop", None, lambda: {}, lambda name: creds)
     assert len(result) == 1
     assert result[0] == ("workshop", creds)
 
 
 def test_resolve_status_printers_all(tmp_path, monkeypatch):
     """Test default resolves all configured printers."""
-    from types import SimpleNamespace
-
     from fabprint.cli import _resolve_status_printers
 
-    args = SimpleNamespace(printer=None, serial=None)
     all_printers = {
         "workshop": {"type": "bambu-lan"},
         "voron": {"type": "moonraker"},
     }
-    result = _resolve_status_printers(args, lambda: all_printers, lambda name: {})
+    result = _resolve_status_printers(None, None, lambda: all_printers, lambda name: {})
     assert len(result) == 2
     names = [n for n, _ in result]
     assert "workshop" in names
@@ -360,14 +354,11 @@ def test_resolve_status_printers_all(tmp_path, monkeypatch):
 
 def test_resolve_status_printers_no_printers():
     """Test error when no printers configured."""
-    from types import SimpleNamespace
-
     from fabprint import FabprintError
     from fabprint.cli import _resolve_status_printers
 
-    args = SimpleNamespace(printer=None, serial=None)
     with pytest.raises(FabprintError, match="No printers configured"):
-        _resolve_status_printers(args, lambda: {}, lambda name: {})
+        _resolve_status_printers(None, None, lambda: {}, lambda name: {})
 
 
 def test_parse_gcode_metadata(tmp_path):

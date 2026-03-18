@@ -1,16 +1,57 @@
 """CLI entry point for fabprint."""
 
-from __future__ import annotations
-
-import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Annotated, Optional
+
+import click
+import typer
 
 from fabprint import FabprintError, __version__
 from fabprint.config import load_config
 
 log = logging.getLogger(__name__)
+
+app = typer.Typer(
+    name="fabprint",
+    help="Immutable 3D print pipeline: arrange, slice, and print.",
+    no_args_is_help=True,
+)
+
+profiles_app = typer.Typer(help="List or pin slicer profiles.")
+app.add_typer(profiles_app, name="profiles")
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"fabprint {__version__}")
+        raise typer.Exit()
+
+
+def _setup_logging(verbose: bool) -> None:
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(levelname)s: %(message)s",
+    )
+
+
+def _resolve_config_path(config: Optional[Path]) -> Path:
+    """Resolve config path, defaulting to ./fabprint.toml."""
+    if config is not None:
+        return config
+    candidate = Path("fabprint.toml")
+    if not candidate.exists():
+        raise FabprintError(
+            "No config file specified and no fabprint.toml found in the current directory.\n"
+            "Usage: fabprint <command> [config.toml]"
+        )
+    return candidate
 
 
 # ---------------------------------------------------------------------------
@@ -38,22 +79,35 @@ def _build_driver(verbose: bool = False):
     return builder.build()
 
 
-def _gather_inputs(args: argparse.Namespace, output_3mf: Path) -> dict:
-    """Build the full set of Hamilton driver inputs from CLI args."""
-    output_dir = getattr(args, "output_dir", None) or Path("output")
+def _gather_inputs(
+    *,
+    config: Path,
+    output_dir: Optional[Path],
+    output_3mf: Path,
+    scale: Optional[float],
+    local: bool,
+    docker_version: Optional[str],
+    filament_type: Optional[str],
+    filament_slot: int,
+    dry_run: bool,
+    upload_only: bool,
+    experimental: bool,
+    no_ams_mapping: bool,
+) -> dict:
+    """Build the full set of Hamilton driver inputs."""
     return {
-        "config_path": args.config,
-        "global_scale": getattr(args, "scale", None),
+        "config_path": config,
+        "global_scale": scale,
         "output_3mf": output_3mf,
-        "output_dir": output_dir,
-        "slicer_local": getattr(args, "local", False),
-        "docker_version": getattr(args, "docker_version", None),
-        "filament_type_override": getattr(args, "filament_type", None),
-        "filament_slot_override": getattr(args, "filament_slot", 1),
-        "dry_run": getattr(args, "dry_run", False),
-        "upload_only": getattr(args, "upload_only", False),
-        "experimental": getattr(args, "experimental", False),
-        "skip_ams_mapping": getattr(args, "no_ams_mapping", False),
+        "output_dir": output_dir or Path("output"),
+        "slicer_local": local,
+        "docker_version": docker_version,
+        "filament_type_override": filament_type,
+        "filament_slot_override": filament_slot,
+        "dry_run": dry_run,
+        "upload_only": upload_only,
+        "experimental": experimental,
+        "skip_ams_mapping": no_ams_mapping,
     }
 
 
@@ -81,240 +135,17 @@ def _display_results(result: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# CLI argument parsing
+# Version callback (top-level)
 # ---------------------------------------------------------------------------
 
 
-def _resolve_config(args: argparse.Namespace) -> None:
-    """Default config to ./fabprint.toml when not provided."""
-    if not hasattr(args, "config") or args.config is None:
-        return
-    # argparse stores the Path from nargs="?" default; if it's the sentinel
-    # value we set, resolve to ./fabprint.toml
-    if args.config == _CONFIG_DEFAULT:
-        candidate = Path("fabprint.toml")
-        if not candidate.exists():
-            raise FabprintError(
-                "No config file specified and no fabprint.toml found in the current directory.\n"
-                "Usage: fabprint <command> [config.toml]"
-            )
-        args.config = candidate
-
-
-# Sentinel so we can distinguish "user didn't pass config" from "user passed a path"
-_CONFIG_DEFAULT = Path("\x00")
-
-
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        prog="fabprint",
-        description="Immutable 3D print pipeline: arrange, slice, and print.",
-        epilog="Run 'fabprint <command> --help' for command-specific options.",
-    )
-    parser.add_argument("--version", action="version", version=f"fabprint {__version__}")
-    sub = parser.add_subparsers(dest="command")
-
-    # Shared args for subcommands
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
-
-    # --- run subcommand (the pipeline) ---
-    run_cmd = sub.add_parser(
-        "run", parents=[common], help="Run the pipeline defined in fabprint.toml"
-    )
-    run_cmd.add_argument(
-        "config",
-        nargs="?",
-        type=Path,
-        default=_CONFIG_DEFAULT,
-        help="Path to config file (default: ./fabprint.toml)",
-    )
-    run_cmd.add_argument("-o", "--output-dir", type=Path, default=None, help="Output directory")
-    run_cmd.add_argument(
-        "--until",
-        type=str,
-        default=None,
-        metavar="STAGE",
-        help="Run pipeline up to and including this stage",
-    )
-    run_cmd.add_argument(
-        "--only",
-        type=str,
-        default=None,
-        metavar="STAGE",
-        help="Run only this stage (fail if required artifacts don't exist)",
-    )
-    run_cmd.add_argument(
-        "--scale",
-        type=float,
-        default=None,
-        help="Scale all parts by this factor (multiplies per-part scale)",
-    )
-    run_cmd.add_argument(
-        "--local",
-        action="store_true",
-        help="Force local slicer (fail if not installed)",
-    )
-    run_cmd.add_argument(
-        "--docker-version",
-        type=str,
-        default=None,
-        help="Use a specific OrcaSlicer Docker image version (e.g. 2.3.1)",
-    )
-    run_cmd.add_argument(
-        "--filament-type",
-        type=str,
-        default=None,
-        help="Override filament profile name (e.g. 'Generic PLA @base')",
-    )
-    run_cmd.add_argument(
-        "--filament-slot",
-        type=int,
-        default=1,
-        help="AMS slot for --filament-type (default: 1)",
-    )
-    run_cmd.add_argument(
-        "--dry-run", action="store_true", help="Do everything except send to printer"
-    )
-    run_cmd.add_argument(
-        "--upload-only",
-        action="store_true",
-        help="Upload gcode but don't start printing",
-    )
-    run_cmd.add_argument(
-        "--experimental",
-        action="store_true",
-        help="Enable experimental printer modes",
-    )
-    run_cmd.add_argument(
-        "--no-ams-mapping",
-        action="store_true",
-        help="Skip AMS mapping and use bridge default [0,1,2,3] (diagnostic)",
-    )
-
-    # --- profiles subcommand ---
-    profiles_cmd = sub.add_parser("profiles", parents=[common], help="List or pin slicer profiles")
-    profiles_sub = profiles_cmd.add_subparsers(dest="profiles_command")
-
-    list_cmd = profiles_sub.add_parser("list", help="List available profiles")
-    list_cmd.add_argument(
-        "--engine",
-        default="orca",
-        choices=["orca"],
-        help="Slicer engine (default: orca)",
-    )
-    list_cmd.add_argument(
-        "--category",
-        default=None,
-        choices=["machine", "process", "filament"],
-        help="Filter by category",
-    )
-
-    pin_cmd = profiles_sub.add_parser(
-        "pin", help="Pin profiles from config into local profiles/ dir"
-    )
-    pin_cmd.add_argument(
-        "config",
-        nargs="?",
-        type=Path,
-        default=_CONFIG_DEFAULT,
-        help="Path to config file (default: ./fabprint.toml)",
-    )
-
-    # --- init subcommand ---
-    init_cmd = sub.add_parser(
-        "init", parents=[common], help="Create a new fabprint.toml config file"
-    )
-    init_cmd.add_argument(
-        "--template",
-        action="store_true",
-        help="Dump a commented template to stdout (no wizard)",
-    )
-    init_cmd.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        default=None,
-        help="Output file path (default: ./fabprint.toml)",
-    )
-
-    # --- validate subcommand ---
-    validate_cmd = sub.add_parser(
-        "validate", parents=[common], help="Check a fabprint.toml for issues"
-    )
-    validate_cmd.add_argument(
-        "config",
-        nargs="?",
-        type=Path,
-        default=_CONFIG_DEFAULT,
-        help="Path to config file (default: ./fabprint.toml)",
-    )
-
-    # --- setup subcommand ---
-    sub.add_parser(
-        "setup",
-        parents=[common],
-        help="Set up a printer (credentials, cloud login, connection type)",
-    )
-
-    # --- status subcommand ---
-    status_cmd = sub.add_parser(
-        "status", parents=[common], help="Query printer status (all configured or by name)"
-    )
-    status_cmd.add_argument(
-        "--printer", type=str, default=None, help="Printer name from credentials.toml"
-    )
-    status_cmd.add_argument(
-        "--serial", type=str, default=None, help="Bambu printer serial (cloud only, legacy)"
-    )
-
-    # --- watch subcommand ---
-    watch_cmd = sub.add_parser(
-        "watch", parents=[common], help="Live dashboard for all configured printers"
-    )
-    watch_cmd.add_argument(
-        "--printer", type=str, default=None, help="Printer name from credentials.toml"
-    )
-    watch_cmd.add_argument(
-        "--interval", type=int, default=10, help="Refresh interval in seconds (default: 10)"
-    )
-
-    args = parser.parse_args(argv)
-
-    if args.command is None:
-        parser.print_help()
-        sys.exit(1)
-
-    logging.basicConfig(
-        level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,
-        format="%(levelname)s: %(message)s",
-    )
-
-    try:
-        _resolve_config(args)
-
-        if args.command == "run":
-            _cmd_run(args)
-        elif args.command == "init":
-            _cmd_init(args)
-        elif args.command == "validate":
-            _cmd_validate(args)
-        elif args.command == "setup":
-            _cmd_setup(args)
-        elif args.command == "status":
-            _cmd_status(args)
-        elif args.command == "watch":
-            _cmd_watch(args)
-        elif args.command == "profiles":
-            _cmd_profiles(args)
-    except FabprintError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except (ValueError, FileNotFoundError, RuntimeError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(1)
-    except KeyboardInterrupt:
-        sys.exit(130)
+@app.callback()
+def _app_callback(
+    version: Annotated[
+        bool, typer.Option("--version", callback=_version_callback, is_eager=True)
+    ] = False,
+) -> None:
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -322,101 +153,166 @@ def main(argv: list[str] | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _cmd_run(args: argparse.Namespace) -> None:
+@app.command()
+def run(
+    config: Annotated[Optional[Path], typer.Argument(help="Path to config file")] = None,
+    output_dir: Annotated[
+        Optional[Path], typer.Option("-o", "--output-dir", help="Output directory")
+    ] = None,
+    until: Annotated[
+        Optional[str], typer.Option(help="Run pipeline up to and including this stage")
+    ] = None,
+    only: Annotated[
+        Optional[str],
+        typer.Option(help="Run only this stage (fail if required artifacts don't exist)"),
+    ] = None,
+    scale: Annotated[
+        Optional[float],
+        typer.Option(help="Scale all parts by this factor (multiplies per-part scale)"),
+    ] = None,
+    local: Annotated[
+        bool, typer.Option("--local", help="Force local slicer (fail if not installed)")
+    ] = False,
+    docker_version: Annotated[
+        Optional[str],
+        typer.Option(help="Use a specific OrcaSlicer Docker image version (e.g. 2.3.1)"),
+    ] = None,
+    filament_type: Annotated[
+        Optional[str],
+        typer.Option(help="Override filament profile name (e.g. 'Generic PLA @base')"),
+    ] = None,
+    filament_slot: Annotated[int, typer.Option(help="AMS slot for --filament-type")] = 1,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Do everything except send to printer")
+    ] = False,
+    upload_only: Annotated[
+        bool, typer.Option("--upload-only", help="Upload gcode but don't start printing")
+    ] = False,
+    experimental: Annotated[
+        bool, typer.Option("--experimental", help="Enable experimental printer modes")
+    ] = False,
+    no_ams_mapping: Annotated[
+        bool,
+        typer.Option(
+            "--no-ams-mapping",
+            help="Skip AMS mapping and use bridge default [0,1,2,3] (diagnostic)",
+        ),
+    ] = False,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """Run the pipeline defined in fabprint.toml."""
+    _setup_logging(verbose)
     from fabprint.pipeline import resolve_outputs, resolve_overrides
 
-    if args.until and args.only:
+    if until and only:
         raise ValueError("Cannot use both --until and --only")
 
-    cfg = load_config(args.config)
+    resolved_config = _resolve_config_path(config)
+    cfg = load_config(resolved_config)
     stages = cfg.pipeline.stages
 
-    output_dir = args.output_dir or Path("output")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_3mf = output_dir / "plate.3mf"
+    out_dir = output_dir or Path("output")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_3mf = out_dir / "plate.3mf"
 
-    # Determine which Hamilton nodes to request
-    outputs = resolve_outputs(stages, until=args.until, only=args.only)
+    outputs = resolve_outputs(stages, until=until, only=only)
 
-    # Build overrides for --only mode
     overrides = {}
-    if args.only:
-        overrides = resolve_overrides(args.only, output_dir)
+    if only:
+        overrides = resolve_overrides(only, out_dir)
 
-    verbose = getattr(args, "verbose", False)
     dr = _build_driver(verbose=verbose)
-    inputs = _gather_inputs(args, output_3mf)
+    inputs = _gather_inputs(
+        config=resolved_config,
+        output_dir=output_dir,
+        output_3mf=output_3mf,
+        scale=scale,
+        local=local,
+        docker_version=docker_version,
+        filament_type=filament_type,
+        filament_slot=filament_slot,
+        dry_run=dry_run,
+        upload_only=upload_only,
+        experimental=experimental,
+        no_ams_mapping=no_ams_mapping,
+    )
 
     result = dr.execute(outputs, inputs=inputs, overrides=overrides)
     _display_results(result)
 
 
 # ---------------------------------------------------------------------------
-# init / validate commands
+# init / validate / setup commands
 # ---------------------------------------------------------------------------
 
 
-def _cmd_init(args: argparse.Namespace) -> None:
+@app.command()
+def init(
+    template: Annotated[
+        bool, typer.Option("--template", help="Dump a commented template to stdout (no wizard)")
+    ] = False,
+    output: Annotated[
+        Optional[Path],
+        typer.Option("-o", "--output", help="Output file path (default: ./fabprint.toml)"),
+    ] = None,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """Create a new fabprint.toml config file."""
+    _setup_logging(verbose)
     from fabprint.init import dump_template, run_wizard
 
-    if args.template:
+    if template:
         print(dump_template(), end="")
     else:
-        run_wizard(output=args.output)
+        run_wizard(output=output)
 
 
-def _cmd_setup(args: argparse.Namespace) -> None:
-    from fabprint.credentials import setup_printer
-
-    setup_printer()
-
-
-def _cmd_validate(args: argparse.Namespace) -> None:
+@app.command()
+def validate(
+    config: Annotated[Optional[Path], typer.Argument(help="Path to config file")] = None,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """Check a fabprint.toml for issues."""
+    _setup_logging(verbose)
     from fabprint.init import validate_config
 
-    warnings = validate_config(args.config)
+    resolved_config = _resolve_config_path(config)
+    warnings = validate_config(resolved_config)
     if warnings:
         for w in warnings:
             print(f"  warning: {w}")
         print(f"\n{len(warnings)} warning(s) found.")
     else:
-        print("Config OK — no issues found.")
+        print("Config OK \u2014 no issues found.")
+
+
+@app.command()
+def setup(
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """Set up a printer (credentials, cloud login, connection type)."""
+    _setup_logging(verbose)
+    from fabprint.credentials import setup_printer
+
+    setup_printer()
 
 
 # ---------------------------------------------------------------------------
-# Non-pipeline subcommand handlers
+# status / watch commands
 # ---------------------------------------------------------------------------
 
 
-def _cmd_status(args: argparse.Namespace) -> None:
-    from fabprint.credentials import list_printers, load_printer_credentials
-
-    printers = _resolve_status_printers(args, list_printers, load_printer_credentials)
-
-    for name, creds in printers:
-        ptype = creds.get("type", "unknown")
-        print(f"\033[1m{name}\033[0m  ({ptype})")
-        try:
-            status = _query_printer_status(name, creds)
-            for line in _render_printer(status, name, creds.get("serial", "")):
-                print(line)
-        except Exception as e:
-            print(f"  \033[31merror: {e}\033[0m")
-        print()
-
-
-def _resolve_status_printers(args, list_printers_fn, load_creds_fn):
+def _resolve_status_printers(
+    printer_name: Optional[str], serial: Optional[str], list_printers_fn, load_creds_fn
+):
     """Build list of (name, creds) tuples for status/watch commands."""
-    # --printer flag: single named printer
-    if getattr(args, "printer", None):
-        creds = load_creds_fn(args.printer)
-        return [(args.printer, creds)]
+    if printer_name:
+        creds = load_creds_fn(printer_name)
+        return [(printer_name, creds)]
 
-    # --serial flag (legacy cloud-only): query by serial directly
-    if getattr(args, "serial", None):
-        return [(args.serial, {"type": "bambu-cloud", "serial": args.serial})]
+    if serial:
+        return [(serial, {"type": "bambu-cloud", "serial": serial})]
 
-    # Default: all configured printers
     all_printers = list_printers_fn()
     if not all_printers:
         raise FabprintError("No printers configured.\nRun 'fabprint setup' to add a printer.")
@@ -549,18 +445,51 @@ def _render_printer(status: dict, name: str, serial: str) -> list[str]:
     return lines
 
 
-def _cmd_watch(args: argparse.Namespace) -> None:
-    """Live dashboard showing all configured printers."""
+@app.command()
+def status(
+    printer: Annotated[
+        Optional[str], typer.Option(help="Printer name from credentials.toml")
+    ] = None,
+    serial: Annotated[
+        Optional[str], typer.Option(help="Bambu printer serial (cloud only, legacy)")
+    ] = None,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """Query printer status (all configured or by name)."""
+    _setup_logging(verbose)
+    from fabprint.credentials import list_printers, load_printer_credentials
+
+    printers = _resolve_status_printers(printer, serial, list_printers, load_printer_credentials)
+
+    for name, creds in printers:
+        ptype = creds.get("type", "unknown")
+        print(f"\033[1m{name}\033[0m  ({ptype})")
+        try:
+            st = _query_printer_status(name, creds)
+            for line in _render_printer(st, name, creds.get("serial", "")):
+                print(line)
+        except Exception as e:
+            print(f"  \033[31merror: {e}\033[0m")
+        print()
+
+
+@app.command()
+def watch(
+    printer: Annotated[
+        Optional[str], typer.Option(help="Printer name from credentials.toml")
+    ] = None,
+    interval: Annotated[int, typer.Option(help="Refresh interval in seconds")] = 10,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """Live dashboard for all configured printers."""
+    _setup_logging(verbose)
     import time
 
     from fabprint.credentials import list_printers, load_printer_credentials
 
-    interval = args.interval
-
-    printers = _resolve_status_printers(args, list_printers, load_printer_credentials)
+    printers = _resolve_status_printers(printer, None, list_printers, load_printer_credentials)
     print(f"Watching {len(printers)} printer(s): {', '.join(n for n, _ in printers)}")
 
-    # For cloud printers, keep a persistent bridge container to avoid Docker overhead
     cloud_printers = [(n, c) for n, c in printers if c.get("type") == "bambu-cloud"]
     bridge_ctx = None
     if cloud_printers:
@@ -582,10 +511,10 @@ def _cmd_watch(args: argparse.Namespace) -> None:
                 output_lines.append(f"\033[1m{name}\033[0m  ({ptype})")
                 try:
                     if ptype == "bambu-cloud" and bridge_ctx is not None:
-                        status = bridge_ctx.status(creds["serial"])
+                        st = bridge_ctx.status(creds["serial"])
                     else:
-                        status = _query_printer_status(name, creds)
-                    output_lines.extend(_render_printer(status, name, creds.get("serial", "")))
+                        st = _query_printer_status(name, creds)
+                    output_lines.extend(_render_printer(st, name, creds.get("serial", "")))
                 except Exception as e:
                     output_lines.append(f"  \033[31merror: {e}\033[0m")
                 output_lines.append("")
@@ -608,31 +537,74 @@ def _cmd_watch(args: argparse.Namespace) -> None:
             token_ctx.__exit__(None, None, None)
 
 
-def _cmd_profiles(args: argparse.Namespace) -> None:
-    from fabprint.profiles import CATEGORIES, discover_profiles, pin_profiles
+# ---------------------------------------------------------------------------
+# profiles subcommands
+# ---------------------------------------------------------------------------
 
-    if args.profiles_command == "list":
-        profiles = discover_profiles(args.engine)
-        categories = [args.category] if args.category else list(CATEGORIES)
-        for cat in categories:
-            names = profiles.get(cat, {})
-            print(f"\n{cat} ({len(names)} profiles):")
-            for name in names:
-                print(f"  {name}")
 
-    elif args.profiles_command == "pin":
-        cfg = load_config(args.config)
-        pinned = pin_profiles(
-            engine=cfg.slicer.engine,
-            printer=cfg.slicer.printer,
-            process=cfg.slicer.process,
-            filaments=cfg.slicer.filaments,
-            project_dir=cfg.base_dir,
-        )
-        print(f"Pinned {len(pinned)} profile(s)")
-        for p in pinned:
-            print(f"  {p}")
+@profiles_app.command("list")
+def profiles_list(
+    engine: Annotated[str, typer.Option(help="Slicer engine")] = "orca",
+    category: Annotated[
+        Optional[str], typer.Option(help="Filter by category (machine, process, filament)")
+    ] = None,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """List available profiles."""
+    _setup_logging(verbose)
+    from fabprint.profiles import CATEGORIES, discover_profiles
 
-    else:
-        print("Usage: fabprint profiles {list|pin}")
+    profiles = discover_profiles(engine)
+    categories = [category] if category else list(CATEGORIES)
+    for cat in categories:
+        names = profiles.get(cat, {})
+        print(f"\n{cat} ({len(names)} profiles):")
+        for name in names:
+            print(f"  {name}")
+
+
+@profiles_app.command("pin")
+def profiles_pin(
+    config: Annotated[Optional[Path], typer.Argument(help="Path to config file")] = None,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """Pin profiles from config into local profiles/ dir."""
+    _setup_logging(verbose)
+    from fabprint.profiles import pin_profiles
+
+    resolved_config = _resolve_config_path(config)
+    cfg = load_config(resolved_config)
+    pinned = pin_profiles(
+        engine=cfg.slicer.engine,
+        printer=cfg.slicer.printer,
+        process=cfg.slicer.process,
+        filaments=cfg.slicer.filaments,
+        project_dir=cfg.base_dir,
+    )
+    print(f"Pinned {len(pinned)} profile(s)")
+    for p in pinned:
+        print(f"  {p}")
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Entry point for fabprint CLI."""
+    try:
+        app(argv, standalone_mode=False)
+    except click.exceptions.NoArgsIsHelpError:
         sys.exit(1)
+    except SystemExit as e:
+        if e.code:
+            sys.exit(e.code)
+    except FabprintError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
