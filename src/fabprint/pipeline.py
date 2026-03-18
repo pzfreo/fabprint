@@ -105,10 +105,12 @@ def resolve_overrides(
 
     for node_name, description in requirements:
         if node_name == "plate_3mf_path":
-            path = output_dir / "plate.3mf"
-            if not path.exists():
-                raise FileNotFoundError(f"--only {only}: requires {description} at {path}")
-            overrides[node_name] = path
+            plate_files = list(output_dir.glob("*plate.3mf"))
+            # Exclude preview files
+            plate_files = [p for p in plate_files if "preview" not in p.name]
+            if not plate_files:
+                raise FileNotFoundError(f"--only {only}: requires {description} in {output_dir}")
+            overrides[node_name] = plate_files[0]
         elif node_name == "sliced_output_dir":
             if not output_dir.exists():
                 raise FileNotFoundError(f"--only {only}: requires {description} at {output_dir}")

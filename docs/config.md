@@ -5,6 +5,8 @@ fabprint is configured with a single TOML file (typically `fabprint.toml`). This
 ## Full example
 
 ```toml
+name = "benchy"
+
 [pipeline]
 stages = ["load", "arrange", "plate", "slice", "print"]
 
@@ -36,6 +38,18 @@ file = "wheel.stl"
 copies = 5
 orient = "upright"
 filament = "Generic PETG-CF @base"
+```
+
+## `name`
+
+Optional project name. When set, all output filenames are prefixed with this name (e.g. `benchy-plate.3mf`, `benchy-plate_preview.3mf`, `benchy-plate.gcode`).
+
+| Key    | Type     | Default | Description                     |
+|--------|----------|---------|---------------------------------|
+| `name` | `string` | —       | Project name prefix for outputs |
+
+```toml
+name = "benchy"
 ```
 
 ## `[pipeline]`

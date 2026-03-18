@@ -213,7 +213,8 @@ def run(
 
     out_dir = output_dir or Path("output")
     out_dir.mkdir(parents=True, exist_ok=True)
-    output_3mf = out_dir / "plate.3mf"
+    prefix = f"{cfg.name}-" if cfg.name else ""
+    output_3mf = out_dir / f"{prefix}plate.3mf"
 
     outputs = resolve_outputs(stages, until=until, only=only)
 

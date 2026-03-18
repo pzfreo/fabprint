@@ -213,12 +213,13 @@ def _slice_via_docker(
         rewritten = filament_arg.replace(host_prefix, container_prefix)
         cmd.extend(["--load-filaments", rewritten])
 
+    sliced_3mf_name = input_3mf.stem + "_sliced.gcode.3mf"
     cmd.extend(
         [
             "--slice",
             "0",
             "--export-3mf",
-            "plate_sliced.gcode.3mf",
+            sliced_3mf_name,
             "--min-save",
             "--outputdir",
             "/work/output",
@@ -743,7 +744,7 @@ def slice_plate(
                 filament_arg,
                 image,
             )
-            _fix_sliced_3mf(result_dir / "plate_sliced.gcode.3mf", input_3mf)
+            _fix_sliced_3mf(result_dir / (input_3mf.stem + "_sliced.gcode.3mf"), input_3mf)
             return result_dir
 
         # Local slicer path
@@ -757,12 +758,13 @@ def slice_plate(
         if filament_ids and not str(input_3mf).endswith(".3mf"):
             cmd.extend(["--load-filament-ids", ",".join(str(i) for i in filament_ids)])
 
+        sliced_3mf_name = input_3mf.stem + "_sliced.gcode.3mf"
         cmd.extend(
             [
                 "--slice",
                 "0",
                 "--export-3mf",
-                "plate_sliced.gcode.3mf",
+                sliced_3mf_name,
                 "--min-save",
                 "--outputdir",
                 str(output_dir),
@@ -786,7 +788,7 @@ def slice_plate(
             )
 
         log.info("Slicer stdout:\n%s", result.stdout)
-        _fix_sliced_3mf(output_dir / "plate_sliced.gcode.3mf", input_3mf)
+        _fix_sliced_3mf(output_dir / sliced_3mf_name, input_3mf)
         log.info("Slicing complete. Output in %s", output_dir)
         return output_dir
 
