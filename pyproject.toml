@@ -25,6 +25,7 @@ dependencies = [
     "bambulabs-api>=2.6.0",
     "bambu-lab-cloud-api",
     "requests>=2.28",
+    "typer>=0.15.0",
 ]
 
 [project.urls]
