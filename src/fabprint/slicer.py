@@ -145,7 +145,6 @@ def _has_docker_image(image: str) -> bool:
 def _pull_docker_image(image: str) -> bool:
     """Pull a Docker image from the registry. Returns True on success."""
     log.info("Pulling Docker image %s ...", image)
-    print(f"  Pulling Docker image {image} ...")
     try:
         r = subprocess.run(
             ["docker", "pull", image],

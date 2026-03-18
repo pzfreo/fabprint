@@ -36,7 +36,7 @@ def _version_callback(value: bool) -> None:
 
 def _setup_logging(verbose: bool) -> None:
     logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
+        level=logging.DEBUG if verbose else logging.WARNING,
         format="%(levelname)s: %(message)s",
     )
 
@@ -76,6 +76,8 @@ def _build_driver(verbose: bool = False):
     builder = driver.Builder().with_modules(pipeline)
     if verbose:
         builder = builder.with_adapters(adapters.TimingAdapter())
+    else:
+        builder = builder.with_adapters(adapters.ProgressAdapter())
     return builder.build()
 
 
@@ -242,8 +244,7 @@ def run(
         no_ams_mapping=no_ams_mapping,
     )
 
-    result = dr.execute(outputs, inputs=inputs, overrides=overrides)
-    _display_results(result)
+    dr.execute(outputs, inputs=inputs, overrides=overrides)
 
 
 # ---------------------------------------------------------------------------

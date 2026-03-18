@@ -13,7 +13,9 @@
 - Printer configs drift across different slicer versions and installations
 - There's no easy way to version or diff a print job
 
-**fabprint makes 3D printing reproducible.** Define your models, slicer settings, and printer config once in a TOML file, then arrange, slice, and print from the command line — identically on any machine. It works with STL, STEP, and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
+**fabprint is designed for engineers, makers, and teams who need repeatable, version-controlled 3D prints.**
+
+**fabprint makes 3D printing reproducible.** Same repo → same G-code → same print. Define your models, slicer settings, and printer config once in a TOML file, then arrange, slice, and print from the command line — identically on any machine. It works with STL, STEP, and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
 
 ```toml
 # fabprint.toml — a multi-part print with slicer overrides
@@ -55,11 +57,12 @@ fabprint run        # arrange → slice → print, one command
 
 ## How it works
 
-- **Everything is text** — one TOML config per project, git-friendly and diffable
-- **Pinned profiles** — lock exact slicer, filament, and process profiles in your repo
-- **Slicer overrides** — tweak support, bed type, wall count without touching profile files
-- **Versioned Docker slicing** — pin OrcaSlicer version for identical G-code across machines
-- **One command** — `fabprint run` goes from STL/STEP files to a running print
+1. **Define** parts + settings in `fabprint.toml`
+2. **Arrange** — fabprint bin-packs models onto the build plate
+3. **Slice** — using a pinned OrcaSlicer version (via Docker) for identical G-code across machines
+4. **Print** — sends identical G-code to your printer
+
+Everything lives in a single TOML file — git-friendly, diffable, and reproducible on any machine.
 
 ### How is this different from OrcaSlicer CLI?
 
