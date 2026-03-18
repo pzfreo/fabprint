@@ -2,6 +2,12 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.84 — 2026-03-18
+
+- Make `build123d` a default dependency (STEP file support out of the box)
+- Require Python 3.11–3.12 (vtk doesn't have 3.13 wheels yet)
+- Remove `[step]` optional extra
+
 ## 0.1.82 — 2026-03-18
 
 - Default output directory is now `fabprint_output/{name}/` when `name` is set
