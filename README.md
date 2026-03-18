@@ -13,7 +13,7 @@
 - Printer configs drift across machines and slicer versions
 - There's no way to version, diff, or audit a print job
 
-**fabprint fixes this with declarative, version-controlled builds.** Define your print like code — parts, slicer settings, and printer config in a single TOML file — and fabprint handles the rest: arrangement, slicing, and dispatch to the printer. Same repo → same G-code → consistent, repeatable prints across machines.
+**fabprint addresses this with declarative, version-controlled builds.** Define your print like code — parts, slicer settings, and printer config in a single TOML file — and fabprint handles the rest: arrangement, slicing, and dispatch to the printer. Same repo → same G-code → consistent, repeatable prints across machines. fabprint produces identical G-code for a given config; physical results may still vary with hardware and materials.
 
 Built for engineers, makers, and teams who treat their prints like software. Works with STL, STEP, and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
 
