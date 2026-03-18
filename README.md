@@ -7,10 +7,10 @@
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-3D prints are hard to reproduce:
+3D prints are hard to reproduce reliably:
 
-- Slicer settings get lost between sessions
-- Printer configs drift across machines
+- Slicer settings can get lost between sessions or through human error
+- Printer configs drift across different slicer versions and installations
 - There's no easy way to version or diff a print job
 
 **fabprint makes 3D printing reproducible.** Define your models, slicer settings, and printer config once in a TOML file, then arrange, slice, and print from the command line — identically on any machine. It works with STL, STEP, and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
@@ -72,11 +72,11 @@ OrcaSlicer CLI slices one plate of pre-arranged models. fabprint is a pipeline a
 - **Reproducible builds** — pin slicer profiles into your repo + lock OrcaSlicer version in Docker = identical gcode on any machine
 - **Partial execution** — `--until plate` to inspect layout, `--only slice` to re-slice, `--dry-run` to test everything
 - **Send to printer** — Bambu LAN, Bambu Cloud, and Moonraker/Klipper (experimental), with live status monitoring. PrusaLink and OctoPrint support is on the roadmap
-- **Headless Docker slicing** — no GUI, no display server, works in CI
+- **Headless Docker slicing** — no GUI, no display server, works in CI, uses a specific OrcaSlicer version
 
 ## Quick start
 
-**Prerequisites:** Python 3.11+ and either [Docker](https://docs.docker.com/get-docker/) or a local [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) install. Docker is required for Bambu Cloud printing and recommended for reproducible slicing — it lets you pin the exact OrcaSlicer version so every machine produces identical G-code.
+**Prerequisites:** Python 3.11+ and either [Docker](https://docs.docker.com/get-docker/) or a local [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) install. Docker is required for Bambu Cloud printing and **recommended for reproducible slicing** — it lets you pin the exact OrcaSlicer version so every machine produces identical G-code.
 
 ```bash
 pip install fabprint                # STL + 3MF support, LAN + cloud printing
@@ -86,13 +86,9 @@ pip install "fabprint[step]"        # add STEP file support (build123d)
 Generate a config with the interactive wizard, or dump a commented template:
 
 ```bash
-fabprint init                       # interactive wizard — discovers profiles and CAD files
-fabprint init --template            # dump a commented template to stdout
-fabprint init --template > fabprint.toml   # save template and edit manually
+fabprint setup                      # configures printer targets
+fabprint init                       # interactive wizard — discovers profiles and CAD files creates TOML
 ```
-
-[![fabprint init --template](https://asciinema.org/a/xt0yrvXEuYxlPCXz.svg)](https://asciinema.org/a/xt0yrvXEuYxlPCXz)
-
 Or create `fabprint.toml` by hand (see [full config reference](https://github.com/pzfreo/fabprint/blob/main/docs/config.md)):
 
 ```toml
@@ -112,14 +108,14 @@ version = "2.3.1"       # pin OrcaSlicer version for reproducibility
 printer = "Bambu Lab P1S 0.4 nozzle"
 process = "0.20mm Standard @BBL X1C"
 
-[slicer.overrides]
+[slicer.overrides]      # simple way to define print settings without editing JSON
 sparse_infill_density = "30%"       # stronger infill
 wall_loops = 3                       # extra wall strength
 enable_support = 1
 brim_type = "auto_brim"             # help adhesion
 curr_bed_type = "Textured PEI Plate"
 
-[[parts]]
+[[parts]]               # define multiple parts using STEP, STL or 3MF inputs
 file = "frame.step"
 rotate = [180, 0, 0]    # flip so mounting plate faces down
 filament = "Generic PETG-CF @base"
@@ -135,14 +131,10 @@ Run it (see [full CLI reference](https://github.com/pzfreo/fabprint/blob/main/do
 
 ```bash
 fabprint run                   # arrange, slice and send to printer
-fabprint run --until plate     # stop after plating
 fabprint run --until slice     # stop after slicing
 fabprint run --dry-run         # full pipeline without sending to printer
 ```
-
-[![fabprint run --until plate](https://asciinema.org/a/3MqHI4Y7Yjearcag.svg)](https://asciinema.org/a/3MqHI4Y7Yjearcag)
-
-The plate stage generates a `plate_preview.3mf` — open it in any 3MF viewer to check placement:
+The arrangement (`plate`) stage generates a `plate_preview.3mf` — open it in any 3MF viewer to check placement:
 
 ![plate preview](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/plate_preview.png)
 
