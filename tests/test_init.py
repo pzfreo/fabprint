@@ -292,12 +292,6 @@ class TestWizard:
         # Create a fake STL so it gets discovered
         (tmp_path / "test-part.stl").write_bytes(b"fake stl")
 
-        # Mock input() responses in order:
-        # 1. Use OrcaSlicer? -> y
-        # 2. Printer profile name -> Bambu Lab P1S 0.4 nozzle
-        # 3. Process profile name -> 0.20mm Standard @BBL X1C
-        # 4. Filament name -> Generic PLA @base
-        # 5. Select files -> 1
         inputs = iter(
             [
                 "n",  # Run setup first? -> no
@@ -321,6 +315,8 @@ class TestWizard:
             "fabprint.profiles.discover_profiles",
             lambda engine: {"machine": {}, "process": {}, "filament": {}},
         )
+        # Mock configured printers to empty so we don't depend on real credentials
+        monkeypatch.setattr("fabprint.init._list_configured_printers", lambda: {})
 
         result = run_wizard()
         assert "[slicer]" in result
@@ -352,6 +348,8 @@ class TestWizard:
             "fabprint.profiles.discover_profiles",
             lambda engine: {"machine": {}, "process": {}, "filament": {}},
         )
+        # Mock configured printers to empty so we don't depend on real credentials
+        monkeypatch.setattr("fabprint.init._list_configured_printers", lambda: {})
 
         run_wizard()
         assert not (tmp_path / "fabprint.toml").exists()

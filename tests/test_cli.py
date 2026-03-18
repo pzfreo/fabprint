@@ -178,6 +178,27 @@ file = "{_posix(FIXTURES / "cube_10mm.stl")}"
     assert (output_dir / "plate.3mf").exists()
 
 
+def test_run_name_prefix(tmp_path):
+    """Project name should prefix output filenames."""
+    toml = tmp_path / "fabprint.toml"
+    toml.write_text(f"""
+name = "benchy"
+
+[plate]
+size = [256, 256]
+
+[slicer]
+engine = "orca"
+
+[[parts]]
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
+""")
+    output_dir = tmp_path / "output"
+    main(["run", str(toml), "-o", str(output_dir), "--until", "plate"])
+    assert (output_dir / "benchy-plate.3mf").exists()
+    assert not (output_dir / "plate.3mf").exists()
+
+
 def test_run_invalid_stage_in_config(tmp_path):
     """Unknown stage in config should raise at parse time."""
     toml = tmp_path / "fabprint.toml"

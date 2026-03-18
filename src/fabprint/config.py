@@ -60,6 +60,7 @@ class FabprintConfig:
     slicer: SlicerConfig
     parts: list[PartConfig]
     base_dir: Path  # directory containing the toml file
+    name: str | None = None  # optional project name, used to prefix output filenames
     printer: PrinterConfig | None = None
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
@@ -311,11 +312,19 @@ def load_config(path: Path) -> FabprintConfig:
             raise FabprintError("printer.name is required — it references credentials.toml")
         printer = PrinterConfig(name=name)
 
+    # Top-level project name (optional)
+    project_name: str | None = raw.get("name")
+    if project_name is not None:
+        if not isinstance(project_name, str) or not project_name.strip():
+            raise FabprintError("name must be a non-empty string")
+        project_name = project_name.strip()
+
     return FabprintConfig(
         plate=plate,
         slicer=slicer,
         parts=parts,
         base_dir=base_dir,
+        name=project_name,
         printer=printer,
         pipeline=pipeline,
     )

@@ -909,3 +909,49 @@ sequence = 0
     )
     with pytest.raises(FabprintError, match="sequence must be >= 1"):
         load_config(path)
+
+
+def test_name_parsed(tmp_path):
+    """Top-level name should be parsed."""
+    path = _write_toml(
+        tmp_path,
+        """
+name = "benchy"
+
+[[parts]]
+file = "cube.stl"
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.name == "benchy"
+
+
+def test_name_default_none(tmp_path):
+    """Name defaults to None when not specified."""
+    path = _write_toml(
+        tmp_path,
+        """
+[[parts]]
+file = "cube.stl"
+""",
+        create_files=["cube.stl"],
+    )
+    cfg = load_config(path)
+    assert cfg.name is None
+
+
+def test_name_empty_rejected(tmp_path):
+    """Empty name should be rejected."""
+    path = _write_toml(
+        tmp_path,
+        """
+name = ""
+
+[[parts]]
+file = "cube.stl"
+""",
+        create_files=["cube.stl"],
+    )
+    with pytest.raises(FabprintError, match="name must be a non-empty string"):
+        load_config(path)

@@ -77,6 +77,7 @@ runs:
       shell: bash
       env:
         OUTPUT_DIR: ${{ inputs.output-dir }}
+        CONFIG: ${{ inputs.config }}
         WORKSPACE: ${{ github.workspace }}
       run: |
         # Find gcode files and extract stats
@@ -96,9 +97,13 @@ runs:
         PRINT_TIME=$(grep -oE 'estimated .+' /tmp/fabprint-output.log 2>/dev/null | sed 's/estimated //' || true)
         FILAMENT=$(grep -oE '[0-9.]+g filament' /tmp/fabprint-output.log 2>/dev/null | sed 's/g filament//' || true)
 
+        # Extract project name from config (top-level name = "...")
+        PROJECT_NAME=$(grep -E '^name\s*=' "${WORKSPACE}/${CONFIG}" 2>/dev/null | sed 's/.*=\s*"\(.*\)"/\1/' || true)
+
         echo "print-time=${PRINT_TIME}" >> "$GITHUB_OUTPUT"
         echo "filament-grams=${FILAMENT}" >> "$GITHUB_OUTPUT"
         echo "gcode-path=${FULL_OUTPUT_DIR}" >> "$GITHUB_OUTPUT"
+        echo "project-name=${PROJECT_NAME}" >> "$GITHUB_OUTPUT"
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -114,16 +119,19 @@ runs:
         PRINT_TIME: ${{ steps.metrics.outputs.print-time }}
         FILAMENT_GRAMS: ${{ steps.metrics.outputs.filament-grams }}
         ORCA_VERSION: ${{ inputs.orca-version }}
+        PROJECT_NAME: ${{ steps.metrics.outputs.project-name }}
       with:
         script: |
           const printTime = process.env.PRINT_TIME || 'unknown';
           const filament = process.env.FILAMENT_GRAMS || 'unknown';
           const orcaVersion = process.env.ORCA_VERSION || 'unknown';
+          const projectName = process.env.PROJECT_NAME || '';
+          const title = projectName ? `Fabprint: ${projectName}` : 'Fabprint Slice Results';
           const marker = '<!-- fabprint-slice-result -->';
 
           const body = [
             marker,
-            '### Fabprint Slice Results',
+            `### ${title}`,
             '',
             '| Metric | Value |',
             '|--------|-------|',
