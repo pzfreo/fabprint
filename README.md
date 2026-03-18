@@ -73,7 +73,7 @@ fabprint run        # arrange → slice → print, one command
 
 Everything is declared in a single TOML file — git-friendly, diffable, and committable alongside your CAD files. Lock the slicer version, pin the profiles, and the output is reproducible on any machine or in CI.
 
-### How is this different from OrcaSlicer CLI?
+### Why not just use OrcaSlicer CLI?
 
 This builds on OrcaSlicer CLI, but is designed to allow other slicers like Cura to plugin.
 
