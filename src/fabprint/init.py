@@ -80,7 +80,7 @@ def validate_config(path: Path) -> list[str]:
     """
     from fabprint.config import load_config
     from fabprint.pipeline import STAGE_OUTPUTS
-    from fabprint.profiles import discover_profiles
+    from fabprint.profiles import discover_profile_names
 
     cfg = load_config(path)
     warnings: list[str] = []
@@ -91,42 +91,51 @@ def validate_config(path: Path) -> list[str]:
             'slicer.version is not set — pin it for reproducible builds (e.g. version = "2.3.1")'
         )
 
-    # Check profile availability
-    try:
-        profiles = discover_profiles(cfg.slicer.engine)
-    except ValueError:
-        profiles = {}
+    # Check profile names — system → pinned → bundled
+    profiles, source = discover_profile_names(
+        cfg.slicer.engine,
+        version=cfg.slicer.version,
+        project_dir=cfg.base_dir,
+    )
 
-    if profiles:
+    if source != "none":
         if cfg.slicer.printer:
-            machines = profiles.get("machine", {})
-            if cfg.slicer.printer not in machines:
-                close = _closest_match(cfg.slicer.printer, list(machines.keys()))
+            machines = profiles.get("machine", [])
+            if machines and cfg.slicer.printer not in machines:
+                close = _closest_match(cfg.slicer.printer, machines)
                 hint = f" Did you mean '{close}'?" if close else ""
                 warnings.append(
                     f"slicer.printer '{cfg.slicer.printer}' not found in "
-                    f"installed {cfg.slicer.engine} profiles.{hint}"
+                    f"{cfg.slicer.engine} profiles ({source}).{hint}"
                 )
 
         if cfg.slicer.process:
-            processes = profiles.get("process", {})
-            if cfg.slicer.process not in processes:
-                close = _closest_match(cfg.slicer.process, list(processes.keys()))
+            processes = profiles.get("process", [])
+            if processes and cfg.slicer.process not in processes:
+                close = _closest_match(cfg.slicer.process, processes)
                 hint = f" Did you mean '{close}'?" if close else ""
                 warnings.append(
                     f"slicer.process '{cfg.slicer.process}' not found in "
-                    f"installed {cfg.slicer.engine} profiles.{hint}"
+                    f"{cfg.slicer.engine} profiles ({source}).{hint}"
                 )
 
-        filament_profiles = profiles.get("filament", {})
-        for fil in cfg.slicer.filaments:
-            if fil not in filament_profiles:
-                close = _closest_match(fil, list(filament_profiles.keys()))
-                hint = f" Did you mean '{close}'?" if close else ""
-                warnings.append(
-                    f"slicer filament '{fil}' not found in "
-                    f"installed {cfg.slicer.engine} profiles.{hint}"
-                )
+        filaments = profiles.get("filament", [])
+        if filaments:
+            for fil in cfg.slicer.filaments:
+                if fil not in filaments:
+                    close = _closest_match(fil, filaments)
+                    hint = f" Did you mean '{close}'?" if close else ""
+                    warnings.append(
+                        f"slicer filament '{fil}' not found in "
+                        f"{cfg.slicer.engine} profiles ({source}).{hint}"
+                    )
+    else:
+        warnings.append(
+            f"slicer profile names could not be validated — {cfg.slicer.engine} is not "
+            "installed locally, no pinned profiles found, and no bundled profile list available. "
+            "Run 'fabprint profiles pin' or "
+            f"'python scripts/extract_profiles.py {cfg.slicer.version or '<version>'}' to add one."
+        )
 
     # Check printer credentials reference
     if cfg.printer:
@@ -391,7 +400,7 @@ def _prompt_yn(prompt: str, default: bool = True) -> bool:
 
 def run_wizard(output: Path | None = None) -> str:
     """Run the interactive init wizard and return generated TOML."""
-    from fabprint.profiles import discover_profiles
+    from fabprint.profiles import discover_profile_names
 
     print("fabprint init — interactive config wizard\n")
 
@@ -420,16 +429,17 @@ def run_wizard(output: Path | None = None) -> str:
         _ams_pool = ThreadPoolExecutor(max_workers=1)
         ams_future = _ams_pool.submit(_query_ams_trays, configured)
 
-    # --- Step 1: Discover profiles ---
-    try:
-        profiles = discover_profiles(engine)
-    except ValueError:
-        profiles = {"machine": {}, "process": {}, "filament": {}}
+    # --- Step 1: Discover profiles (system → pinned → bundled) ---
+    profiles, profile_source = discover_profile_names(engine)
+    if profile_source == "bundled":
+        print("(Using bundled profile list — install OrcaSlicer locally for full profile access)\n")
+    elif profile_source == "none":
+        print("(No profiles found — profile names will need to be entered manually)\n")
 
     # --- Step 3: Pick printer profile ---
     printer_profile = None
     machine_info = _MachineInfo()
-    machines = sorted(profiles.get("machine", {}).keys())
+    machines = sorted(profiles.get("machine", []))
     if machines:
         print("Printer profiles:")
         chosen = _prompt_choice("Pick a printer profile: ", machines)
@@ -442,7 +452,7 @@ def run_wizard(output: Path | None = None) -> str:
 
     # --- Step 4: Pick process profile ---
     process_profile = None
-    processes = sorted(profiles.get("process", {}).keys())
+    processes = sorted(profiles.get("process", []))
     if processes:
         print("Process profiles:")
         chosen = _prompt_choice("Pick a process profile: ", processes)
@@ -470,7 +480,7 @@ def run_wizard(output: Path | None = None) -> str:
 
     # --- Step 5: Pick filament(s) ---
     filament_names: list[str] = []
-    filament_options = sorted(profiles.get("filament", {}).keys())
+    filament_options = sorted(profiles.get("filament", []))
 
     # Try to pre-populate from AMS trays
     ams_suggestions: list[str | None] = []

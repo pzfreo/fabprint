@@ -567,7 +567,10 @@ def profiles_pin(
     config: Annotated[Optional[Path], typer.Argument(help="Path to config file")] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
 ) -> None:
-    """Pin profiles from config into local profiles/ dir."""
+    """Pin profiles from config into local profiles/ dir.
+
+    Extracts profiles from Docker if OrcaSlicer is not installed locally.
+    """
     _setup_logging(verbose)
     from fabprint.profiles import pin_profiles
 
@@ -579,10 +582,33 @@ def profiles_pin(
         process=cfg.slicer.process,
         filaments=cfg.slicer.filaments,
         project_dir=cfg.base_dir,
+        docker_version=cfg.slicer.version,
     )
     print(f"Pinned {len(pinned)} profile(s)")
     for p in pinned:
         print(f"  {p}")
+
+
+@profiles_app.command("add")
+def profiles_add(
+    source: Annotated[str, typer.Argument(help="Local file path or URL to a profile JSON")],
+    category: Annotated[
+        Optional[str],
+        typer.Option(help="Profile category (machine/process/filament). Auto-detected if omitted."),
+    ] = None,
+    name: Annotated[
+        Optional[str],
+        typer.Option(help="Profile name (default: filename or JSON 'name' field)"),
+    ] = None,
+    verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
+) -> None:
+    """Import a profile JSON file into the project's profiles/ directory."""
+    _setup_logging(verbose)
+    from fabprint.profiles import add_profile
+
+    project_dir = Path.cwd()
+    dest = add_profile(source, project_dir, category=category, name=name)
+    print(f"Added profile: {dest}")
 
 
 # ---------------------------------------------------------------------------
