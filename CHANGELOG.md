@@ -2,6 +2,15 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.78 — 2026-03-18
+
+- Merge `watch` command into `status --watch` / `status -w`
+- Remove standalone `watch` subcommand
+- Warn when Docker not available for cloud printing or slicer fallback
+- Fix GitHub Action: default to `gcode-info` stage so metrics are extracted
+- Fix GitHub Action: use project name in artifact name to avoid collisions
+- Fix GitHub Action: per-project PR comment markers for multi-config workflows
+
 ## 0.1.77 — 2026-03-18
 
 - Fix GitHub Action: project name extraction matched `[printer] name` in addition to top-level `name`

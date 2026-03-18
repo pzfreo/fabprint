@@ -161,6 +161,19 @@ def _run_bridge(
     use_docker = bridge is None or platform.system() == "Darwin"
 
     if use_docker:
+        # Check Docker is available
+        try:
+            subprocess.run(
+                ["docker", "info"],
+                capture_output=True,
+                timeout=10,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Docker is required for Bambu Cloud printing but is not installed. "
+                "Install Docker Desktop from https://www.docker.com/products/docker-desktop/"
+            ) from None
+
         # Pull latest image quietly — only log on actual update.
         pull = subprocess.run(
             ["docker", "pull", DOCKER_IMAGE],

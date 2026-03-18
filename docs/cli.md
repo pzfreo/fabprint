@@ -1,6 +1,6 @@
 # CLI reference
 
-fabprint provides commands for creating configs (`init`, `validate`), setting up printers (`setup`, `login`), running the pipeline (`run`), and managing printers (`status`, `watch`, `profiles`).
+fabprint provides commands for creating configs (`init`, `validate`), setting up printers (`setup`, `login`), running the pipeline (`run`), and managing printers (`status`, `profiles`).
 
 ## `fabprint init`
 
@@ -185,23 +185,19 @@ If email/password are omitted, prompts interactively.
 
 ## `fabprint status`
 
-Query printer status via the cloud API.
+Query printer status.
 
 ```
-fabprint status [--serial SERIAL]
+fabprint status [--printer NAME] [--watch] [--interval SECONDS]
 ```
 
-Without `--serial`, shows all printers on your account.
+| Option              | Description                                      |
+|---------------------|--------------------------------------------------|
+| `--printer NAME`    | Query a specific printer (default: all)          |
+| `-w, --watch`       | Live dashboard mode with auto-refresh            |
+| `--interval SECONDS`| Refresh interval in watch mode (default: 10)     |
 
-## `fabprint watch`
-
-Live dashboard for all bound printers. Refreshes automatically.
-
-```
-fabprint watch [--interval SECONDS]
-```
-
-Default refresh interval is 10 seconds.
+Without `--printer`, shows all configured printers. Add `-w` for a live dashboard.
 
 ## `fabprint profiles`
 
