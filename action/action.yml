@@ -112,12 +112,15 @@ runs:
         FILAMENT_GRAMS: ${{ steps.metrics.outputs.filament-grams }}
         ORCA_VERSION: ${{ inputs.orca-version }}
         PROJECT_NAME: ${{ steps.metrics.outputs.project-name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       with:
         script: |
           const printTime = process.env.PRINT_TIME || 'unknown';
           const filament = process.env.FILAMENT_GRAMS || 'unknown';
           const orcaVersion = process.env.ORCA_VERSION || 'unknown';
           const projectName = process.env.PROJECT_NAME || '';
+          const runUrl = process.env.RUN_URL;
+          const artifactName = `fabprint-${projectName || 'output'}`;
           const title = projectName ? `Fabprint: ${projectName}` : 'Fabprint Slice Results';
           const marker = `<!-- fabprint-slice-result-${projectName || 'default'} -->`;
 
@@ -132,7 +135,7 @@ runs:
             '',
             `Sliced with OrcaSlicer ${orcaVersion}`,
             '',
-            `> Download the sliced output from the **fabprint-${projectName || 'output'}** artifact above.`,
+            `> 📦 [Download **${artifactName}**](${runUrl}#artifacts)`,
           ].join('\n');
 
           // Find existing comment to update
