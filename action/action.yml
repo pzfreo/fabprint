@@ -14,9 +14,9 @@ inputs:
     required: false
     default: "2.3.1"
   until:
-    description: "Run pipeline up to this stage (default: gcode-info)"
+    description: "Run pipeline up to this stage (default: slice)"
     required: false
-    default: "gcode-info"
+    default: "slice"
   output-dir:
     description: "Output directory for sliced files (relative to repo root)"
     required: false
@@ -80,20 +80,11 @@ runs:
         CONFIG: ${{ inputs.config }}
         WORKSPACE: ${{ github.workspace }}
       run: |
-        # Find gcode files and extract stats
         FULL_OUTPUT_DIR="${WORKSPACE}/${OUTPUT_DIR}"
-        GCODE=$(find "$FULL_OUTPUT_DIR" -name '*.gcode' -type f 2>/dev/null | head -1)
-
-        if [ -z "$GCODE" ]; then
-          # Try inside .gcode.3mf
-          MF=$(find "$FULL_OUTPUT_DIR" -name '*.gcode.3mf' -type f 2>/dev/null | head -1)
-          if [ -n "$MF" ]; then
-            echo "gcode-3mf=$MF" >> "$GITHUB_OUTPUT"
-          fi
-        fi
 
         # Parse metrics from fabprint log output
-        # Output format: "  123.4g filament, estimated 1h 7m 32s"
+        # gcode_stats is included in the slice stage, output format:
+        #   "  123.4g filament, estimated 1h 7m 32s"
         PRINT_TIME=$(grep -oE 'estimated .+' /tmp/fabprint-output.log 2>/dev/null | head -1 | sed 's/estimated //' || true)
         FILAMENT=$(grep -oE '[0-9.]+g filament' /tmp/fabprint-output.log 2>/dev/null | head -1 | sed 's/g filament//' || true)
 

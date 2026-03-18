@@ -2,12 +2,16 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.79 — 2026-03-18
+
+- Include `gcode_stats` in `slice` stage so metrics are always available after slicing
+- Fix GitHub Action: metrics now extracted from pipeline output (no extra Docker run)
+
 ## 0.1.78 — 2026-03-18
 
 - Merge `watch` command into `status --watch` / `status -w`
 - Remove standalone `watch` subcommand
 - Warn when Docker not available for cloud printing or slicer fallback
-- Fix GitHub Action: default to `gcode-info` stage so metrics are extracted
 - Fix GitHub Action: use project name in artifact name to avoid collisions
 - Fix GitHub Action: per-project PR comment markers for multi-config workflows
 

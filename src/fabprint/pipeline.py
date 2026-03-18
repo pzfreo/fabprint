@@ -43,8 +43,8 @@ STAGE_OUTPUTS: dict[str, list[str]] = {
     "load": ["loaded_parts", "part_summary"],
     "arrange": ["placements"],
     "plate": ["plate_3mf_path", "preview_path"],
-    "slice": ["sliced_output_dir"],
-    "gcode-info": ["gcode_stats"],
+    "slice": ["sliced_output_dir", "gcode_stats"],
+    "gcode-info": ["gcode_stats"],  # kept for backward compat
     "print": ["print_result"],
 }
 
