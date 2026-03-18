@@ -7,15 +7,15 @@
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-3D prints are hard to reproduce reliably:
+3D printing has a reproducibility problem:
 
-- Slicer settings can get lost between sessions or through human error
-- Printer configs drift across different slicer versions and installations
-- There's no easy way to version or diff a print job
+- Slicer settings get lost between sessions or through human error
+- Printer configs drift across machines and slicer versions
+- There's no way to version, diff, or audit a print job
 
-**fabprint is designed for engineers, makers, and teams who need repeatable, version-controlled 3D prints.**
+**fabprint addresses this with declarative, version-controlled builds.** Define your print like code — parts, slicer settings, and printer config in a single TOML file — and fabprint handles the rest: arrangement, slicing, and dispatch to the printer. Same repo → same G-code → consistent, repeatable prints across machines. fabprint produces identical G-code for a given config; physical results may still vary with hardware and materials.
 
-**fabprint makes 3D printing reproducible.** Same repo → same G-code → same print. Define your models, slicer settings, and printer config once in a TOML file, then arrange, slice, and print from the command line — identically on any machine. It works with STL, STEP, and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
+Built for engineers, makers, and teams who treat their prints like software. Works with STL, STEP, and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
 
 ```toml
 # fabprint.toml — a multi-part print with slicer overrides
@@ -71,9 +71,9 @@ fabprint run        # arrange → slice → print, one command
 3. **Slice** — using a pinned OrcaSlicer version (via Docker) for identical G-code across machines
 4. **Print** — sends identical G-code to your printer
 
-Everything lives in a single TOML file — git-friendly, diffable, and reproducible on any machine.
+Everything is declared in a single TOML file — git-friendly, diffable, and committable alongside your CAD files. Lock the slicer version, pin the profiles, and the output is reproducible on any machine or in CI.
 
-### How is this different from OrcaSlicer CLI?
+### Why not just use OrcaSlicer CLI?
 
 This builds on OrcaSlicer CLI, but is designed to allow other slicers like Cura to plugin.
 
