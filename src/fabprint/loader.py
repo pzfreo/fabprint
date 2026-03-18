@@ -168,8 +168,7 @@ def _load_step(path: Path) -> trimesh.Trimesh:
         from build123d import export_stl, import_step
     except ImportError:
         raise ImportError(
-            "build123d is required to load STEP files. "
-            "Install with: uv pip install 'fabprint[step]'"
+            "build123d is required to load STEP files. Install with: pip install build123d"
         ) from None
 
     log.info("Loading STEP file via build123d: %s", path)

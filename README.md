@@ -79,8 +79,7 @@ OrcaSlicer CLI slices one plate of pre-arranged models. fabprint is a pipeline a
 **Prerequisites:** Python 3.11+ and either [Docker](https://docs.docker.com/get-docker/) or a local [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) install. Docker is required for Bambu Cloud printing and **recommended for reproducible slicing** — it lets you pin the exact OrcaSlicer version so every machine produces identical G-code.
 
 ```bash
-pip install fabprint                # STL + 3MF support, LAN + cloud printing
-pip install "fabprint[step]"        # add STEP file support (build123d)
+pip install fabprint
 ```
 
 Generate a config with the interactive wizard, or dump a commented template:
