@@ -18,7 +18,6 @@ from fabprint.profiles import resolve_profile_data
 log = logging.getLogger(__name__)
 
 DOCKERHUB_REPO = "fabprint/fabprint"
-DEFAULT_DOCKER_IMAGE = f"{DOCKERHUB_REPO}:latest"
 
 
 def _slicer_paths() -> dict[str, Path]:
@@ -45,7 +44,7 @@ def _docker_image(version: str | None = None) -> str:
     """Return the Docker image name for a given OrcaSlicer version."""
     if version:
         return f"{DOCKERHUB_REPO}:orca-{version}"
-    return DEFAULT_DOCKER_IMAGE
+    return f"{DOCKERHUB_REPO}:latest"
 
 
 def find_slicer(engine: str) -> Path:
@@ -271,10 +270,20 @@ def _resolve_profiles(
     filament_arg = None
     if filaments:
         resolved = []
+        # Resolve real profiles; reuse the first for gap (empty) slots
+        first_path: str | None = None
         for i, f in enumerate(filaments):
-            data = resolve_profile_data(f, engine, "filament", project_dir)
-            path = _write_tmp_profile(data, tmp_dir, f"filament_{i}")
-            resolved.append(str(path))
+            if f:
+                data = resolve_profile_data(f, engine, "filament", project_dir)
+                path = _write_tmp_profile(data, tmp_dir, f"filament_{i}")
+                resolved.append(str(path))
+                if first_path is None:
+                    first_path = str(path)
+            else:
+                resolved.append("")
+        # Fill gap slots with the first resolved profile (same file, no re-resolve)
+        if first_path:
+            resolved = [p if p else first_path for p in resolved]
         filament_arg = ";".join(resolved)
 
     settings_arg = ";".join(settings) if settings else None
@@ -665,6 +674,12 @@ def slice_plate(
     if required_version and not docker_version:
         docker_version = required_version
 
+    if not docker_version and not local:
+        print(
+            "  \033[33mWarning: No slicer.version set in config. "
+            'Pin a version (e.g. version = "2.3.1") for reproducible builds.\033[0m'
+        )
+
     image = _docker_image(docker_version)
 
     if local:
@@ -695,7 +710,7 @@ def slice_plate(
             except FileNotFoundError:
                 raise FileNotFoundError(
                     "No slicer available. Install OrcaSlicer locally or "
-                    "pull the Docker image: docker pull fabprint/fabprint:latest"
+                    "pull a Docker image: docker pull fabprint/fabprint:orca-2.3.1"
                 )
 
     # Detect and verify slicer version

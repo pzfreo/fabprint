@@ -2,6 +2,12 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.81 — 2026-03-18
+
+- Avoid resolving the same filament profile multiple times for gap slots
+- Warn when `slicer.version` is not set in config (builds may not be reproducible)
+- Fix GitHub Action: use `--local` to avoid Docker-in-Docker failure when slicing
+
 ## 0.1.80 — 2026-03-18
 
 - Fix GitHub Action: use `--local` to avoid Docker-in-Docker failure when slicing

@@ -234,10 +234,9 @@ def load_config(path: Path) -> FabprintConfig:
                     used_slots.add(next_slot)
                     next_slot += 1
 
-            # Build the filaments list, filling gaps with the first profile
+            # Build the filaments list — use empty string for unused gap slots
             max_slot = max(slot_to_name.keys())
-            first_name = slot_to_name[min(slot_to_name.keys())]
-            slicer.filaments = [slot_to_name.get(s, first_name) for s in range(1, max_slot + 1)]
+            slicer.filaments = [slot_to_name.get(s, "") for s in range(1, max_slot + 1)]
 
         # Build name → index lookup (first occurrence for name-based refs)
         fil_index: dict[str, int] = {}
