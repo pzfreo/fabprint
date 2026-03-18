@@ -113,3 +113,16 @@ jobs:
           build-args: ORCA_VERSION=2.3.1
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Extract OrcaSlicer profiles from Docker image
+        if: steps.orca_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          python scripts/extract_profiles.py 2.3.1 --image fabprint/fabprint:orca-2.3.1
+
+      - name: Commit bundled profiles
+        if: steps.orca_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          git diff --quiet src/fabprint/data/ && echo "No profile changes" && exit 0
+          git add src/fabprint/data/
+          git commit -m "Update bundled OrcaSlicer 2.3.1 profiles [skip ci]"
+          git push

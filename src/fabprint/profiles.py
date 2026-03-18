@@ -63,6 +63,75 @@ def discover_profiles(engine: str) -> dict[str, dict[str, Path]]:
     return result
 
 
+_BUNDLED_DIR = Path(__file__).parent / "data"
+
+
+def load_bundled_profiles(engine: str, version: str | None = None) -> dict[str, list[str]]:
+    """Load profile names bundled with the package.
+
+    Looks for ``src/fabprint/data/profiles.<engine>.<version>.json``.
+    Falls back to the highest available version if the requested one is missing.
+
+    Returns a dict of ``{category: [name, ...]}`` or an empty dict if none found.
+    """
+    if version:
+        exact = _BUNDLED_DIR / f"profiles.{engine}.{version}.json"
+        if exact.exists():
+            with open(exact) as f:
+                data = json.load(f)
+            return {cat: data.get(cat, []) for cat in CATEGORIES}
+
+    # Fall back to highest bundled version
+    candidates = sorted(_BUNDLED_DIR.glob(f"profiles.{engine}.*.json"))
+    if candidates:
+        with open(candidates[-1]) as f:
+            data = json.load(f)
+        return {cat: data.get(cat, []) for cat in CATEGORIES}
+
+    return {}
+
+
+def discover_profile_names(
+    engine: str,
+    version: str | None = None,
+    project_dir: Path | None = None,
+) -> tuple[dict[str, list[str]], str]:
+    """Discover profile names with full fallback chain.
+
+    Priority:
+    1. System profiles (local OrcaSlicer install)
+    2. Pinned profiles in the project repo (``./profiles/``)
+    3. Bundled profiles shipped with the package
+
+    Returns ``(names_dict, source)`` where *source* is one of
+    ``"system"``, ``"pinned"``, ``"bundled"``, or ``"none"``.
+    """
+    # 1. System profiles
+    try:
+        system = discover_profiles(engine)
+    except ValueError:
+        system = {}
+    if any(system.values()):
+        return {cat: sorted(system.get(cat, {}).keys()) for cat in CATEGORIES}, "system"
+
+    # 2. Pinned profiles in repo
+    if project_dir:
+        pinned: dict[str, list[str]] = {}
+        for cat in CATEGORIES:
+            cat_dir = project_dir / "profiles" / cat
+            if cat_dir.is_dir():
+                pinned[cat] = sorted(f.stem for f in cat_dir.glob("*.json") if f.is_file())
+        if any(pinned.values()):
+            return pinned, "pinned"
+
+    # 3. Bundled profiles
+    bundled = load_bundled_profiles(engine, version)
+    if any(bundled.values()):
+        return bundled, "bundled"
+
+    return {cat: [] for cat in CATEGORIES}, "none"
+
+
 def resolve_profile(
     name_or_path: str,
     engine: str,
