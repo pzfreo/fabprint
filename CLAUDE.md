@@ -11,11 +11,12 @@ Do NOT push a PR until all four checks pass locally.
 
 ## Changelog (MANDATORY)
 Every PR must include a CHANGELOG.md update:
-1. Add an entry at the top of CHANGELOG.md under a new version heading
-2. Use the format: `## <next-version> — YYYY-MM-DD`
-3. Bump the patch version from the latest entry (e.g. 0.1.53 → 0.1.54)
-4. Use today's date
-5. List changes as bullet points — concise, user-facing descriptions
+1. Check the latest published version: `curl -s https://pypi.org/pypi/fabprint/json | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])"`
+2. Add an entry at the top of CHANGELOG.md under a new version heading
+3. Use the format: `## <next-version> — YYYY-MM-DD`
+4. Bump the patch version from the latest on PyPI (e.g. 0.1.73 → 0.1.74)
+5. Use today's date
+6. List changes as bullet points — concise, user-facing descriptions
 
 ## Post-PR Checklist (MANDATORY)
 After pushing a PR or merging to main:
