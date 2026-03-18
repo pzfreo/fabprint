@@ -26,6 +26,7 @@ dependencies = [
     "requests>=2.28",
     "typer>=0.15.0",
     "build123d>=0.10.0",
+    "watchfiles>=1.0.0",
 ]
 
 [project.urls]
