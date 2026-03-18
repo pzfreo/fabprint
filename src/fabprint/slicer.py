@@ -145,7 +145,6 @@ def _has_docker_image(image: str) -> bool:
 def _pull_docker_image(image: str) -> bool:
     """Pull a Docker image from the registry. Returns True on success."""
     log.info("Pulling Docker image %s ...", image)
-    print(f"  Pulling Docker image {image} ...")
     try:
         r = subprocess.run(
             ["docker", "pull", image],
@@ -724,7 +723,8 @@ def slice_plate(
             detected_version, required_version, "Docker" if use_docker else "local"
         )
 
-    print(f"Slicer: OrcaSlicer {detected_version or 'unknown'}{' (Docker)' if use_docker else ''}")
+    docker_str = " (Docker)" if use_docker else ""
+    log.debug("Slicer: OrcaSlicer %s%s", detected_version or "unknown", docker_str)
 
     input_3mf = input_3mf.resolve()
     if not input_3mf.exists():

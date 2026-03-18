@@ -133,28 +133,27 @@ def _send_lan(
             "bambulabs-api is required for LAN printing. Install with: pip install fabprint[lan]"
         ) from None
 
-    print(f"Sending {gcode_path.name} to printer at {ip}")
+    log.debug("Sending %s to printer at %s", gcode_path.name, ip)
 
     if dry_run:
         action = "upload" if upload_only else "upload and start print"
-        print(f"  [dry-run] Would {action} {gcode_path.name}")
+        log.debug("[dry-run] Would %s %s", action, gcode_path.name)
         return
 
     printer = Printer(ip_address=ip, access_code=access_code, serial=serial)
     try:
         printer.connect()
-        log.info("Connected to printer at %s", ip)
+        log.debug("Connected to printer at %s", ip)
 
         with open(gcode_path, "rb") as f:
             remote_path = printer.upload_file(f, filename=gcode_path.name)
-        log.info("Uploaded to %s", remote_path)
-        print(f"  Uploaded {gcode_path.name}")
+        log.debug("Uploaded to %s", remote_path)
 
         if upload_only:
-            print("  File ready on printer — start from touchscreen when ready")
+            log.debug("File ready on printer — start from touchscreen when ready")
         else:
             printer.start_print(filename=remote_path, plate_number=1)
-            print("  Print started")
+            log.debug("Print started")
     finally:
         printer.disconnect()
         log.info("Disconnected from printer")
@@ -296,10 +295,10 @@ def _send_cloud_bridge(
     else:
         threemf_path = wrap_gcode_3mf(gcode_path)
 
-    print(f"Sending {threemf_path.name} via cloud bridge")
+    log.debug("Sending %s via cloud bridge", threemf_path.name)
 
     if dry_run:
-        print(f"  [dry-run] Would upload {threemf_path.name} to printer {serial}")
+        log.debug("[dry-run] Would upload %s to printer %s", threemf_path.name, serial)
         return
 
     with cloud_token_json() as token_file:
@@ -315,9 +314,9 @@ def _send_cloud_bridge(
 
     status = result.get("result", "unknown")
     if status in ("success", "sent"):
-        print(f"  Print job sent to {serial}")
-        print(
-            "  If the printer shows 'Failed to get AMS mapping table',"
+        log.debug("Print job sent to %s", serial)
+        log.debug(
+            "If the printer shows 'Failed to get AMS mapping table',"
             " press Resume on the touchscreen."
         )
     else:
@@ -340,11 +339,11 @@ def _send_moonraker(
         ) from None
 
     base = url.rstrip("/")
-    print(f"Sending {gcode_path.name} to Moonraker at {base}")
+    log.debug("Sending %s to Moonraker at %s", gcode_path.name, base)
 
     if dry_run:
         action = "upload" if upload_only else "upload and start print"
-        print(f"  [dry-run] Would {action} {gcode_path.name}")
+        log.debug("[dry-run] Would %s %s", action, gcode_path.name)
         return
 
     headers = {}
@@ -359,10 +358,10 @@ def _send_moonraker(
             headers=headers,
         )
     resp.raise_for_status()
-    print(f"  Uploaded {gcode_path.name}")
+    log.debug("Uploaded %s", gcode_path.name)
 
     if upload_only:
-        print("  File ready — start from Mainsail/Fluidd or printer screen")
+        log.debug("File ready — start from Mainsail/Fluidd or printer screen")
     else:
         resp = requests.post(
             f"{base}/printer/print/start",
@@ -370,7 +369,7 @@ def _send_moonraker(
             headers=headers,
         )
         resp.raise_for_status()
-        print("  Print started")
+        log.debug("Print started")
 
 
 def send_print(
