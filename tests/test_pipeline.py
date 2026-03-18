@@ -184,7 +184,7 @@ def test_resolve_outputs_only():
 
     stages = ["load", "arrange", "plate", "slice", "print"]
     outputs = resolve_outputs(stages, only="slice")
-    assert outputs == ["sliced_output_dir"]
+    assert outputs == ["sliced_output_dir", "gcode_stats"]
 
 
 def test_resolve_outputs_unknown_stage():
