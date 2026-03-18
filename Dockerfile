@@ -60,7 +60,7 @@ WORKDIR /opt/fabprint
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src/ ./src/
 RUN uv python install 3.12 \
-    && uv sync --frozen --no-dev --no-editable --python 3.12 \
+    && uv sync --frozen --no-dev --no-editable --python 3.12 --extra step \
     && uv cache clean
 
 ENV PATH="/opt/fabprint/.venv/bin:$PATH"
