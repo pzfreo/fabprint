@@ -94,11 +94,11 @@ runs:
 
         # Parse metrics from fabprint log output
         # Output format: "  123.4g filament, estimated 1h 7m 32s"
-        PRINT_TIME=$(grep -oE 'estimated .+' /tmp/fabprint-output.log 2>/dev/null | sed 's/estimated //' || true)
-        FILAMENT=$(grep -oE '[0-9.]+g filament' /tmp/fabprint-output.log 2>/dev/null | sed 's/g filament//' || true)
+        PRINT_TIME=$(grep -oE 'estimated .+' /tmp/fabprint-output.log 2>/dev/null | head -1 | sed 's/estimated //' || true)
+        FILAMENT=$(grep -oE '[0-9.]+g filament' /tmp/fabprint-output.log 2>/dev/null | head -1 | sed 's/g filament//' || true)
 
-        # Extract project name from config (top-level name = "...")
-        PROJECT_NAME=$(grep -E '^name\s*=' "${WORKSPACE}/${CONFIG}" 2>/dev/null | sed 's/.*=\s*"\(.*\)"/\1/' || true)
+        # Extract project name: match top-level name only (before any [section] header)
+        PROJECT_NAME=$(sed -n '/^\[/q; s/^name\s*=\s*"\(.*\)"/\1/p' "${WORKSPACE}/${CONFIG}" 2>/dev/null || true)
 
         echo "print-time=${PRINT_TIME}" >> "$GITHUB_OUTPUT"
         echo "filament-grams=${FILAMENT}" >> "$GITHUB_OUTPUT"

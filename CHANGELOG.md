@@ -2,6 +2,11 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.77 — 2026-03-18
+
+- Fix GitHub Action: project name extraction matched `[printer] name` in addition to top-level `name`
+- Fix GitHub Action: guard metrics parsing against multi-line grep output
+
 ## 0.1.74 — 2026-03-18
 
 - Add top-level `name` field to `fabprint.toml` to prefix all output filenames
