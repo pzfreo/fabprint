@@ -41,9 +41,8 @@ runs:
       shell: bash
       env:
         ORCA_VERSION: ${{ inputs.orca-version }}
-        REPO: ${{ github.repository }}
       run: |
-        IMAGE="ghcr.io/${REPO}:orca-${ORCA_VERSION}"
+        IMAGE="ghcr.io/pzfreo/fabprint:orca-${ORCA_VERSION}"
         echo "::group::Pulling ${IMAGE}"
         docker pull "${IMAGE}"
         echo "::endgroup::"
@@ -52,7 +51,6 @@ runs:
       shell: bash
       env:
         ORCA_VERSION: ${{ inputs.orca-version }}
-        REPO: ${{ github.repository }}
         CONFIG: ${{ inputs.config }}
         UNTIL: ${{ inputs.until }}
         OUTPUT_DIR: ${{ inputs.output-dir }}
@@ -60,7 +58,7 @@ runs:
       run: |
         docker run --rm \
           -v "${WORKSPACE}:/project" \
-          "ghcr.io/${REPO}:orca-${ORCA_VERSION}" \
+          "ghcr.io/pzfreo/fabprint:orca-${ORCA_VERSION}" \
           run "${CONFIG}" \
           --until "${UNTIL}" \
           --output-dir "/project/${OUTPUT_DIR}" \
