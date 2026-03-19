@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from rich.console import Console, Group
+from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.syntax import Syntax
 from rich.table import Table
+from rich.text import Text
 from rich.theme import Theme
 
 _THEME = Theme(
@@ -132,28 +133,31 @@ def _build_picker_display(
     prompt: str,
     allow_multi: bool,
     total: int,
-) -> Group:
-    """Build the Rich renderable for the live picker."""
-    parts: list[str] = []
+) -> Text:
+    """Build the Rich renderable for the live picker.
 
-    # Options list — one line per item, plain Text objects
+    Returns a single Text object so Rich Live can accurately calculate
+    the number of lines to overwrite on each refresh.
+    """
+    lines: list[str] = []
+
+    # Options list — one line per item
     visible = filtered[:_MAX_VISIBLE]
     for i, name in enumerate(visible, 1):
         label = _highlight_match(name, query) if query else escape(name)
-        parts.append(f"  [dim]{i:>4}[/dim]  {label}")
+        lines.append(f"  [dim]{i:>4}[/dim]  {label}")
 
     if len(filtered) > _MAX_VISIBLE:
         remaining = len(filtered) - _MAX_VISIBLE
-        parts.append(f"  [dim]... and {remaining} more (keep typing to narrow)[/dim]")
+        lines.append(f"  [dim]... and {remaining} more (keep typing to narrow)[/dim]")
     elif not filtered:
-        parts.append("  [dim]No matches — keep typing or backspace[/dim]")
+        lines.append("  [dim]No matches — keep typing or backspace[/dim]")
 
     # Status / input line
     multi_hint = " [dim](comma-sep, 'all')[/dim]" if allow_multi else ""
-    cursor = f"  [bold]{prompt}>[/bold] {escape(query)}[blink]▌[/blink]{multi_hint}"
-    parts.append(cursor)
+    lines.append(f"  [bold]{prompt}>[/bold] {escape(query)}[blink]▌[/blink]{multi_hint}")
 
-    return Group(*parts)
+    return Text.from_markup("\n".join(lines))
 
 
 def _readkey() -> str:
