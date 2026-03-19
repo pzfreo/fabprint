@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,17 +73,30 @@ def dump_template() -> str:
 # ---------------------------------------------------------------------------
 
 
-def validate_config(path: Path) -> list[str]:
-    """Validate a fabprint.toml and return a list of warnings.
+@dataclass
+class ValidationResult:
+    """Result of config validation with passes and warnings."""
+
+    passes: list[str]
+    warnings: list[str]
+
+    def __iter__(self):  # type: ignore[override]
+        """Iterate over warnings for backward compatibility."""
+        return iter(self.warnings)
+
+
+def validate_config(path: Path) -> ValidationResult:
+    """Validate a fabprint.toml and return passes and warnings.
 
     Raises FabprintError for hard errors (via load_config).
-    Returns a list of actionable warning strings for soft issues.
+    Returns a ValidationResult with passes and warnings.
     """
     from fabprint.config import load_config
     from fabprint.pipeline import STAGE_OUTPUTS
     from fabprint.profiles import discover_profile_names
 
     cfg = load_config(path)
+    passes: list[str] = []
     warnings: list[str] = []
 
     # Check slicer version pinning
@@ -90,6 +104,8 @@ def validate_config(path: Path) -> list[str]:
         warnings.append(
             'slicer.version is not set — pin it for reproducible builds (e.g. version = "2.3.1")'
         )
+    else:
+        passes.append(f"Slicer version pinned: {cfg.slicer.version}")
 
     # Check profile names — system → pinned → bundled
     profiles, source = discover_profile_names(
@@ -98,6 +114,7 @@ def validate_config(path: Path) -> list[str]:
         project_dir=cfg.base_dir,
     )
 
+    profile_ok = True
     if source != "none":
         if cfg.slicer.printer:
             machines = profiles.get("machine", [])
@@ -108,6 +125,7 @@ def validate_config(path: Path) -> list[str]:
                     f"slicer.printer '{cfg.slicer.printer}' not found in "
                     f"{cfg.slicer.engine} profiles ({source}).{hint}"
                 )
+                profile_ok = False
 
         if cfg.slicer.process:
             processes = profiles.get("process", [])
@@ -118,6 +136,7 @@ def validate_config(path: Path) -> list[str]:
                     f"slicer.process '{cfg.slicer.process}' not found in "
                     f"{cfg.slicer.engine} profiles ({source}).{hint}"
                 )
+                profile_ok = False
 
         filaments = profiles.get("filament", [])
         if filaments:
@@ -129,6 +148,10 @@ def validate_config(path: Path) -> list[str]:
                         f"slicer filament '{fil}' not found in "
                         f"{cfg.slicer.engine} profiles ({source}).{hint}"
                     )
+                    profile_ok = False
+
+        if profile_ok:
+            passes.append(f"Slicer profiles valid ({source})")
     else:
         warnings.append(
             f"slicer profile names could not be validated — {cfg.slicer.engine} is not "
@@ -158,20 +181,93 @@ def validate_config(path: Path) -> list[str]:
                 warnings.append(
                     f"printer '{cfg.printer.name}' not found in {cred_path}. Available: {available}"
                 )
+            else:
+                passes.append(f"Printer '{cfg.printer.name}' found in credentials")
 
-    # Check for absolute part paths
-    for i, part in enumerate(cfg.parts):
-        if part.file.is_absolute():
+    # Check for absolute part paths (check raw TOML value, not resolved path)
+    import tomllib
+
+    with open(path, "rb") as f:
+        raw = tomllib.load(f)
+    for i, p in enumerate(raw.get("parts", [])):
+        raw_file = p.get("file", "")
+        if raw_file and Path(raw_file).is_absolute():
             warnings.append(
                 f"parts[{i}].file is an absolute path — consider making it relative for portability"
             )
 
+    # Check part files: readability, extension, duplicates
+    # (existence and orient are already hard errors in load_config)
+    _SUPPORTED_EXTENSIONS = {".stl", ".3mf", ".step", ".stp", ".obj"}
+    seen_files: set[str] = set()
+    parts_ok = True
+    for i, part in enumerate(cfg.parts):
+        part_path = part.file
+
+        # Check readability (file exists at this point — load_config validated that)
+        if not os.access(part_path, os.R_OK):
+            warnings.append(f"parts[{i}].file '{part_path}' is not readable")
+            parts_ok = False
+
+        # Check file extension
+        ext = part_path.suffix.lower()
+        if ext and ext not in _SUPPORTED_EXTENSIONS:
+            warnings.append(
+                f"parts[{i}].file has unsupported extension '{ext}' "
+                f"— expected one of {sorted(_SUPPORTED_EXTENSIONS)}"
+            )
+            parts_ok = False
+
+        # Check for duplicate files
+        canon = str(part_path)
+        if canon in seen_files:
+            warnings.append(f"parts[{i}].file '{part_path.name}' appears more than once")
+            parts_ok = False
+        seen_files.add(canon)
+
+    n = len(cfg.parts)
+    if parts_ok:
+        passes.append(f"{n} part file{'s' if n != 1 else ''} readable")
+
+    # Check plate dimensions
+    width, depth = cfg.plate.size
+    plate_ok = True
+    if width < 50 or depth < 50:
+        warnings.append(
+            f"plate.size [{width}, {depth}] seems very small — most beds are at least 100mm"
+        )
+        plate_ok = False
+    if width > 1000 or depth > 1000:
+        warnings.append(f"plate.size [{width}, {depth}] seems very large — check units are in mm")
+        plate_ok = False
+    if plate_ok:
+        passes.append(f"Plate size {width:.0f}×{depth:.0f}mm")
+
     # Check pipeline stages
+    stages_ok = True
     for stage in cfg.pipeline.stages:
         if stage not in STAGE_OUTPUTS:
             warnings.append(f"pipeline stage '{stage}' is unknown")
+            stages_ok = False
 
-    return warnings
+    # Check pipeline stage ordering
+    stage_order = list(STAGE_OUTPUTS.keys())
+    prev_idx = -1
+    for stage in cfg.pipeline.stages:
+        if stage in stage_order:
+            idx = stage_order.index(stage)
+            if idx < prev_idx:
+                warnings.append(
+                    f"pipeline stage '{stage}' is out of order — expected after "
+                    f"'{stage_order[prev_idx]}'"
+                )
+                stages_ok = False
+            prev_idx = idx
+
+    if stages_ok:
+        passes.append(f"Pipeline: {' → '.join(cfg.pipeline.stages)}")
+
+    return ValidationResult(passes=passes, warnings=warnings)
 
 
 def _closest_match(name: str, candidates: list[str]) -> str | None:
@@ -299,6 +395,61 @@ def _detect_orca_version() -> str | None:
     return None
 
 
+def _fetch_available_versions() -> list[str]:
+    """Fetch OrcaSlicer versions available as Docker images on DockerHub."""
+    import requests
+
+    from fabprint.slicer import DOCKERHUB_REPO
+
+    try:
+        url = f"https://hub.docker.com/v2/repositories/{DOCKERHUB_REPO}/tags"
+        resp = requests.get(url, params={"page_size": 100}, timeout=5)
+        resp.raise_for_status()
+        tags = [t["name"] for t in resp.json().get("results", [])]
+        # Extract versions from orca-X.Y.Z tags
+        versions = []
+        for tag in tags:
+            if tag.startswith("orca-"):
+                versions.append(tag[5:])  # strip "orca-" prefix
+        return sorted(versions, reverse=True)
+    except Exception:
+        return []
+
+
+def _prompt_slicer_version() -> str | None:
+    """Prompt for OrcaSlicer version, offering available Docker image versions."""
+    from fabprint import ui
+
+    detected = _detect_orca_version()
+    available = _fetch_available_versions()
+
+    if available:
+        options = list(available) + ["Skip (don't pin version)"]
+        # Pre-select detected version if it's in the list
+        default_idx = 1
+        if detected and detected in available:
+            default_idx = available.index(detected) + 1
+
+        ui.choice_table(
+            [(v,) for v in options],
+            ["Available versions"],
+        )
+        pick = _prompt_int("Pick version", default_idx)
+        idx = pick - 1
+        if 0 <= idx < len(available):
+            version = available[idx]
+            ui.success(f"OrcaSlicer {version}")
+            return version
+        return None
+
+    # Fallback: no Docker images found, prompt manually
+    if detected:
+        version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)", detected)
+    else:
+        version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)")
+    return version or None
+
+
 def _prompt_choice(prompt: str, options: list[str], allow_multi: bool = False) -> list[int]:
     """Interactive picker — delegates to ``ui.pick``."""
     from fabprint import ui
@@ -325,6 +476,121 @@ def _prompt_yn(prompt: str, default: bool = True) -> bool:
     from fabprint import ui
 
     return ui.prompt_yn(prompt, default)
+
+
+# ---------------------------------------------------------------------------
+# Common slicer overrides
+# ---------------------------------------------------------------------------
+
+# Each entry: (display_name, slicer_key, value_spec)
+# value_spec is either ("text", "hint string") or ("choice", [...options])
+OverrideSpec = tuple[str, str, tuple[str, str] | tuple[str, list[str]]]
+
+COMMON_OVERRIDES: list[OverrideSpec] = [
+    ("Infill density", "sparse_infill_density", ("text", "e.g. 15%, 25%, 50%")),
+    (
+        "Infill pattern",
+        "sparse_infill_pattern",
+        (
+            "choice",
+            [
+                "grid",
+                "gyroid",
+                "honeycomb",
+                "line",
+                "cubic",
+                "triangles",
+                "concentric",
+                "lightning",
+            ],
+        ),
+    ),
+    ("Wall loops", "wall_loops", ("text", "e.g. 2, 3, 4")),
+    ("Layer height", "layer_height", ("text", "e.g. 0.12, 0.16, 0.20, 0.28")),
+    (
+        "Enable support",
+        "enable_support",
+        ("choice", ["0 (off)", "1 (on)"]),
+    ),
+    (
+        "Support type",
+        "support_type",
+        ("choice", ["normal", "tree", "hybrid"]),
+    ),
+    ("Top shell layers", "top_shell_layers", ("text", "e.g. 3, 5")),
+    ("Bottom shell layers", "bottom_shell_layers", ("text", "e.g. 3, 5")),
+    (
+        "Brim type",
+        "brim_type",
+        ("choice", ["no_brim", "outer_only", "inner_only", "outer_and_inner"]),
+    ),
+    (
+        "Seam position",
+        "seam_position",
+        ("choice", ["nearest", "aligned", "back", "random"]),
+    ),
+]
+
+
+def _prompt_overrides() -> dict[str, str]:
+    """Prompt user to add slicer overrides, returning key→value dict."""
+    from fabprint import ui
+
+    if not _prompt_yn("Add slicer overrides?", default=False):
+        return {}
+
+    overrides: dict[str, str] = {}
+    while True:
+        # Build display list: common overrides + custom option
+        items = [(name, key) for name, key, _ in COMMON_OVERRIDES]
+        items.append(("Custom key...", ""))
+        ui.choice_table(items, ["Name", "Slicer key"])
+
+        pick = _prompt_int("Pick override", 1)
+        idx = pick - 1
+        if idx < 0 or idx > len(COMMON_OVERRIDES):
+            ui.warn(f"Enter 1-{len(COMMON_OVERRIDES) + 1}")
+            continue
+
+        if idx == len(COMMON_OVERRIDES):
+            # Custom key
+            key = _prompt_str("Slicer key name")
+            if not key:
+                continue
+            value = _prompt_str(f"Value for {key}")
+            if value:
+                overrides[key] = value
+                ui.success(f'{key} = "{value}"')
+        else:
+            name, key, spec = COMMON_OVERRIDES[idx]
+            ui.success(name)
+
+            if spec[0] == "choice" and isinstance(spec[1], list):
+                choices = spec[1]
+                ui.choice_table([(c,) for c in choices], ["Option"])
+                cpick = _prompt_int("Pick value", 1)
+                cidx = cpick - 1
+                if 0 <= cidx < len(choices):
+                    raw = choices[cidx]
+                    # Strip parenthetical hints like "0 (off)" → "0"
+                    value = raw.split(" (")[0] if " (" in raw else raw
+                    overrides[key] = value
+                    ui.success(f'{key} = "{value}"')
+                else:
+                    ui.warn(f"Enter 1-{len(choices)}")
+                    continue
+            else:
+                hint = spec[1]
+                value = _prompt_str(f"Value for {key} ({hint})")
+                if value:
+                    overrides[key] = value
+                    ui.success(f'{key} = "{value}"')
+
+        ui.console.print()
+        if not _prompt_yn("Add another override?", default=False):
+            break
+
+    return overrides
 
 
 def run_wizard(output: Path | None = None) -> str:
@@ -396,6 +662,11 @@ def run_wizard(output: Path | None = None) -> str:
         process_profile = _prompt_str("Process profile name (e.g. '0.20mm Standard @BBL X1C')")
         ui.console.print()
 
+    # --- Step 4b: Slicer overrides ---
+    ui.heading("Slicer Overrides")
+    overrides = _prompt_overrides()
+    ui.console.print()
+
     # --- Collect AMS results (should be done by now) ---
     ams_trays: list[dict] = []
     if ams_future is not None:
@@ -404,11 +675,7 @@ def run_wizard(output: Path | None = None) -> str:
         except Exception:
             pass
         if ams_trays:
-            ui.info(f"AMS loaded ({len(ams_trays)} slot(s)):")
-            for t in ams_trays:
-                swatch = ui.color_swatch(t["color"])
-                ui.console.print(f"  Slot {t['phys_slot'] + 1}: {t['type']}  {swatch}")
-            ui.console.print()
+            ui.info(f"AMS detected ({len(ams_trays)} slot(s))")
 
     # --- Step 5: Pick filament(s) ---
     filament_names: list[str] = []
@@ -510,21 +777,11 @@ def run_wizard(output: Path | None = None) -> str:
 
     # --- Step 8: Slicer version ---
     ui.heading("Slicer Version")
-    detected_version = _detect_orca_version()
-    if detected_version:
-        slicer_version = _prompt_str(
-            "OrcaSlicer version to pin (leave blank to skip)", detected_version
-        )
-    else:
-        slicer_version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)")
+    slicer_version = _prompt_slicer_version()
     ui.console.print()
 
-    # --- Step 9: Pipeline stages ---
-    ui.heading("Pipeline")
+    # --- Step 9: Pipeline stages (always include print) ---
     stages = list(DEFAULT_STAGES)
-    if not _prompt_yn("Include print stage in pipeline?"):
-        stages = [s for s in stages if s != "print"]
-    ui.console.print()
 
     # --- Step 10: Printer connection ---
     printer_name = None
@@ -533,9 +790,6 @@ def run_wizard(output: Path | None = None) -> str:
         configured = _list_configured_printers()
         if configured:
             names = list(configured.keys())
-            items = [(n, c.get("type", "unknown")) for n, c in configured.items()]
-            items.append(("Skip (configure later)", ""))
-            ui.choice_table(items, ["Printer", "Type"])
             chosen = _prompt_choice("Pick a printer", [*names, "Skip (configure later)"])
             pick = names[chosen[0]] if chosen[0] < len(names) else None
             printer_name = pick
@@ -556,6 +810,7 @@ def run_wizard(output: Path | None = None) -> str:
         slicer_version=slicer_version or None,
         stages=stages,
         printer_name=printer_name,
+        overrides=overrides,
     )
 
     # --- Preview and confirm ---
@@ -588,6 +843,7 @@ def _build_toml(
     slicer_version: str | None,
     stages: list[str],
     printer_name: str | None,
+    overrides: dict[str, str] | None = None,
 ) -> str:
     """Build a TOML string from wizard answers."""
     lines: list[str] = []
@@ -617,6 +873,18 @@ def _build_toml(
         fil_list = ", ".join(f'"{f}"' for f in filament_names)
         lines.append(f"filaments = [{fil_list}]")
     lines.append("")
+
+    # Slicer overrides
+    if overrides:
+        lines.append("[slicer.overrides]")
+        for key, value in overrides.items():
+            # Try to emit numeric values without quotes
+            try:
+                float(value)
+                lines.append(f"{key} = {value}")
+            except ValueError:
+                lines.append(f'{key} = "{value}"')
+        lines.append("")
 
     # Parts
     for p in parts:

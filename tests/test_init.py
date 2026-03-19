@@ -7,6 +7,7 @@ import pytest
 
 from fabprint.cli import main
 from fabprint.init import (
+    ValidationResult,
     _build_toml,
     _closest_match,
     dump_template,
@@ -72,7 +73,20 @@ def _mock_ui_inputs(monkeypatch, inputs):
     monkeypatch.setattr("fabprint.ui.info", lambda text: None)
     monkeypatch.setattr("fabprint.ui.choice_table", lambda items, columns: None)
     monkeypatch.setattr("fabprint.ui.preview_toml", lambda text: None)
-    monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+
+    def mock_pick(options, prompt="Pick", allow_multi=False):
+        try:
+            val = next(it)
+        except StopIteration:
+            return [0]
+        if val == "all":
+            return list(range(len(options)))
+        try:
+            return [int(val) - 1]
+        except (ValueError, TypeError):
+            return [0]
+
+    monkeypatch.setattr("fabprint.ui.pick", mock_pick)
 
 
 # ---------------------------------------------------------------------------
@@ -109,10 +123,11 @@ class TestValidate:
     def test_valid_config_no_warnings(self, tmp_path):
         # Config with version set — no warnings expected (profiles may not be installed)
         cfg = _write_valid_config(tmp_path)
-        warnings = validate_config(cfg)
+        result = validate_config(cfg)
         # The only possible warnings are about profiles not being installed,
         # which is environment-dependent. No hard errors should occur.
-        assert isinstance(warnings, list)
+        assert isinstance(result, ValidationResult)
+        assert len(result.passes) > 0
 
     def test_missing_version_warning(self, tmp_path):
         toml = tmp_path / "fabprint.toml"
@@ -161,6 +176,86 @@ file = "{_posix(abs_path.resolve())}"
             main(["validate"])
         assert exc_info.value.code == 1
 
+    def test_missing_part_file_hard_error(self, tmp_path):
+        """Missing part file is a hard error from load_config, not a warning."""
+        from fabprint import FabprintError
+
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text("""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[[parts]]
+file = "nonexistent.stl"
+""")
+        with pytest.raises(FabprintError, match="file not found"):
+            validate_config(toml)
+
+    def test_unreadable_part_extension(self, tmp_path):
+        bad_file = tmp_path / "model.zip"
+        bad_file.write_bytes(b"fake")
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text(f"""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[[parts]]
+file = "{_posix(bad_file)}"
+""")
+        warnings = validate_config(toml)
+        assert any("unsupported extension" in w for w in warnings)
+
+    def test_duplicate_part_files(self, tmp_path):
+        stl = FIXTURES / "cube_10mm.stl"
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text(f"""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[[parts]]
+file = "{_posix(stl)}"
+
+[[parts]]
+file = "{_posix(stl)}"
+""")
+        warnings = validate_config(toml)
+        assert any("appears more than once" in w for w in warnings)
+
+    def test_small_plate_warning(self, tmp_path):
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text(f"""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[plate]
+size = [10, 10]
+
+[[parts]]
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
+""")
+        warnings = validate_config(toml)
+        assert any("seems very small" in w for w in warnings)
+
+    def test_large_plate_warning(self, tmp_path):
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text(f"""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[plate]
+size = [2000, 2000]
+
+[[parts]]
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
+""")
+        warnings = validate_config(toml)
+        assert any("seems very large" in w for w in warnings)
+
     def test_printer_name_no_credentials(self, tmp_path):
         toml = tmp_path / "fabprint.toml"
         toml.write_text(f"""
@@ -206,49 +301,79 @@ class TestClosestMatch:
 # ---------------------------------------------------------------------------
 
 
+def _simulate_keys(monkeypatch, keystrokes: list[str]):
+    """Mock _readkey to return a sequence of keystrokes."""
+    import fabprint.ui as ui_mod
+
+    it = iter(keystrokes)
+    monkeypatch.setattr(ui_mod, "_readkey", lambda: next(it))
+    # Use a no-op Live context to avoid terminal manipulation in tests
+    from unittest.mock import MagicMock
+
+    mock_live_cls = MagicMock()
+    mock_live_instance = MagicMock()
+    mock_live_instance.__enter__ = lambda self: self
+    mock_live_instance.__exit__ = lambda self, *a: None
+    mock_live_cls.return_value = mock_live_instance
+    monkeypatch.setattr("rich.live.Live", mock_live_cls)
+
+
 class TestPick:
-    def test_short_list_direct_select(self, monkeypatch):
-        """Short lists show all options; entering a number selects."""
+    def test_direct_select_by_number(self, monkeypatch):
+        """Typing a number + enter selects that item."""
         from fabprint import ui
 
-        _mock_ui_inputs(monkeypatch, ["2"])
-        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+        # Type "2" then enter
+        _simulate_keys(monkeypatch, ["2", "\r"])
         result = ui.pick(["A", "B", "C"], prompt="Pick")
         assert result == [1]  # index 1 = "B"
 
-    def test_long_list_search_then_select(self, monkeypatch):
-        """Long lists require a search first, then selection."""
+    def test_search_narrows_to_one(self, monkeypatch):
+        """Typing enough to narrow to one result, then enter auto-selects."""
         from fabprint import ui
 
-        options = [f"Profile {i}" for i in range(20)]
-        # First input: search "Profile 5", then select "1" from filtered
-        _mock_ui_inputs(monkeypatch, ["Profile 5", "1"])
-        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
-        result = ui.pick(options, prompt="Pick")
-        # "Profile 5" and "Profile 15" match; selecting 1 picks "Profile 5"
-        assert result == [5]
-
-    def test_multi_select_all(self, monkeypatch):
-        """'all' selects every item."""
-        from fabprint import ui
-
-        _mock_ui_inputs(monkeypatch, ["all"])
-        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
-        result = ui.pick(["A", "B", "C"], prompt="Pick", allow_multi=True)
-        assert result == [0, 1, 2]
-
-    def test_re_search_from_selection(self, monkeypatch):
-        """Typing text at selection prompt re-filters."""
-        from fabprint import ui
-
-        # Short list: "PLA" filters, then "1" selects
-        _mock_ui_inputs(monkeypatch, ["PLA", "1"])
-        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+        # Type "PETG" then enter — only one match
+        _simulate_keys(monkeypatch, list("PETG") + ["\r"])
         result = ui.pick(
             ["Generic PLA @base", "Generic PETG @base", "Bambu PLA Basic"],
             prompt="Pick",
         )
-        assert result == [0]  # "Generic PLA @base"
+        assert result == [1]  # "Generic PETG @base"
+
+    def test_search_then_select(self, monkeypatch):
+        """Type to filter, then enter a number to select from filtered list."""
+        from fabprint import ui
+
+        options = [f"Profile {i}" for i in range(20)]
+        # Type "Profile " to filter, Enter to lock search, "5" + Enter to select 5th
+        # "Profile " matches all 20; lock search; select #5 = "Profile 4"
+        # Or: type enough to narrow, then Enter auto-selects if 1 match
+        _simulate_keys(monkeypatch, list("Profile 15") + ["\r"])
+        result = ui.pick(options, prompt="Pick")
+        assert result == [15]  # "Profile 15" is only exact match
+
+    def test_multi_select_all(self, monkeypatch):
+        """'all' + enter selects every item."""
+        from fabprint import ui
+
+        _simulate_keys(monkeypatch, list("all") + ["\r"])
+        result = ui.pick(["A", "B", "C"], prompt="Pick", allow_multi=True)
+        assert result == [0, 1, 2]
+
+    def test_backspace_editing(self, monkeypatch):
+        """Backspace removes last character from query."""
+        from fabprint import ui
+
+        # Type "PETX", backspace to "PET", then "G" → "PETG", enter to auto-select
+        _simulate_keys(
+            monkeypatch,
+            list("PETX") + ["\x7f"] + list("G") + ["\r"],
+        )
+        result = ui.pick(
+            ["Generic PLA @base", "Generic PETG @base", "Bambu PLA Basic"],
+            prompt="Pick",
+        )
+        assert result == [1]  # "Generic PETG @base"
 
 
 class TestHighlightMatch:
@@ -338,6 +463,38 @@ class TestBuildToml:
         )
         assert 'orient = "upright"' in toml
 
+    def test_overrides_section(self):
+        toml = _build_toml(
+            engine="orca",
+            printer_profile=None,
+            process_profile=None,
+            filament_names=[],
+            parts=[{"file": "a.stl", "copies": 1, "orient": "flat", "filament": 1}],
+            plate_size=(256, 256),
+            slicer_version=None,
+            stages=["load", "arrange", "plate", "slice"],
+            printer_name=None,
+            overrides={"sparse_infill_density": "25%", "wall_loops": "3"},
+        )
+        assert "[slicer.overrides]" in toml
+        assert 'sparse_infill_density = "25%"' in toml
+        assert "wall_loops = 3" in toml
+
+    def test_no_overrides_section(self):
+        toml = _build_toml(
+            engine="orca",
+            printer_profile=None,
+            process_profile=None,
+            filament_names=[],
+            parts=[{"file": "a.stl", "copies": 1, "orient": "flat", "filament": 1}],
+            plate_size=(256, 256),
+            slicer_version=None,
+            stages=["load", "arrange", "plate", "slice"],
+            printer_name=None,
+            overrides={},
+        )
+        assert "[slicer.overrides]" not in toml
+
     def test_defaults_omitted(self):
         """copies=1, orient=flat, filament=1 should not appear in output."""
         toml = _build_toml(
@@ -377,6 +534,7 @@ class TestWizard:
                 "n",  # Run setup first? -> no
                 "Bambu Lab P1S 0.4 nozzle",  # Printer profile name
                 "0.20mm Standard @BBL X1C",  # Process profile name
+                "n",  # Add slicer overrides? -> no
                 "Generic PLA @base",  # Filament name
                 "1",  # Select files
                 "1",  # copies
@@ -384,7 +542,7 @@ class TestWizard:
                 "256",  # plate width
                 "256",  # plate depth
                 "",  # slicer version (skip)
-                "n",  # Include print stage?
+                "n",  # Configure printer connection? -> no
                 "y",  # Write to fabprint.toml?
             ],
         )
@@ -396,6 +554,9 @@ class TestWizard:
         )
         # Mock configured printers to empty so we don't depend on real credentials
         monkeypatch.setattr("fabprint.init._list_configured_printers", lambda: {})
+        # Mock slicer version discovery so we don't hit DockerHub
+        monkeypatch.setattr("fabprint.init._fetch_available_versions", lambda: [])
+        monkeypatch.setattr("fabprint.init._detect_orca_version", lambda: None)
 
         result = run_wizard()
         assert "[slicer]" in result
@@ -414,12 +575,13 @@ class TestWizard:
                 "n",  # Run setup first? -> no
                 "My Printer",  # Printer profile name
                 "My Process",  # Process profile name
+                "n",  # Add slicer overrides? -> no
                 "My PLA",  # Filament name
                 "my-part.stl",  # Part file path
                 "256",  # plate width
                 "256",  # plate depth
-                "",  # slicer version
-                "n",  # Include print stage?
+                "",  # slicer version (skip)
+                "n",  # Configure printer connection? -> no
                 "n",  # Write?
             ],
         )
@@ -429,6 +591,9 @@ class TestWizard:
         )
         # Mock configured printers to empty so we don't depend on real credentials
         monkeypatch.setattr("fabprint.init._list_configured_printers", lambda: {})
+        # Mock slicer version discovery so we don't hit DockerHub
+        monkeypatch.setattr("fabprint.init._fetch_available_versions", lambda: [])
+        monkeypatch.setattr("fabprint.init._detect_orca_version", lambda: None)
 
         run_wizard()
         assert not (tmp_path / "fabprint.toml").exists()
