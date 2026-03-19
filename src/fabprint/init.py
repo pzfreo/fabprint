@@ -696,9 +696,6 @@ def run_wizard(output: Path | None = None) -> str:
         configured = _list_configured_printers()
         if configured:
             names = list(configured.keys())
-            items = [(n, c.get("type", "unknown")) for n, c in configured.items()]
-            items.append(("Skip (configure later)", ""))
-            ui.choice_table(items, ["Printer", "Type"])
             chosen = _prompt_choice("Pick a printer", [*names, "Skip (configure later)"])
             pick = names[chosen[0]] if chosen[0] < len(names) else None
             printer_name = pick
