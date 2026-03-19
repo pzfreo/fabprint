@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 from hamilton.lifecycle import NodeExecutionHook
 
@@ -114,8 +115,10 @@ class ProgressAdapter(NodeExecutionHook):
             self._status.stop()
             self._status = None
 
-    def _ok(self, msg: str, elapsed: float) -> None:
-        elapsed_str = f"[dim]{elapsed:.0f}s[/dim]" if elapsed >= 2 else ""
+    def _ok(self, msg: str, elapsed: float = 0, *, show_elapsed: bool = True) -> None:
+        elapsed_str = ""
+        if show_elapsed and elapsed >= 2:
+            elapsed_str = f"[dim]{elapsed:.0f}s[/dim]"
         self._console.print(f"[green]✔[/green] {msg}  {elapsed_str}".rstrip())
 
     def _err(self, msg: str) -> None:
@@ -202,17 +205,24 @@ class ProgressAdapter(NodeExecutionHook):
             )
 
         elif node_name == "plate_3mf_path":
-            self._ok("Plate exported", elapsed)
+            name = result.name if isinstance(result, Path) else "plate.3mf"
+            self._ok(f"Plate exported → [dim]{name}[/dim]", elapsed)
 
         elif node_name == "sliced_output_dir":
             ver = self._slice_version
             ver_str = f"with OrcaSlicer {ver}" if ver else ""
-            self._ok(f"Sliced {ver_str}".rstrip(), elapsed)
+            time_str = f" in {elapsed:.0f}s" if elapsed >= 2 else ""
+            self._ok(f"Sliced {ver_str}{time_str}".rstrip(), show_elapsed=False)
+            # Show gcode filename if available
+            if isinstance(result, Path):
+                gcode_files = list(result.glob("*.gcode"))
+                if gcode_files:
+                    self._console.print(f"  [dim]→ {gcode_files[0].name}[/dim]")
 
         elif node_name == "gcode_stats":
             parts: list[str] = []
             if "print_time" in result:
-                parts.append(result["print_time"])
+                parts.append(f"Print time: {result['print_time']}")
             if "filament_g" in result:
                 parts.append(f"{result['filament_g']:.1f}g filament")
             elif "filament_cm3" in result:
