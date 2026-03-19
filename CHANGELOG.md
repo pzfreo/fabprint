@@ -10,6 +10,7 @@ All notable changes to fabprint are documented here.
 - Auto-send verification code during cloud login (removes confusing prompt)
 - Mask verification code and 2FA code input
 - Add slicer override picker to `fabprint init` — choose common settings like infill, supports, seam position with value pickers
+- Slicer version picker fetches available Docker image versions from DockerHub instead of free text input
 
 ## 0.1.94 — 2026-03-19
 

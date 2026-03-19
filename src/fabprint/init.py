@@ -300,6 +300,61 @@ def _detect_orca_version() -> str | None:
     return None
 
 
+def _fetch_available_versions() -> list[str]:
+    """Fetch OrcaSlicer versions available as Docker images on DockerHub."""
+    import requests
+
+    from fabprint.slicer import DOCKERHUB_REPO
+
+    try:
+        url = f"https://hub.docker.com/v2/repositories/{DOCKERHUB_REPO}/tags"
+        resp = requests.get(url, params={"page_size": 100}, timeout=5)
+        resp.raise_for_status()
+        tags = [t["name"] for t in resp.json().get("results", [])]
+        # Extract versions from orca-X.Y.Z tags
+        versions = []
+        for tag in tags:
+            if tag.startswith("orca-"):
+                versions.append(tag[5:])  # strip "orca-" prefix
+        return sorted(versions, reverse=True)
+    except Exception:
+        return []
+
+
+def _prompt_slicer_version() -> str | None:
+    """Prompt for OrcaSlicer version, offering available Docker image versions."""
+    from fabprint import ui
+
+    detected = _detect_orca_version()
+    available = _fetch_available_versions()
+
+    if available:
+        options = list(available) + ["Skip (don't pin version)"]
+        # Pre-select detected version if it's in the list
+        default_idx = 1
+        if detected and detected in available:
+            default_idx = available.index(detected) + 1
+
+        ui.choice_table(
+            [(v,) for v in options],
+            ["Available versions"],
+        )
+        pick = _prompt_int("Pick version", default_idx)
+        idx = pick - 1
+        if 0 <= idx < len(available):
+            version = available[idx]
+            ui.success(f"OrcaSlicer {version}")
+            return version
+        return None
+
+    # Fallback: no Docker images found, prompt manually
+    if detected:
+        version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)", detected)
+    else:
+        version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)")
+    return version or None
+
+
 def _prompt_choice(prompt: str, options: list[str], allow_multi: bool = False) -> list[int]:
     """Interactive picker — delegates to ``ui.pick``."""
     from fabprint import ui
@@ -628,13 +683,7 @@ def run_wizard(output: Path | None = None) -> str:
 
     # --- Step 8: Slicer version ---
     ui.heading("Slicer Version")
-    detected_version = _detect_orca_version()
-    if detected_version:
-        slicer_version = _prompt_str(
-            "OrcaSlicer version to pin (leave blank to skip)", detected_version
-        )
-    else:
-        slicer_version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)")
+    slicer_version = _prompt_slicer_version()
     ui.console.print()
 
     # --- Step 9: Pipeline stages ---

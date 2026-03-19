@@ -472,6 +472,9 @@ class TestWizard:
         )
         # Mock configured printers to empty so we don't depend on real credentials
         monkeypatch.setattr("fabprint.init._list_configured_printers", lambda: {})
+        # Mock slicer version discovery so we don't hit DockerHub
+        monkeypatch.setattr("fabprint.init._fetch_available_versions", lambda: [])
+        monkeypatch.setattr("fabprint.init._detect_orca_version", lambda: None)
 
         result = run_wizard()
         assert "[slicer]" in result
@@ -506,6 +509,9 @@ class TestWizard:
         )
         # Mock configured printers to empty so we don't depend on real credentials
         monkeypatch.setattr("fabprint.init._list_configured_printers", lambda: {})
+        # Mock slicer version discovery so we don't hit DockerHub
+        monkeypatch.setattr("fabprint.init._fetch_available_versions", lambda: [])
+        monkeypatch.setattr("fabprint.init._detect_orca_version", lambda: None)
 
         run_wizard()
         assert not (tmp_path / "fabprint.toml").exists()
