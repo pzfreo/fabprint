@@ -8,6 +8,10 @@
 #
 # Everything is scripted EXCEPT password and verification code entry.
 # Adjust profile search terms below if your printer isn't a P1S.
+#
+# The interactive picker uses simple-term-menu:
+#   Single-select: type to filter, Enter to select highlighted item
+#   Multi-select:  / to search, Space to toggle, Enter to confirm
 
 Output docs/recordings/demo.gif
 
@@ -125,50 +129,28 @@ Enter
 Wait+Screen /fabprint init/
 Sleep 500ms
 
-# --- Printer Profile (live search picker) ---
+# --- Printer Profile (simple-term-menu, single-select) ---
 # Printer already configured, skips to profile picker
 Wait+Screen /Printer Profile/
 Sleep 500ms
 
-# Search for P1S 0.4 nozzle — unique match, Enter auto-selects
+# Type to filter, Enter selects highlighted match
 Type@100ms "P1S 0.4"
-Sleep 1s
+Sleep 500ms
 Enter
 Sleep 1s
 
-# --- Process Profile (live search picker) ---
+# --- Process Profile (simple-term-menu, single-select) ---
 Wait+Screen /Process Profile/
 Sleep 500ms
 
-# Search for process profile — unique match, Enter auto-selects
+# Type to filter, Enter selects highlighted match
 Type@100ms "0.20mm Standard "
 Sleep 200ms
-Type@100ms "@BBL X1C"
-Sleep 1s
+Type "@BBL X1C"
+Sleep 500ms
 Enter
 Sleep 1s
-
-# --- Slicer Overrides ---
-Wait+Screen /Slicer Overrides/
-Sleep 300ms
-
-# Yes, add overrides
-Type "y"
-Enter
-
-# Pick infill density (option 1)
-Wait+Screen /Pick override/
-Type "1"
-Enter
-
-# Enter infill value
-Wait+Screen /Value for/
-Type "15%"
-Enter
-
-# Don't add another override
-Wait+Screen /Add another override/
-Enter
 
 # --- Filament (AMS connected — accept matched suggestions) ---
 Wait+Screen /Filament Profiles/
@@ -178,14 +160,17 @@ Sleep 1s
 Wait+Screen /Use these filaments/
 Enter
 
-# --- CAD Files ---
+# --- CAD Files (simple-term-menu, multi-select) ---
 Wait+Screen /CAD Files/
 Sleep 500ms
 
-# Select all files (should find decoy_base.step + decoy_shell.step)
-Type@100ms "all"
-Sleep 300ms
+# Multi-select: Space toggles items, Enter confirms
+# Toggle first item, move down, toggle second, confirm
+Space
+Down
+Space
 Enter
+Sleep 500ms
 
 # First file — copies (accept default 1)
 Wait+Screen /copies/
@@ -213,6 +198,28 @@ Wait+Screen /filament slot/
 Type "3"
 Enter
 
+# --- Slicer Overrides (now after CAD files) ---
+Wait+Screen /Slicer Overrides/
+Sleep 300ms
+
+# Yes, add overrides
+Type "y"
+Enter
+
+# Pick infill density (option 1)
+Wait+Screen /Pick override/
+Type "1"
+Enter
+
+# Enter infill value (percent type — "15" auto-becomes "15%")
+Wait+Screen /Value for/
+Type "15"
+Enter
+
+# Don't add another override
+Wait+Screen /Add another override/
+Enter
+
 # --- Build Plate ---
 Wait+Screen /Build Plate/
 Sleep 300ms
@@ -234,14 +241,13 @@ Wait+Screen /Pick version|version to pin/
 Type "1"
 Enter
 
-# --- Printer Connection (live picker) ---
+# --- Printer Connection (simple-term-menu, single-select) ---
 Wait+Screen /Printer Connection/
 Sleep 500ms
 
-# Select "workshop" (first option)
-Type "1"
-Sleep 300ms
+# Select "workshop" (first option) — Enter picks highlighted
 Enter
+Sleep 500ms
 
 # --- Project Name ---
 Wait+Screen /Project name/
@@ -251,9 +257,10 @@ Sleep 300ms
 Enter
 
 # --- Preview and write ---
-Wait+Screen /Write to/
+Wait+Screen /Write.*Go back.*Quit/
 
-Type "y"
+# "w" to write
+Type "w"
 Enter
 
 Wait+Screen /Wrote fabprint.toml/
