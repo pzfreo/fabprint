@@ -12,19 +12,37 @@
 # Note: x86_64/amd64 only (libbambu_networking.so is x86_64 binary).
 # On Apple Silicon Macs, Docker runs this via Rosetta emulation.
 
+# ---------------------------------------------------------------------------
+# Stage 1: Compile the bridge binary
+# ---------------------------------------------------------------------------
+FROM --platform=linux/amd64 ubuntu:24.04 AS builder
+
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    apt-get update && apt-get install -y --no-install-recommends g++
+
+COPY scripts/bambu_cloud_bridge.cpp /opt/bridge/bambu_cloud_bridge.cpp
+RUN g++ -std=c++17 -O2 \
+        -o /usr/local/bin/bambu_cloud_bridge \
+        /opt/bridge/bambu_cloud_bridge.cpp \
+        -ldl -lpthread
+
+# ---------------------------------------------------------------------------
+# Stage 2: Runtime image (no compiler)
+# ---------------------------------------------------------------------------
 FROM --platform=linux/amd64 ubuntu:24.04
 
 LABEL org.opencontainers.image.description="Bambu Lab cloud print bridge (headless)"
 
-# Build tools + runtime deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        g++ \
+# Runtime deps only — no g++
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         libcurl4 \
         python3 \
-        unzip \
-    && rm -rf /var/lib/apt/lists/*
+        unzip
 
 # Fetch libbambu_networking.so — try Bambu's API first, fall back to private cache.
 # The API returns a signed CDN URL for the current Linux plugin zip.
@@ -57,13 +75,8 @@ RUN mkdir -p /tmp/bambu_agent/cert /tmp/bambu_agent/log /tmp/bambu_agent/config 
     && curl -fSL -o /tmp/bambu_agent/cert/slicer_base64.cer \
        "https://raw.githubusercontent.com/bambulab/BambuStudio/master/resources/cert/slicer_base64.cer"
 
-# Compile the bridge
-COPY scripts/bambu_cloud_bridge.cpp /opt/bridge/bambu_cloud_bridge.cpp
-RUN g++ -std=c++17 -O2 \
-        -o /usr/local/bin/bambu_cloud_bridge \
-        /opt/bridge/bambu_cloud_bridge.cpp \
-        -ldl -lpthread \
-    && rm -rf /opt/bridge
+# Copy compiled bridge from builder stage
+COPY --from=builder /usr/local/bin/bambu_cloud_bridge /usr/local/bin/bambu_cloud_bridge
 
 # Set library path for the bridge
 ENV BAMBU_LIB_PATH=/tmp/bambu_plugin/libbambu_networking.so

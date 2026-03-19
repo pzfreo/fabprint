@@ -2,6 +2,12 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.113 — 2026-03-19
+
+- Faster Docker rebuilds: split dependency and source layers in Orca Dockerfile
+- Add BuildKit cache mounts for apt and uv in both Dockerfiles
+- Multi-stage cloud-bridge build drops g++ from final image (~100MB smaller)
+
 ## 0.1.112 — 2026-03-19
 
 - Skip redundant `docker pull` for cloud-bridge image (pull once per 24h instead of every invocation)
