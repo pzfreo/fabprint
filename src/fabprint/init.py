@@ -388,7 +388,13 @@ def _match_filament_profile(tray_type: str, profile_names: list[str]) -> str | N
 
 
 def _detect_orca_version() -> str | None:
-    """Try to detect the installed OrcaSlicer version."""
+    """Try to detect the installed OrcaSlicer version.
+
+    Set FABPRINT_SKIP_SLICER_DETECT=1 to skip (useful in headless environments
+    where launching OrcaSlicer --help may hang).
+    """
+    if os.environ.get("FABPRINT_SKIP_SLICER_DETECT"):
+        return None
     try:
         from fabprint.slicer import SLICER_PATHS, _detect_slicer_version
 
@@ -401,24 +407,18 @@ def _detect_orca_version() -> str | None:
 
 
 def _fetch_available_versions() -> list[str]:
-    """Fetch OrcaSlicer versions available as Docker images on DockerHub."""
-    import requests
+    """Return OrcaSlicer versions available as Docker images.
 
-    from fabprint.slicer import DOCKERHUB_REPO
+    Reads from the bundled docker_versions.json (updated at release time
+    by scripts/update_docker_versions.py). No network call at runtime.
+    """
+    import json
 
+    versions_file = Path(__file__).parent / "docker_versions.json"
     try:
-        url = f"https://hub.docker.com/v2/repositories/{DOCKERHUB_REPO}/tags"
-        resp = requests.get(url, params={"page_size": 100}, timeout=5)
-        resp.raise_for_status()
-        tags = [t["name"] for t in resp.json().get("results", [])]
-        # Extract versions from orca-X.Y.Z tags
-        versions = []
-        for tag in tags:
-            if tag.startswith("orca-"):
-                versions.append(tag[5:])  # strip "orca-" prefix
-        return sorted(versions, reverse=True)
+        return json.loads(versions_file.read_text())
     except Exception:
-        log.debug("Failed to fetch Docker image versions", exc_info=True)
+        log.debug("Failed to read docker_versions.json", exc_info=True)
         return []
 
 
