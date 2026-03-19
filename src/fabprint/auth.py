@@ -52,11 +52,9 @@ def _login(email: str, password: str) -> tuple[str, str]:
 
     # Step 2: Handle verification code flow
     if not token and login_type == "verifyCode":
-        ui.info("Account requires email verification code.")
-        if not ui.prompt_yn("Did you already receive a code?", default=False):
-            _request_verification_code(email)
+        _request_verification_code(email)
 
-        code = ui.prompt_str("Enter verification code")
+        code = ui.prompt_password("Enter verification code")
         resp = requests.post(
             f"{API_BASE}/v1/user-service/user/login",
             headers=SLICER_HEADERS,
@@ -71,7 +69,7 @@ def _login(email: str, password: str) -> tuple[str, str]:
     if not token and data.get("tfaKey"):
         tfa_key = data["tfaKey"]
         ui.info("Account requires two-factor authentication.")
-        tfa_code = ui.prompt_str("Enter 2FA code")
+        tfa_code = ui.prompt_password("Enter 2FA code")
         resp = requests.post(
             f"{API_BASE}/v1/user-service/user/tfa",
             headers=SLICER_HEADERS,
