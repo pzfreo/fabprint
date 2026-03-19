@@ -203,6 +203,28 @@ fabprint status [--printer NAME] [--watch] [--interval SECONDS]
 
 Without `--printer`, shows all configured printers. Add `-w` for a live dashboard.
 
+## `fabprint watch`
+
+Watch input files and re-run the pipeline when they change. Useful for iterating on code-CAD models (OpenSCAD, build123d, CadQuery).
+
+```
+fabprint watch [config] [--until STAGE] [--local] [-v]
+```
+
+| Option        | Description                                      |
+|---------------|--------------------------------------------------|
+| `--until`     | Run pipeline up to this stage (default: all)     |
+| `--local`     | Force local slicer                               |
+| `-v`          | Verbose output                                   |
+
+The command watches the config file and all part files referenced in it. When any file changes, the pipeline re-runs automatically. Press Ctrl-C to stop.
+
+```bash
+fabprint watch                          # watch all inputs, full pipeline
+fabprint watch --until plate            # only re-plate on changes
+fabprint watch custom.toml --until slice  # watch a specific config
+```
+
 ## `fabprint profiles`
 
 Manage slicer profiles.

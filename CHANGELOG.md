@@ -6,8 +6,14 @@ All notable changes to fabprint are documented here.
 
 - Mask printer serial numbers in setup and status output for security (shows last 4 chars only)
 - Redesign `setup` and `init` CLI with Rich: styled prompts, tables, section headings, syntax-highlighted TOML preview
+- Add interactive search-and-pick for profile selection with highlighted matches
 - Add password masking for cloud login input
 - Replace manual ANSI escape codes with Rich color swatches
+
+## 0.1.90 — 2026-03-18
+
+- Add `fabprint watch` command — watches input files and re-runs pipeline on changes
+- Refactor `run` command to share pipeline logic with `watch`
 
 ## 0.1.89 — 2026-03-18
 
