@@ -9,7 +9,7 @@ All notable changes to fabprint are documented here.
 - Add interactive search-and-pick for profile selection with highlighted matches
 - Add password masking for cloud login input
 - Replace manual ANSI escape codes with Rich color swatches
-- Drop Python upper bound: now supports Python 3.11+ (including 3.13)
+- Drop Python upper bound: now supports Python 3.11+ (including 3.13 and 3.14)
 
 ## 0.1.90 — 2026-03-18
 
