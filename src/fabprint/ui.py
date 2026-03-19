@@ -134,12 +134,12 @@ def _build_picker_display(
     total: int,
 ) -> Table:
     """Build the Rich renderable for the live picker."""
-    outer = Table.grid(padding=(0, 0))
+    outer = Table.grid(padding=(0, 0), expand=False)
 
     # Options table
-    table = Table(show_header=False, box=None, padding=(0, 2))
+    table = Table(show_header=False, box=None, padding=(0, 2), expand=False)
     table.add_column("#", style="dim", width=4, justify="right")
-    table.add_column("Name")
+    table.add_column("Name", no_wrap=True, overflow="ellipsis")
     visible = filtered[:_MAX_VISIBLE]
     for i, name in enumerate(visible, 1):
         label = _highlight_match(name, query) if query else escape(name)

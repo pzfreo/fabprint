@@ -2,6 +2,10 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.98 — 2026-03-19
+
+- Fix picker display wrapping on narrow terminals
+
 ## 0.1.97 — 2026-03-19
 
 - Default printer name "workshop" in `fabprint setup` (press Enter to accept)
