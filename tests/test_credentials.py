@@ -124,15 +124,18 @@ class TestSetupPrinter:
         assert data["printers"]["new-printer"]["type"] == "bambu-lan"
         assert data["printers"]["new-printer"]["serial"] == "ABC123"
 
-    def test_aborts_on_empty_name(self, tmp_path, monkeypatch):
+    def test_default_name_used_on_empty_input(self, tmp_path, monkeypatch):
         cred_path = tmp_path / "credentials.toml"
         monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
 
-        _mock_ui_inputs(monkeypatch, [""])
+        # Empty name input → default "workshop" is used
+        _mock_ui_inputs(monkeypatch, ["", "1", "10.0.0.1", "12345678", "SN001"])
 
         setup_printer()
 
-        assert not cred_path.exists()
+        with open(cred_path, "rb") as f:
+            data = tomllib.load(f)
+        assert "workshop" in data["printers"]
 
     def test_creates_parent_dirs(self, tmp_path, monkeypatch):
         cred_path = tmp_path / "deep" / "nested" / "credentials.toml"

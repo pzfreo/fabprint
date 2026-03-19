@@ -228,7 +228,7 @@ def setup_printer() -> None:
         ui.choice_table(items, ["Name", "Type"])
         ui.console.print()
 
-    name = ui.prompt_str("Printer name (e.g. 'workshop')")
+    name = ui.prompt_str("Printer name", default="workshop")
     if not name:
         ui.warn("Aborted — printer name is required.")
         return

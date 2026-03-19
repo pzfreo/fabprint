@@ -2,6 +2,12 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.97 — 2026-03-19
+
+- Default printer name "workshop" in `fabprint setup` (press Enter to accept)
+- Init wizard prompts for project name, defaulting to current directory name
+- Generated `fabprint.toml` now includes top-level `name` field
+
 ## 0.1.96 — 2026-03-19
 
 - Standardize type annotations: `Optional[X]` → `X | None` across cli.py and pipeline.py
