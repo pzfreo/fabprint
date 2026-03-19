@@ -160,9 +160,14 @@ def validate_config(path: Path) -> list[str]:
                     f"printer '{cfg.printer.name}' not found in {cred_path}. Available: {available}"
                 )
 
-    # Check for absolute part paths
-    for i, part in enumerate(cfg.parts):
-        if part.file.is_absolute():
+    # Check for absolute part paths (check raw TOML value, not resolved path)
+    import tomllib
+
+    with open(path, "rb") as f:
+        raw = tomllib.load(f)
+    for i, p in enumerate(raw.get("parts", [])):
+        raw_file = p.get("file", "")
+        if raw_file and Path(raw_file).is_absolute():
             warnings.append(
                 f"parts[{i}].file is an absolute path — consider making it relative for portability"
             )
