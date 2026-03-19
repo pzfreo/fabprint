@@ -536,11 +536,11 @@ class TestWizard:
                 "n",  # Run setup first? -> no
                 "Bambu Lab P1S 0.4 nozzle",  # Printer profile name
                 "0.20mm Standard @BBL X1C",  # Process profile name
-                "n",  # Add slicer overrides? -> no
                 "Generic PLA @base",  # Filament name
                 "1",  # Select files
                 "1",  # copies
                 "flat",  # orient
+                "n",  # Add slicer overrides? -> no
                 "256",  # plate width
                 "256",  # plate depth
                 "",  # slicer version (skip)
@@ -579,9 +579,9 @@ class TestWizard:
                 "n",  # Run setup first? -> no
                 "My Printer",  # Printer profile name
                 "My Process",  # Process profile name
-                "n",  # Add slicer overrides? -> no
                 "My PLA",  # Filament name
                 "my-part.stl",  # Part file path
+                "n",  # Add slicer overrides? -> no
                 "256",  # plate width
                 "256",  # plate depth
                 "",  # slicer version (skip)

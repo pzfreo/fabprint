@@ -2,6 +2,10 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.105 — 2026-03-19
+
+- Move slicer overrides prompt after CAD file selection in init wizard
+
 ## 0.1.104 — 2026-03-19
 
 - Fix multi-select picker: Space now toggles selection instead of triggering search
