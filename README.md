@@ -102,7 +102,10 @@ Generate a config with the interactive wizard, or dump a commented template:
 ```bash
 fabprint setup                      # configures printer targets
 fabprint init                       # interactive wizard — discovers profiles and CAD files creates TOML
+fabprint init --template            # dump a commented template (works on all platforms incl. Windows)
 ```
+
+> **Note:** `fabprint init` (interactive wizard) requires a Unix terminal (Linux, macOS, or WSL). On Windows, use `fabprint init --template` and edit the generated file manually.
 Or create `fabprint.toml` by hand (see [full config reference](https://github.com/pzfreo/fabprint/blob/main/docs/config.md)):
 
 ```toml

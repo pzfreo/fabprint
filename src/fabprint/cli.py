@@ -358,7 +358,11 @@ def init(
     ] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
 ) -> None:
-    """Create a new fabprint.toml config file."""
+    """Create a new fabprint.toml config file.
+
+    The interactive wizard requires a Unix terminal (Linux, macOS, or WSL).
+    On Windows, use --template to generate a config file manually.
+    """
     _setup_logging(verbose)
     from fabprint.init import dump_template, run_wizard
 
