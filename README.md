@@ -6,6 +6,7 @@
 [![CI](https://github.com/pzfreo/fabprint/actions/workflows/ci.yml/badge.svg)](https://github.com/pzfreo/fabprint/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/pzfreo/fabprint/branch/main/graph/badge.svg)](https://codecov.io/gh/pzfreo/fabprint)
 
 3D printing has a reproducibility problem:
 
