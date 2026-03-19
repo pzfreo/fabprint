@@ -367,4 +367,3 @@ def _cloud_login_flow(existing: dict) -> None:
     }
 
     ui.success(f"Login successful! User: {profile.get('name') or profile['uid']}")
-    _show_devices(token)

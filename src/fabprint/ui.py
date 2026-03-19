@@ -87,7 +87,7 @@ def choice_table(
     for col in columns:
         table.add_column(col)
     for i, row in enumerate(items, 1):
-        table.add_row(str(i), *[escape(c) for c in row])
+        table.add_row(str(i), *row)
     console.print(table)
 
 

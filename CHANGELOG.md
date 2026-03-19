@@ -2,6 +2,11 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.95 — 2026-03-19
+
+- Fix duplicate printer table shown during cloud setup
+- Fix Rich markup rendering in printer status column (green/dim colors now display correctly)
+
 ## 0.1.94 — 2026-03-19
 
 - Override cadquery-ocp's vtk==9.3.1 pin to vtk>=9.4, enabling Python 3.13 support
