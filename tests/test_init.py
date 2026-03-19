@@ -297,103 +297,46 @@ class TestClosestMatch:
 
 
 # ---------------------------------------------------------------------------
-# Interactive picker (ui.pick)
+# Interactive picker (ui.pick) — uses simple-term-menu
 # ---------------------------------------------------------------------------
 
 
-def _simulate_keys(monkeypatch, keystrokes: list[str]):
-    """Mock _readkey to return a sequence of keystrokes."""
-    import fabprint.ui as ui_mod
-
-    it = iter(keystrokes)
-    monkeypatch.setattr(ui_mod, "_readkey", lambda: next(it))
-    # Use a no-op Live context to avoid terminal manipulation in tests
-    from unittest.mock import MagicMock
-
-    mock_live_cls = MagicMock()
-    mock_live_instance = MagicMock()
-    mock_live_instance.__enter__ = lambda self: self
-    mock_live_instance.__exit__ = lambda self, *a: None
-    mock_live_cls.return_value = mock_live_instance
-    monkeypatch.setattr("rich.live.Live", mock_live_cls)
-
-
 class TestPick:
-    def test_direct_select_by_number(self, monkeypatch):
-        """Typing a number + enter selects that item."""
+    def test_single_select(self, monkeypatch):
+        """Single selection returns a one-element list."""
+        from unittest.mock import patch
+
         from fabprint import ui
 
-        # Type "2" then enter
-        _simulate_keys(monkeypatch, ["2", "\r"])
-        result = ui.pick(["A", "B", "C"], prompt="Pick")
-        assert result == [1]  # index 1 = "B"
+        with patch("simple_term_menu.TerminalMenu") as MockMenu:
+            MockMenu.return_value.show.return_value = 1
+            result = ui.pick(["A", "B", "C"], prompt="Pick")
+        assert result == [1]
 
-    def test_search_narrows_to_one(self, monkeypatch):
-        """Typing enough to narrow to one result, then enter auto-selects."""
+    def test_multi_select(self, monkeypatch):
+        """Multi-select returns a list of indices."""
+        from unittest.mock import patch
+
         from fabprint import ui
 
-        # Type "PETG" then enter — only one match
-        _simulate_keys(monkeypatch, list("PETG") + ["\r"])
-        result = ui.pick(
-            ["Generic PLA @base", "Generic PETG @base", "Bambu PLA Basic"],
-            prompt="Pick",
-        )
-        assert result == [1]  # "Generic PETG @base"
+        with patch("simple_term_menu.TerminalMenu") as MockMenu:
+            MockMenu.return_value.show.return_value = (0, 2)
+            result = ui.pick(["A", "B", "C"], prompt="Pick", allow_multi=True)
+        assert result == [0, 2]
 
-    def test_search_then_select(self, monkeypatch):
-        """Type to filter, then enter a number to select from filtered list."""
+    def test_cancel_raises_keyboard_interrupt(self):
+        """Cancelling the menu (None) raises KeyboardInterrupt."""
+        from unittest.mock import patch
+
         from fabprint import ui
 
-        options = [f"Profile {i}" for i in range(20)]
-        # Type "Profile " to filter, Enter to lock search, "5" + Enter to select 5th
-        # "Profile " matches all 20; lock search; select #5 = "Profile 4"
-        # Or: type enough to narrow, then Enter auto-selects if 1 match
-        _simulate_keys(monkeypatch, list("Profile 15") + ["\r"])
-        result = ui.pick(options, prompt="Pick")
-        assert result == [15]  # "Profile 15" is only exact match
-
-    def test_multi_select_all(self, monkeypatch):
-        """'all' + enter selects every item."""
-        from fabprint import ui
-
-        _simulate_keys(monkeypatch, list("all") + ["\r"])
-        result = ui.pick(["A", "B", "C"], prompt="Pick", allow_multi=True)
-        assert result == [0, 1, 2]
-
-    def test_backspace_editing(self, monkeypatch):
-        """Backspace removes last character from query."""
-        from fabprint import ui
-
-        # Type "PETX", backspace to "PET", then "G" → "PETG", enter to auto-select
-        _simulate_keys(
-            monkeypatch,
-            list("PETX") + ["\x7f"] + list("G") + ["\r"],
-        )
-        result = ui.pick(
-            ["Generic PLA @base", "Generic PETG @base", "Bambu PLA Basic"],
-            prompt="Pick",
-        )
-        assert result == [1]  # "Generic PETG @base"
-
-
-class TestHighlightMatch:
-    def test_basic_highlight(self):
-        from fabprint.ui import _highlight_match
-
-        result = _highlight_match("Generic PLA @base", "PLA")
-        assert "[bold yellow]PLA[/bold yellow]" in result
-
-    def test_case_insensitive(self):
-        from fabprint.ui import _highlight_match
-
-        result = _highlight_match("Generic PLA @base", "pla")
-        assert "[bold yellow]PLA[/bold yellow]" in result
-
-    def test_no_match(self):
-        from fabprint.ui import _highlight_match
-
-        result = _highlight_match("Hello World", "xyz")
-        assert "bold yellow" not in result
+        with patch("simple_term_menu.TerminalMenu") as MockMenu:
+            MockMenu.return_value.show.return_value = None
+            try:
+                ui.pick(["A", "B"])
+                raise AssertionError("Expected KeyboardInterrupt")
+            except KeyboardInterrupt:
+                pass
 
 
 # ---------------------------------------------------------------------------

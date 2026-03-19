@@ -29,6 +29,7 @@ dependencies = [
     "typer>=0.15.0",
     "build123d>=0.10.0",
     "watchfiles>=1.0.0",
+    "simple-term-menu>=1.6.6",
 ]
 
 [project.urls]

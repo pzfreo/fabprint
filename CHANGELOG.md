@@ -2,6 +2,14 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.102 — 2026-03-19
+
+- Replace broken Rich Live picker with `simple-term-menu` for reliable interactive selection
+- Type-to-search filtering works out of the box (no `/` prefix needed)
+- Multi-select support with visual hints
+- Note: requires Unix terminal (Linux, macOS, or WSL)
+- Fix double verification code during Bambu Cloud login
+
 ## 0.1.98 — 2026-03-19
 
 - Fix picker display wrapping on narrow terminals

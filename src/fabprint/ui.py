@@ -10,7 +10,6 @@ from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.syntax import Syntax
 from rich.table import Table
-from rich.text import Text
 from rich.theme import Theme
 
 _THEME = Theme(
@@ -108,104 +107,8 @@ def color_swatch(hex_color: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Interactive picker
+# Interactive picker  (requires Unix terminal — Linux / macOS / WSL)
 # ---------------------------------------------------------------------------
-
-_MAX_VISIBLE = 15  # max rows shown in the live picker
-
-
-def _highlight_match(text: str, query: str) -> str:
-    """Return text with the matching substring highlighted in bold yellow."""
-    low = text.lower()
-    q = query.lower()
-    idx = low.find(q)
-    if idx == -1:
-        return escape(text)
-    before = escape(text[:idx])
-    match = text[idx : idx + len(query)]
-    after = escape(text[idx + len(query) :])
-    return f"{before}[bold yellow]{escape(match)}[/bold yellow]{after}"
-
-
-def _build_picker_display(
-    filtered: list[str],
-    query: str,
-    prompt: str,
-    allow_multi: bool,
-    total: int,
-) -> Text:
-    """Build the Rich renderable for the live picker.
-
-    Always produces exactly ``_MAX_VISIBLE + 2`` lines so that Rich Live's
-    cursor-up count is constant across refreshes.  Variable height causes
-    Rich to miscalculate how many lines to overwrite, resulting in duplicate
-    or side-by-side rendering.
-    """
-    lines: list[str] = []
-
-    # Options list — one line per item
-    visible = filtered[:_MAX_VISIBLE]
-    for i, name in enumerate(visible, 1):
-        label = _highlight_match(name, query) if query else escape(name)
-        lines.append(f"  [dim]{i:>4}[/dim]  {label}")
-
-    # Pad to fixed height so Rich Live cursor math is always correct
-    while len(lines) < _MAX_VISIBLE:
-        lines.append("")
-
-    # Status line (always exactly 1 line)
-    if len(filtered) > _MAX_VISIBLE:
-        remaining = len(filtered) - _MAX_VISIBLE
-        lines.append(f"  [dim]... and {remaining} more (keep typing to narrow)[/dim]")
-    elif not filtered:
-        lines.append("  [dim]No matches — keep typing or backspace[/dim]")
-    else:
-        lines.append("")
-
-    # Prompt line (always exactly 1 line)
-    multi_hint = " [dim](comma-sep, 'all')[/dim]" if allow_multi else ""
-    lines.append(f"  [bold]{prompt}>[/bold] {escape(query)}[blink]▌[/blink]{multi_hint}")
-
-    return Text.from_markup("\n".join(lines))
-
-
-def _readkey() -> str:
-    """Read a single keypress, cross-platform.
-
-    Note: reads 1 byte, so multi-byte UTF-8 chars (accented names etc.)
-    are not supported. All current option lists are ASCII.
-    """
-    import sys
-
-    if sys.platform == "win32":
-        import msvcrt
-
-        ch = msvcrt.getwch()
-        if ch in ("\x00", "\xe0"):
-            msvcrt.getwch()  # consume second byte of special key
-            return ""
-        return ch
-    else:
-        import termios
-        import tty
-
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            ch = sys.stdin.read(1)
-            # Handle escape sequences (arrow keys etc)
-            if ch == "\x1b":
-                import select
-
-                if select.select([sys.stdin], [], [], 0.05)[0]:
-                    sys.stdin.read(1)  # [
-                    if select.select([sys.stdin], [], [], 0.05)[0]:
-                        sys.stdin.read(1)  # A/B/C/D
-                return ""
-            return ch
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 def pick(
@@ -213,148 +116,33 @@ def pick(
     prompt: str = "Pick",
     allow_multi: bool = False,
 ) -> list[int]:
-    """Interactive picker with live search filtering.
+    """Interactive picker with type-to-search filtering.
 
-    Type letters to filter the list in real-time. Type a number to select.
-    Backspace to edit. Enter to confirm when one match remains or a number
-    is entered.
-    Returns a list of indices into the original ``options`` list.
+    Uses ``simple-term-menu`` for robust terminal UI.
+    Returns a list of indices into the original *options* list.
+
+    Requires a Unix terminal (Linux, macOS, or WSL).
     """
-    from rich.live import Live
+    from simple_term_menu import TerminalMenu
 
-    search = ""  # text filter
-    sel_buf = ""  # numeric selection buffer
-    sel: list[int] = []  # resolved selection indices (set before break)
-    search_locked = False  # True after user presses Enter to lock search
-    filtered = list(options)
-    filter_indices = list(range(len(options)))
+    menu = TerminalMenu(
+        options,
+        title=f"  {prompt}",
+        search_key=None,  # type-to-filter without pressing /
+        multi_select=allow_multi,
+        show_multi_select_hint=allow_multi,
+    )
+    result = menu.show()
 
-    info(f"{len(options)} options — type to search, enter number to select")
+    if result is None:
+        raise KeyboardInterrupt
 
-    def _display_query() -> str:
-        return search + ((" → " + sel_buf) if sel_buf else "")
+    if isinstance(result, tuple):
+        selected = list(result)
+    else:
+        selected = [result]
 
-    with Live(
-        _build_picker_display(filtered, _display_query(), prompt, allow_multi, len(options)),
-        console=console,
-        refresh_per_second=15,
-        transient=True,
-    ) as live:
-        while True:
-            ch = _readkey()
+    for idx in selected:
+        success(options[idx])
 
-            if not ch:
-                continue
-
-            # Ctrl-C / Ctrl-D → abort
-            if ch in ("\x03", "\x04"):
-                raise KeyboardInterrupt
-
-            # Backspace
-            if ch in ("\x7f", "\x08"):
-                if sel_buf:
-                    sel_buf = sel_buf[:-1]
-                elif search:
-                    search = search[:-1]
-            # Enter
-            elif ch in ("\r", "\n"):
-                # If exactly one match, auto-select it
-                if len(filtered) == 1:
-                    break
-                # "all" for multi-select → select everything
-                if allow_multi and search.strip().lower() == "all":
-                    sel = list(range(len(options)))
-                    filtered = options
-                    filter_indices = list(range(len(options)))
-                    break
-                # Try selection buffer as number
-                if sel_buf.strip():
-                    maybe = _try_select(sel_buf, filtered, filter_indices, allow_multi)
-                    if maybe is not None:
-                        sel = maybe
-                        break
-                # Enter with search results: lock search, switch to selection
-                if search and not search_locked and len(filtered) > 0:
-                    search_locked = True
-                    live.update(
-                        _build_picker_display(
-                            filtered,
-                            _display_query(),
-                            prompt,
-                            allow_multi,
-                            len(options),
-                        )
-                    )
-                    continue
-                live.update(
-                    _build_picker_display(
-                        filtered,
-                        _display_query(),
-                        prompt,
-                        allow_multi,
-                        len(options),
-                    )
-                )
-                continue
-            # Regular character
-            elif ch.isprintable():
-                if search_locked:
-                    # After search is locked, everything goes to selection
-                    sel_buf += ch
-                elif search or not ch.isdigit():
-                    search += ch
-                    sel_buf = ""
-                else:
-                    sel_buf += ch
-            else:
-                continue
-
-            # Re-filter by search text
-            if search:
-                q = search.lower()
-                matches = [(i, o) for i, o in enumerate(options) if q in o.lower()]
-                filter_indices = [i for i, _ in matches]
-                filtered = [o for _, o in matches]
-            else:
-                filtered = list(options)
-                filter_indices = list(range(len(options)))
-
-            live.update(
-                _build_picker_display(
-                    filtered,
-                    _display_query(),
-                    prompt,
-                    allow_multi,
-                    len(options),
-                )
-            )
-
-    # Show what was selected
-    if len(filtered) == 1:
-        success(filtered[0])
-        return [filter_indices[0]]
-
-    for p in sel:
-        success(filtered[p])
-    return [filter_indices[p] for p in sel]
-
-
-def _try_select(
-    query: str,
-    filtered: list[str],
-    filter_indices: list[int],
-    allow_multi: bool,
-) -> list[int] | None:
-    """Try to parse query as a numeric selection. Returns pick indices or None."""
-    try:
-        if allow_multi and "," in query:
-            picks = [int(x.strip()) - 1 for x in query.split(",")]
-        elif allow_multi and query.strip().lower() == "all":
-            return list(range(len(filtered)))
-        else:
-            picks = [int(query.strip()) - 1]
-        if all(0 <= p < len(filtered) for p in picks):
-            return picks
-    except ValueError:
-        pass
-    return None
+    return selected

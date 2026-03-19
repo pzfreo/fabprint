@@ -5,18 +5,14 @@ from __future__ import annotations
 from io import StringIO
 from unittest.mock import patch
 
-from rich.console import Console
-
 from fabprint.ui import (
-    _build_picker_display,
-    _highlight_match,
-    _try_select,
     choice_table,
     color_swatch,
     console,
     error,
     heading,
     info,
+    pick,
     preview_toml,
     prompt_int,
     prompt_password,
@@ -202,172 +198,45 @@ class TestColorSwatch:
 
 
 # ---------------------------------------------------------------------------
-# _highlight_match
+# pick (simple-term-menu)
 # ---------------------------------------------------------------------------
 
 
-class TestHighlightMatch:
-    def test_match_found(self):
-        result = _highlight_match("Hello World", "world")
-        assert "[bold yellow]World[/bold yellow]" in result
-
-    def test_no_match(self):
-        result = _highlight_match("Hello World", "xyz")
-        assert "Hello World" in result
-        assert "bold yellow" not in result
-
-    def test_case_insensitive(self):
-        result = _highlight_match("FooBar", "oob")
-        assert "[bold yellow]ooB[/bold yellow]" in result
-
-    def test_regex_special_chars_escaped(self):
-        """Markup escaping should handle brackets etc."""
-        result = _highlight_match("a [test] b", "test")
-        # The match itself is escaped
-        assert "bold yellow" in result
-
-    def test_empty_query(self):
-        result = _highlight_match("Hello", "")
-        # Empty string is found at index 0; entire prefix is empty
-        assert "Hello" in result
-
-    def test_escapes_non_match_portions(self):
-        """Text around the match should be escaped for Rich markup."""
-        result = _highlight_match("[before]match[after]", "match")
-        assert "[bold yellow]match[/bold yellow]" in result
-        # The brackets in before/after are escaped by Rich's escape()
-        assert "\\[before]" in result or "\\[after]" in result
-
-
-# ---------------------------------------------------------------------------
-# _build_picker_display
-# ---------------------------------------------------------------------------
-
-
-class TestBuildPickerDisplay:
-    def test_basic_display(self):
-        table = _build_picker_display(["Alpha", "Beta"], "", "Pick", False, 2)
-        # Render to string
-        buf = StringIO()
-        c = Console(file=buf, highlight=False, width=120)
-        c.print(table)
-        out = buf.getvalue()
-        assert "Alpha" in out
-        assert "Beta" in out
-        assert "Pick" in out
-
-    def test_no_matches(self):
-        table = _build_picker_display([], "xyz", "Pick", False, 5)
-        buf = StringIO()
-        c = Console(file=buf, highlight=False, width=120)
-        c.print(table)
-        out = buf.getvalue()
-        assert "No matches" in out
-
-    def test_truncation_message(self):
-        items = [f"item{i}" for i in range(20)]
-        table = _build_picker_display(items, "", "Pick", False, 20)
-        buf = StringIO()
-        c = Console(file=buf, highlight=False, width=120)
-        c.print(table)
-        out = buf.getvalue()
-        assert "more" in out
-        assert "keep typing" in out
-
-    def test_multi_hint(self):
-        table = _build_picker_display(["A"], "", "Pick", True, 1)
-        buf = StringIO()
-        c = Console(file=buf, highlight=False, width=120)
-        c.print(table)
-        out = buf.getvalue()
-        assert "comma-sep" in out
-        assert "all" in out
-
-    def test_no_multi_hint(self):
-        table = _build_picker_display(["A"], "", "Pick", False, 1)
-        buf = StringIO()
-        c = Console(file=buf, highlight=False, width=120)
-        c.print(table)
-        out = buf.getvalue()
-        assert "comma-sep" not in out
-
-    def test_highlight_applied_when_query(self):
-        table = _build_picker_display(["Alpha", "Beta"], "alp", "Pick", False, 2)
-        buf = StringIO()
-        c = Console(file=buf, highlight=False, width=120)
-        c.print(table)
-        out = buf.getvalue()
-        assert "Alpha" in out  # match is still visible
-
-    def test_constant_height(self):
-        """Output must always have the same number of lines regardless of item count."""
-        from fabprint.ui import _MAX_VISIBLE
-
-        expected = _MAX_VISIBLE + 2  # items + status + prompt
-
-        few = _build_picker_display(["A", "B"], "", "Pick", False, 2)
-        many = _build_picker_display([f"item{i}" for i in range(30)], "", "Pick", False, 30)
-        none = _build_picker_display([], "xyz", "Pick", False, 5)
-
-        for renderable in (few, many, none):
-            buf = StringIO()
-            c = Console(file=buf, highlight=False, width=120)
-            c.print(renderable, end="")
-            line_count = buf.getvalue().count("\n") + 1
-            assert line_count == expected, f"Expected {expected} lines, got {line_count}"
-
-
-# ---------------------------------------------------------------------------
-# _try_select
-# ---------------------------------------------------------------------------
-
-
-class TestTrySelect:
-    def test_single_valid(self):
-        result = _try_select("1", ["a", "b", "c"], [0, 1, 2], False)
-        assert result == [0]
-
-    def test_single_last(self):
-        result = _try_select("3", ["a", "b", "c"], [0, 1, 2], False)
+class TestPick:
+    @patch("fabprint.ui.success")
+    def test_single_select(self, mock_success):
+        with patch("simple_term_menu.TerminalMenu") as MockMenu:
+            MockMenu.return_value.show.return_value = 2
+            result = pick(["a", "b", "c"], prompt="Choose")
         assert result == [2]
+        mock_success.assert_called_once_with("c")
 
-    def test_single_out_of_range(self):
-        result = _try_select("5", ["a", "b", "c"], [0, 1, 2], False)
-        assert result is None
-
-    def test_single_zero(self):
-        result = _try_select("0", ["a", "b"], [0, 1], False)
-        assert result is None
-
-    def test_multi_comma(self):
-        result = _try_select("1,3", ["a", "b", "c"], [0, 1, 2], True)
+    @patch("fabprint.ui.success")
+    def test_multi_select(self, mock_success):
+        with patch("simple_term_menu.TerminalMenu") as MockMenu:
+            MockMenu.return_value.show.return_value = (0, 2)
+            result = pick(["a", "b", "c"], allow_multi=True)
         assert result == [0, 2]
+        assert mock_success.call_count == 2
 
-    def test_multi_comma_spaces(self):
-        result = _try_select(" 1 , 2 ", ["a", "b", "c"], [0, 1, 2], True)
-        assert result == [0, 1]
+    def test_none_raises_keyboard_interrupt(self):
+        with patch("simple_term_menu.TerminalMenu") as MockMenu:
+            MockMenu.return_value.show.return_value = None
+            try:
+                pick(["a", "b"])
+                raise AssertionError("Expected KeyboardInterrupt")
+            except KeyboardInterrupt:
+                pass
 
-    def test_multi_all(self):
-        result = _try_select("all", ["a", "b", "c"], [0, 1, 2], True)
-        assert result == [0, 1, 2]
-
-    def test_multi_all_case_insensitive(self):
-        result = _try_select("ALL", ["a", "b"], [0, 1], True)
-        assert result == [0, 1]
-
-    def test_non_numeric_returns_none(self):
-        result = _try_select("abc", ["a", "b"], [0, 1], False)
-        assert result is None
-
-    def test_comma_not_multi_treated_as_invalid(self):
-        """With allow_multi=False, comma input is not split."""
-        result = _try_select("1,2", ["a", "b"], [0, 1], False)
-        assert result is None
-
-    def test_multi_out_of_range(self):
-        result = _try_select("1,5", ["a", "b", "c"], [0, 1, 2], True)
-        assert result is None
-
-    def test_negative_number(self):
-        result = _try_select("-1", ["a", "b"], [0, 1], False)
-        assert result is None
+    @patch("fabprint.ui.success")
+    def test_passes_options_and_config(self, mock_success):
+        with patch("simple_term_menu.TerminalMenu") as MockMenu:
+            MockMenu.return_value.show.return_value = 0
+            pick(["x", "y"], prompt="Select", allow_multi=True)
+            MockMenu.assert_called_once_with(
+                ["x", "y"],
+                title="  Select",
+                search_key=None,
+                multi_select=True,
+                show_multi_select_hint=True,
+            )
