@@ -135,29 +135,26 @@ class TestLoginVerificationCodeFlow:
         _silence_ui(monkeypatch)
         monkeypatch.setattr("fabprint.ui.prompt_password", lambda prompt: "123456")
 
-        # First call returns verifyCode, second returns token
+        # First call returns verifyCode (API auto-sends code), second returns token
         first_resp = _mock_response(200, json_data={"loginType": "verifyCode"})
-        code_send_resp = _mock_response(200)
         second_resp = _mock_response(
             200,
             json_data={"accessToken": "code_tok", "refreshToken": "code_ref"},
         )
 
         with patch("fabprint.auth.requests.post") as mock_post:
-            mock_post.side_effect = [first_resp, code_send_resp, second_resp]
+            mock_post.side_effect = [first_resp, second_resp]
             token, refresh = _login("user@example.com", "pw")
 
         assert token == "code_tok"
         assert refresh == "code_ref"
 
-        # Three POST calls: password login, send-code, code login
-        assert mock_post.call_count == 3
-        # Second call is the verification code email
-        assert "sendemail/code" in mock_post.call_args_list[1][0][0]
-        # Third call sends the code
-        third_call_json = mock_post.call_args_list[2][1]["json"]
-        assert third_call_json["code"] == "123456"
-        assert third_call_json["account"] == "user@example.com"
+        # Two POST calls: password login (triggers code), code login
+        assert mock_post.call_count == 2
+        # Second call sends the code
+        second_call_json = mock_post.call_args_list[1][1]["json"]
+        assert second_call_json["code"] == "123456"
+        assert second_call_json["account"] == "user@example.com"
 
     def test_verify_code_flow_no_token_raises(self, monkeypatch):
         """Verification code flow returns but still no token."""
@@ -165,11 +162,10 @@ class TestLoginVerificationCodeFlow:
         monkeypatch.setattr("fabprint.ui.prompt_password", lambda prompt: "000000")
 
         first_resp = _mock_response(200, json_data={"loginType": "verifyCode"})
-        code_send_resp = _mock_response(200)
         second_resp = _mock_response(200, json_data={"message": "bad code"})
 
         with patch("fabprint.auth.requests.post") as mock_post:
-            mock_post.side_effect = [first_resp, code_send_resp, second_resp]
+            mock_post.side_effect = [first_resp, second_resp]
             with pytest.raises(FabprintError, match="Login failed"):
                 _login("user@example.com", "pw")
 
