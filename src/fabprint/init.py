@@ -685,10 +685,10 @@ def _wizard_setup_printers(configured: dict[str, dict]) -> dict[str, dict]:
 def _wizard_pick_profiles(
     engine: str,
     profiles: dict[str, list[str]],
-) -> tuple[str | None, str | None, dict[str, str], _MachineInfo]:
-    """Steps 1/3/4/4b: Pick printer profile, process profile, and overrides.
+) -> tuple[str | None, str | None, _MachineInfo]:
+    """Steps 3/4: Pick printer profile and process profile.
 
-    Returns ``(printer_profile, process_profile, overrides, machine_info)``.
+    Returns ``(printer_profile, process_profile, machine_info)``.
     """
     from fabprint import ui
 
@@ -718,12 +718,7 @@ def _wizard_pick_profiles(
         process_profile = _prompt_str("Process profile name (e.g. '0.20mm Standard @BBL X1C')")
         ui.console.print()
 
-    # --- Step 4b: Slicer overrides ---
-    ui.heading("Slicer Overrides")
-    overrides = _prompt_overrides()
-    ui.console.print()
-
-    return printer_profile, process_profile, overrides, machine_info
+    return printer_profile, process_profile, machine_info
 
 
 def _wizard_pick_filaments(
@@ -917,10 +912,8 @@ def run_wizard(output: Path | None = None) -> str:
         ui.warn("No profiles found — profile names will need to be entered manually")
         ui.console.print()
 
-    # --- Steps 3, 4, 4b: Pick profiles and overrides ---
-    printer_profile, process_profile, overrides, machine_info = _wizard_pick_profiles(
-        engine, profiles
-    )
+    # --- Steps 3, 4: Pick profiles ---
+    printer_profile, process_profile, machine_info = _wizard_pick_profiles(engine, profiles)
 
     # --- Collect AMS results (should be done by now) ---
     ams_trays: list[dict] = []
@@ -937,6 +930,11 @@ def run_wizard(output: Path | None = None) -> str:
 
     # --- Step 6: Discover CAD files ---
     parts_config = _wizard_pick_parts(filament_names)
+
+    # --- Slicer overrides (after parts so context is clear) ---
+    ui.heading("Slicer Overrides")
+    overrides = _prompt_overrides()
+    ui.console.print()
 
     # --- Steps 7-8: Plate size and slicer version ---
     plate_x, plate_y, slicer_version = _wizard_pick_plate_and_version(machine_info)
