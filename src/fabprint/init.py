@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Union
 
 from fabprint.config import DEFAULT_STAGES, VALID_ORIENTS
 
@@ -327,6 +328,122 @@ def _prompt_yn(prompt: str, default: bool = True) -> bool:
     return ui.prompt_yn(prompt, default)
 
 
+# ---------------------------------------------------------------------------
+# Common slicer overrides
+# ---------------------------------------------------------------------------
+
+# Each entry: (display_name, slicer_key, value_spec)
+# value_spec is either ("text", "hint string") or ("choice", [...options])
+OverrideSpec = tuple[str, str, Union[tuple[str, str], tuple[str, list[str]]]]
+
+COMMON_OVERRIDES: list[OverrideSpec] = [
+    ("Infill density", "sparse_infill_density", ("text", "e.g. 15%, 25%, 50%")),
+    (
+        "Infill pattern",
+        "sparse_infill_pattern",
+        (
+            "choice",
+            [
+                "grid",
+                "gyroid",
+                "honeycomb",
+                "line",
+                "cubic",
+                "triangles",
+                "concentric",
+                "lightning",
+            ],
+        ),
+    ),
+    ("Wall loops", "wall_loops", ("text", "e.g. 2, 3, 4")),
+    ("Layer height", "layer_height", ("text", "e.g. 0.12, 0.16, 0.20, 0.28")),
+    (
+        "Enable support",
+        "enable_support",
+        ("choice", ["0 (off)", "1 (on)"]),
+    ),
+    (
+        "Support type",
+        "support_type",
+        ("choice", ["normal", "tree", "hybrid"]),
+    ),
+    ("Top shell layers", "top_shell_layers", ("text", "e.g. 3, 5")),
+    ("Bottom shell layers", "bottom_shell_layers", ("text", "e.g. 3, 5")),
+    (
+        "Brim type",
+        "brim_type",
+        ("choice", ["no_brim", "outer_only", "inner_only", "outer_and_inner"]),
+    ),
+    (
+        "Seam position",
+        "seam_position",
+        ("choice", ["nearest", "aligned", "back", "random"]),
+    ),
+]
+
+
+def _prompt_overrides() -> dict[str, str]:
+    """Prompt user to add slicer overrides, returning key→value dict."""
+    from fabprint import ui
+
+    if not _prompt_yn("Add slicer overrides?", default=False):
+        return {}
+
+    overrides: dict[str, str] = {}
+    while True:
+        # Build display list: common overrides + custom option
+        items = [(name, key) for name, key, _ in COMMON_OVERRIDES]
+        items.append(("Custom key...", ""))
+        ui.choice_table(items, ["Name", "Slicer key"])
+
+        pick = _prompt_int("Pick override", 1)
+        idx = pick - 1
+        if idx < 0 or idx > len(COMMON_OVERRIDES):
+            ui.warn(f"Enter 1-{len(COMMON_OVERRIDES) + 1}")
+            continue
+
+        if idx == len(COMMON_OVERRIDES):
+            # Custom key
+            key = _prompt_str("Slicer key name")
+            if not key:
+                continue
+            value = _prompt_str(f"Value for {key}")
+            if value:
+                overrides[key] = value
+                ui.success(f'{key} = "{value}"')
+        else:
+            name, key, spec = COMMON_OVERRIDES[idx]
+            ui.success(name)
+
+            if spec[0] == "choice":
+                choices = spec[1]
+                assert isinstance(choices, list)
+                ui.choice_table([(c,) for c in choices], ["Option"])
+                cpick = _prompt_int("Pick value", 1)
+                cidx = cpick - 1
+                if 0 <= cidx < len(choices):
+                    raw = choices[cidx]
+                    # Strip parenthetical hints like "0 (off)" → "0"
+                    value = raw.split(" (")[0] if " (" in raw else raw
+                    overrides[key] = value
+                    ui.success(f'{key} = "{value}"')
+                else:
+                    ui.warn(f"Enter 1-{len(choices)}")
+                    continue
+            else:
+                hint = spec[1]
+                value = _prompt_str(f"Value for {key} ({hint})")
+                if value:
+                    overrides[key] = value
+                    ui.success(f'{key} = "{value}"')
+
+        ui.console.print()
+        if not _prompt_yn("Add another override?", default=False):
+            break
+
+    return overrides
+
+
 def run_wizard(output: Path | None = None) -> str:
     """Run the interactive init wizard and return generated TOML."""
     from fabprint import ui
@@ -395,6 +512,11 @@ def run_wizard(output: Path | None = None) -> str:
     else:
         process_profile = _prompt_str("Process profile name (e.g. '0.20mm Standard @BBL X1C')")
         ui.console.print()
+
+    # --- Step 4b: Slicer overrides ---
+    ui.heading("Slicer Overrides")
+    overrides = _prompt_overrides()
+    ui.console.print()
 
     # --- Collect AMS results (should be done by now) ---
     ams_trays: list[dict] = []
@@ -552,6 +674,7 @@ def run_wizard(output: Path | None = None) -> str:
         slicer_version=slicer_version or None,
         stages=stages,
         printer_name=printer_name,
+        overrides=overrides,
     )
 
     # --- Preview and confirm ---
@@ -584,6 +707,7 @@ def _build_toml(
     slicer_version: str | None,
     stages: list[str],
     printer_name: str | None,
+    overrides: dict[str, str] | None = None,
 ) -> str:
     """Build a TOML string from wizard answers."""
     lines: list[str] = []
@@ -613,6 +737,18 @@ def _build_toml(
         fil_list = ", ".join(f'"{f}"' for f in filament_names)
         lines.append(f"filaments = [{fil_list}]")
     lines.append("")
+
+    # Slicer overrides
+    if overrides:
+        lines.append("[slicer.overrides]")
+        for key, value in overrides.items():
+            # Try to emit numeric values without quotes
+            try:
+                float(value)
+                lines.append(f"{key} = {value}")
+            except ValueError:
+                lines.append(f'{key} = "{value}"')
+        lines.append("")
 
     # Parts
     for p in parts:

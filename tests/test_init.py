@@ -381,6 +381,38 @@ class TestBuildToml:
         )
         assert 'orient = "upright"' in toml
 
+    def test_overrides_section(self):
+        toml = _build_toml(
+            engine="orca",
+            printer_profile=None,
+            process_profile=None,
+            filament_names=[],
+            parts=[{"file": "a.stl", "copies": 1, "orient": "flat", "filament": 1}],
+            plate_size=(256, 256),
+            slicer_version=None,
+            stages=["load", "arrange", "plate", "slice"],
+            printer_name=None,
+            overrides={"sparse_infill_density": "25%", "wall_loops": "3"},
+        )
+        assert "[slicer.overrides]" in toml
+        assert 'sparse_infill_density = "25%"' in toml
+        assert "wall_loops = 3" in toml
+
+    def test_no_overrides_section(self):
+        toml = _build_toml(
+            engine="orca",
+            printer_profile=None,
+            process_profile=None,
+            filament_names=[],
+            parts=[{"file": "a.stl", "copies": 1, "orient": "flat", "filament": 1}],
+            plate_size=(256, 256),
+            slicer_version=None,
+            stages=["load", "arrange", "plate", "slice"],
+            printer_name=None,
+            overrides={},
+        )
+        assert "[slicer.overrides]" not in toml
+
     def test_defaults_omitted(self):
         """copies=1, orient=flat, filament=1 should not appear in output."""
         toml = _build_toml(
@@ -420,6 +452,7 @@ class TestWizard:
                 "n",  # Run setup first? -> no
                 "Bambu Lab P1S 0.4 nozzle",  # Printer profile name
                 "0.20mm Standard @BBL X1C",  # Process profile name
+                "n",  # Add slicer overrides? -> no
                 "Generic PLA @base",  # Filament name
                 "1",  # Select files
                 "1",  # copies
@@ -457,6 +490,7 @@ class TestWizard:
                 "n",  # Run setup first? -> no
                 "My Printer",  # Printer profile name
                 "My Process",  # Process profile name
+                "n",  # Add slicer overrides? -> no
                 "My PLA",  # Filament name
                 "my-part.stl",  # Part file path
                 "256",  # plate width
