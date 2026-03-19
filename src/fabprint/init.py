@@ -779,10 +779,11 @@ def _wizard_pick_filaments(
     return filament_names
 
 
-def _wizard_pick_parts(filament_names: list[str]) -> list[dict]:
-    """Step 6: Discover CAD files and configure copies/orient/filament.
+def _wizard_pick_parts() -> list[dict]:
+    """Discover CAD files and configure copies/orient.
 
-    Returns a list of part config dicts.
+    Returns a list of part config dicts (filament slot defaults to 1,
+    assigned later by ``_wizard_assign_filament_slots``).
     """
     from fabprint import ui
 
@@ -808,15 +809,12 @@ def _wizard_pick_parts(filament_names: list[str]) -> list[dict]:
             orient = _prompt_str(f"{f.name} — orient?", "flat")
             if orient not in VALID_ORIENTS:
                 orient = "flat"
-            fil_slot = 1
-            if len(filament_names) > 1:
-                fil_slot = _prompt_int(f"{f.name} — filament slot (1-{len(filament_names)})?", 1)
             parts_config.append(
                 {
                     "file": f.name,
                     "copies": copies,
                     "orient": orient,
-                    "filament": fil_slot,
+                    "filament": 1,
                 }
             )
         ui.console.print()
@@ -830,16 +828,30 @@ def _wizard_pick_parts(filament_names: list[str]) -> list[dict]:
     return parts_config
 
 
-def _wizard_pick_plate_and_version(
-    machine_info: _MachineInfo,
-) -> tuple[int, int, str | None]:
-    """Steps 7-8: Pick plate size and slicer version.
+def _wizard_assign_filament_slots(parts_config: list[dict], filament_names: list[str]) -> None:
+    """Assign filament slots to parts (mutates parts_config in place).
 
-    Returns ``(plate_x, plate_y, slicer_version)``.
+    Only prompts when there are multiple filaments.
+    """
+    if len(filament_names) <= 1:
+        return
+
+    from fabprint import ui
+
+    ui.heading("Filament Assignment")
+    for p in parts_config:
+        fil_slot = _prompt_int(f"{p['file']} — filament slot (1-{len(filament_names)})?", 1)
+        p["filament"] = fil_slot
+    ui.console.print()
+
+
+def _wizard_pick_plate(machine_info: _MachineInfo) -> tuple[int, int]:
+    """Pick plate size, auto-detecting from printer profile.
+
+    Returns ``(plate_x, plate_y)``.
     """
     from fabprint import ui
 
-    # --- Step 7: Plate size (default from printer profile if available) ---
     ui.heading("Build Plate")
     default_plate = (256, 256)
     if machine_info.plate_size:
@@ -850,12 +862,21 @@ def _wizard_pick_plate_and_version(
     plate_y = _prompt_int("Plate depth (mm)?", default_plate[1])
     ui.console.print()
 
-    # --- Step 8: Slicer version ---
+    return plate_x, plate_y
+
+
+def _wizard_pick_slicer_version() -> str | None:
+    """Pick slicer version to pin.
+
+    Returns the version string, or ``None`` if skipped.
+    """
+    from fabprint import ui
+
     ui.heading("Slicer Version")
     slicer_version = _prompt_slicer_version()
     ui.console.print()
 
-    return plate_x, plate_y, slicer_version
+    return slicer_version
 
 
 def _wizard_pick_printer(stages: list[str]) -> str | None:
@@ -883,7 +904,12 @@ def _wizard_pick_printer(stages: list[str]) -> str | None:
 
 
 def run_wizard(output: Path | None = None) -> str:
-    """Run the interactive init wizard and return generated TOML."""
+    """Run the interactive init wizard and return generated TOML.
+
+    Flow: project name → CAD files → printer connection → plate size →
+    slicer version → profiles → filaments → filament slots → overrides →
+    preview.
+    """
     from fabprint import ui
     from fabprint.profiles import discover_profile_names
 
@@ -895,7 +921,19 @@ def run_wizard(output: Path | None = None) -> str:
     # --- Step 0: Check for configured printers ---
     configured = _wizard_setup_printers(_list_configured_printers())
 
-    # --- Query AMS trays in background while we ask other questions ---
+    # --- Step 1: Project name ---
+    default_name = Path.cwd().name
+    project_name = ui.prompt_str("Project name", default=default_name) or default_name
+    ui.console.print()
+
+    # --- Step 2: CAD files (copies, orient — filament slots assigned later) ---
+    parts_config = _wizard_pick_parts()
+
+    # --- Step 3: Printer connection ---
+    stages = list(DEFAULT_STAGES)
+    printer_name = _wizard_pick_printer(stages)
+
+    # --- Query AMS trays in background while we continue ---
     ams_future = None
     if configured:
         from concurrent.futures import ThreadPoolExecutor
@@ -903,7 +941,7 @@ def run_wizard(output: Path | None = None) -> str:
         _ams_pool = ThreadPoolExecutor(max_workers=1)
         ams_future = _ams_pool.submit(_query_ams_trays, configured)
 
-    # --- Step 1: Discover profiles (system → pinned → bundled) ---
+    # --- Discover profiles (needed for picker and machine info) ---
     profiles, profile_source = discover_profile_names(engine)
     if profile_source == "bundled":
         ui.info("Using bundled profile list — install OrcaSlicer locally for full access")
@@ -912,10 +950,15 @@ def run_wizard(output: Path | None = None) -> str:
         ui.warn("No profiles found — profile names will need to be entered manually")
         ui.console.print()
 
-    # --- Steps 3, 4: Pick profiles ---
+    # --- Step 4: Plate size ---
+    # Pick printer profile first to auto-detect plate size from machine info
     printer_profile, process_profile, machine_info = _wizard_pick_profiles(engine, profiles)
+    plate_x, plate_y = _wizard_pick_plate(machine_info)
 
-    # --- Collect AMS results (should be done by now) ---
+    # --- Step 5: Slicer version ---
+    slicer_version = _wizard_pick_slicer_version()
+
+    # --- Step 6: Filaments (AMS auto-detect or manual) ---
     ams_trays: list[dict] = []
     if ams_future is not None:
         try:
@@ -925,29 +968,15 @@ def run_wizard(output: Path | None = None) -> str:
         if ams_trays:
             ui.info(f"AMS detected ({len(ams_trays)} slot(s))")
 
-    # --- Step 5: Pick filaments ---
     filament_names = _wizard_pick_filaments(profiles, machine_info, ams_trays)
 
-    # --- Step 6: Discover CAD files ---
-    parts_config = _wizard_pick_parts(filament_names)
+    # --- Step 7: Assign filament slots to parts (if multiple filaments) ---
+    _wizard_assign_filament_slots(parts_config, filament_names)
 
-    # --- Slicer overrides (after parts so context is clear) ---
+    # --- Step 8: Slicer overrides ---
     ui.heading("Slicer Overrides")
     overrides = _prompt_overrides()
     ui.console.print()
-
-    # --- Steps 7-8: Plate size and slicer version ---
-    plate_x, plate_y, slicer_version = _wizard_pick_plate_and_version(machine_info)
-
-    # --- Step 9: Pipeline stages (always include print) ---
-    stages = list(DEFAULT_STAGES)
-
-    # --- Step 10: Printer connection ---
-    printer_name = _wizard_pick_printer(stages)
-
-    # --- Project name ---
-    default_name = Path.cwd().name
-    project_name = ui.prompt_str("Project name", default=default_name) or default_name
 
     # --- Build TOML ---
     toml = _build_toml(

@@ -534,18 +534,18 @@ class TestWizard:
             monkeypatch,
             [
                 "n",  # Run setup first? -> no
-                "Bambu Lab P1S 0.4 nozzle",  # Printer profile name
-                "0.20mm Standard @BBL X1C",  # Process profile name
-                "Generic PLA @base",  # Filament name
+                "my-project",  # Project name
                 "1",  # Select files
                 "1",  # copies
                 "flat",  # orient
-                "n",  # Add slicer overrides? -> no
+                "n",  # Configure printer connection? -> no
+                "Bambu Lab P1S 0.4 nozzle",  # Printer profile name
+                "0.20mm Standard @BBL X1C",  # Process profile name
                 "256",  # plate width
                 "256",  # plate depth
                 "",  # slicer version (skip)
-                "n",  # Configure printer connection? -> no
-                "my-project",  # Project name
+                "Generic PLA @base",  # Filament name
+                "n",  # Add slicer overrides? -> no
                 "w",  # Write / Go back / Quit
             ],
         )
@@ -577,16 +577,16 @@ class TestWizard:
             monkeypatch,
             [
                 "n",  # Run setup first? -> no
+                "",  # Project name (use default)
+                "my-part.stl",  # Part file path
+                "n",  # Configure printer connection? -> no
                 "My Printer",  # Printer profile name
                 "My Process",  # Process profile name
-                "My PLA",  # Filament name
-                "my-part.stl",  # Part file path
-                "n",  # Add slicer overrides? -> no
                 "256",  # plate width
                 "256",  # plate depth
                 "",  # slicer version (skip)
-                "n",  # Configure printer connection? -> no
-                "",  # Project name (use default)
+                "My PLA",  # Filament name
+                "n",  # Add slicer overrides? -> no
                 "q",  # Write / Go back / Quit
             ],
         )
