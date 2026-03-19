@@ -20,20 +20,24 @@ SLICER_HEADERS = {
 
 def _request_verification_code(email: str) -> None:
     """Request a verification code be sent to the user's email."""
+    from fabprint import ui
+
     resp = requests.post(
         f"{API_BASE}/v1/user-service/user/sendemail/code",
         headers=SLICER_HEADERS,
         json={"email": email, "type": "codeLogin"},
     )
     resp.raise_for_status()
-    print(f"  Verification code sent to {email}")
+    ui.success(f"Verification code sent to {email}")
 
 
 def _login(email: str, password: str) -> tuple[str, str]:
     """Login and return (access_token, refresh_token). Handles all auth flows."""
 
+    from fabprint import ui
+
     # Step 1: Try password login
-    print("  Attempting password login...")
+    ui.info("Attempting password login...")
     resp = requests.post(
         f"{API_BASE}/v1/user-service/user/login",
         headers=SLICER_HEADERS,
@@ -48,12 +52,11 @@ def _login(email: str, password: str) -> tuple[str, str]:
 
     # Step 2: Handle verification code flow
     if not token and login_type == "verifyCode":
-        print("  Account requires email verification code.")
-        already = input("  Did you already receive a code? [y/N]: ").strip().lower()
-        if already != "y":
+        ui.info("Account requires email verification code.")
+        if not ui.prompt_yn("Did you already receive a code?", default=False):
             _request_verification_code(email)
 
-        code = input("  Enter verification code: ").strip()
+        code = ui.prompt_str("Enter verification code")
         resp = requests.post(
             f"{API_BASE}/v1/user-service/user/login",
             headers=SLICER_HEADERS,
@@ -67,8 +70,8 @@ def _login(email: str, password: str) -> tuple[str, str]:
     # Step 3: Handle TFA flow
     if not token and data.get("tfaKey"):
         tfa_key = data["tfaKey"]
-        print("  Account requires two-factor authentication.")
-        tfa_code = input("  Enter 2FA code: ").strip()
+        ui.info("Account requires two-factor authentication.")
+        tfa_code = ui.prompt_str("Enter 2FA code")
         resp = requests.post(
             f"{API_BASE}/v1/user-service/user/tfa",
             headers=SLICER_HEADERS,
@@ -80,7 +83,7 @@ def _login(email: str, password: str) -> tuple[str, str]:
         refresh_token = data.get("refreshToken", "")
 
     if not token:
-        print(f"\n  Login failed. Response: {json.dumps(data, indent=2)}")
+        ui.error(f"Login failed. Response: {json.dumps(data, indent=2)}")
         sys.exit(1)
 
     return token, refresh_token
@@ -113,16 +116,19 @@ def _get_devices(token: str) -> list[dict]:
 
 def _show_devices(token: str) -> None:
     """Print bound printers."""
-    print("\n  Printers:")
+    from fabprint import ui
+    from fabprint.credentials import mask_serial
+
     devices = _get_devices(token)
     if devices:
+        ui.console.print()
+        items = []
         for d in devices:
             name = d.get("name", "unnamed")
             dev_id = d.get("dev_id", "?")
-            online = "online" if d.get("online") else "offline"
             model = d.get("dev_product_name", d.get("dev_model_name", "?"))
-            from fabprint.credentials import mask_serial
-
-            print(f"    {name} ({model}) — {mask_serial(dev_id)} [{online}]")
+            online_str = "[green]online[/green]" if d.get("online") else "[dim]offline[/dim]"
+            items.append((name, model, mask_serial(dev_id), online_str))
+        ui.choice_table(items, ["Name", "Model", "Serial", "Status"])
     else:
-        print("    No printers found")
+        ui.info("No printers found")
