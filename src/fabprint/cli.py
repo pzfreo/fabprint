@@ -3,7 +3,7 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import click
 import typer
@@ -573,14 +573,22 @@ def status(
 
     cloud_printers = [(n, c) for n, c in printers if c.get("type") == "bambu-cloud"]
     bridge_ctx = None
+    bridge_map: dict[str, Any] = {}  # serial -> PersistentBridge
+    token_ctx = None
     if cloud_printers:
         from fabprint.cloud import PersistentBridge
         from fabprint.credentials import cloud_token_json
 
         token_ctx = cloud_token_json()
         token_file = token_ctx.__enter__()
-        bridge_ctx = PersistentBridge(token_file)
-        bridge_ctx.__enter__()
+        for _name, creds in cloud_printers:
+            serial = creds["serial"]
+            bridge = PersistentBridge(token_file, serial)
+            bridge.__enter__()
+            bridge_map[serial] = bridge
+        # Keep bridge_ctx for backward compat in the status loop
+        if len(bridge_map) == 1:
+            bridge_ctx = next(iter(bridge_map.values()))
 
     try:
         while True:
@@ -591,8 +599,11 @@ def status(
                 ptype = creds.get("type", "unknown")
                 output_lines.append(f"\033[1m{name}\033[0m  ({ptype})")
                 try:
-                    if ptype == "bambu-cloud" and bridge_ctx is not None:
-                        st = bridge_ctx.status(creds["serial"])
+                    serial = creds.get("serial", "")
+                    if ptype == "bambu-cloud" and serial in bridge_map:
+                        st = bridge_map[serial].status()
+                    elif ptype == "bambu-cloud" and bridge_ctx is not None:
+                        st = bridge_ctx.status(serial)
                     else:
                         st = _query_printer_status(name, creds)
                     output_lines.extend(_render_printer(st, name, creds.get("serial", "")))
@@ -613,8 +624,9 @@ def status(
     except KeyboardInterrupt:
         print("\n")
     finally:
-        if bridge_ctx is not None:
-            bridge_ctx.__exit__(None, None, None)
+        for bridge in bridge_map.values():
+            bridge.__exit__(None, None, None)
+        if token_ctx is not None:
             token_ctx.__exit__(None, None, None)
 
 

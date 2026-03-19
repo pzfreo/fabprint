@@ -190,84 +190,95 @@ def _run_bridge(
 
 
 class PersistentBridge:
-    """Keep a Docker container running for repeated bridge commands.
+    """Keep a single MQTT session alive for repeated status queries.
+
+    Uses the bridge ``watch`` command which logs in and subscribes once,
+    then accepts ``status`` commands on stdin and returns JSON on stdout.
 
     Usage::
 
-        with PersistentBridge(token_file) as bridge:
-            status = bridge.status(device_id)
+        with PersistentBridge(token_file, device_id) as bridge:
+            status = bridge.status()
     """
 
-    def __init__(self, token_file: Path) -> None:
+    def __init__(self, token_file: Path, device_id: str = "") -> None:
         self._token_file = token_file.resolve()
+        self._device_id = device_id
         self._container_id: str | None = None
+        self._proc: subprocess.Popen | None = None
 
     def __enter__(self) -> PersistentBridge:
         real_token = str(self._token_file)
         cmd = [
             "docker",
             "run",
-            "-d",
+            "--rm",
+            "-i",
             "--platform",
             "linux/amd64",
             "-v",
             f"{real_token}:/input/token.json:ro",
-            "--entrypoint",
-            "sleep",
             DOCKER_IMAGE,
-            "infinity",
+            "watch",
+            self._device_id,
+            "/input/token.json",
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        self._container_id = result.stdout.strip()[:12]
-        log.debug("Started persistent bridge container: %s", self._container_id)
+        self._proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert self._proc.stdout is not None
+        # Wait for {"ready":true} signal
+        ready_line = self._proc.stdout.readline().strip()
+        log.debug("Bridge watch ready: %s", ready_line)
+        try:
+            ready_data = json.loads(ready_line)
+            if not ready_data.get("ready"):
+                raise RuntimeError(f"Bridge watch failed to start: {ready_line}")
+        except json.JSONDecodeError:
+            raise RuntimeError(f"Bridge watch returned non-JSON: {ready_line[:200]}")
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        if self._container_id:
-            subprocess.run(
-                ["docker", "rm", "-f", self._container_id],
-                capture_output=True,
-                check=False,
-            )
-            log.debug("Stopped persistent bridge container: %s", self._container_id)
-            self._container_id = None
+        if self._proc and self._proc.stdin:
+            try:
+                self._proc.stdin.write("quit\n")
+                self._proc.stdin.flush()
+                self._proc.stdin.close()
+            except OSError:
+                pass
+            self._proc.kill()
+            self._proc.wait()
+            log.debug("Stopped persistent bridge")
+            self._proc = None
 
-    def status(self, device_id: str, *, timeout: int = BRIDGE_STATUS_TIMEOUT) -> dict:
-        """Query printer status via the running container.
-
-        The bridge binary outputs JSON but may not exit afterwards, so we
-        read the first line of stdout and kill the process.
-        """
+    def status(self, device_id: str = "", *, timeout: int = BRIDGE_STATUS_TIMEOUT) -> dict:
+        """Send a status query and read the JSON response."""
         import selectors
 
-        assert self._container_id is not None
-        cmd = [
-            "docker",
-            "exec",
-            self._container_id,
-            "bambu_cloud_bridge",
-            "status",
-            device_id,
-            "/input/token.json",
-        ]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        assert proc.stdout is not None
-        try:
-            sel = selectors.DefaultSelector()
-            sel.register(proc.stdout, selectors.EVENT_READ)
-            ready = sel.select(timeout=timeout)
-            sel.close()
-            if not ready:
-                raise RuntimeError(f"Status query timed out for printer {device_id}")
-            line = proc.stdout.readline()
-        finally:
-            proc.kill()
-            proc.wait()
+        assert self._proc is not None
+        assert self._proc.stdin is not None
+        assert self._proc.stdout is not None
+        self._proc.stdin.write("status\n")
+        self._proc.stdin.flush()
+
+        sel = selectors.DefaultSelector()
+        sel.register(self._proc.stdout, selectors.EVENT_READ)
+        ready = sel.select(timeout=timeout)
+        sel.close()
+        if not ready:
+            raise RuntimeError("Status query timed out")
+        line = self._proc.stdout.readline()
         try:
             data = json.loads(line.strip())
+            if "error" in data:
+                raise RuntimeError(f"Bridge error: {data['error']}")
             return data.get("print", data)
         except json.JSONDecodeError:
-            raise RuntimeError(f"Bridge returned non-JSON (exit {proc.returncode}): {line[:200]}")
+            raise RuntimeError(f"Bridge returned non-JSON: {line[:200]}")
 
 
 def cloud_print(

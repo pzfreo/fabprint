@@ -584,6 +584,93 @@ static int cmd_status(const std::string& token_json_raw, const std::string& devi
 }
 
 // ---------------------------------------------------------------------------
+// Command: watch (long-lived mode — login once, accept commands on stdin)
+// ---------------------------------------------------------------------------
+
+static int cmd_watch(const std::string& token_json_raw, const std::string& device_id) {
+    // Save real stdout, then redirect stdout to /dev/null to suppress library noise.
+    // We write our JSON output via the saved fd.
+    int real_out = dup(STDOUT_FILENO);
+    int devnull_fd = open("/dev/null", O_WRONLY);
+    if (devnull_fd >= 0) { dup2(devnull_fd, STDOUT_FILENO); close(devnull_fd); }
+    FILE* out = fdopen(real_out, "w");
+
+    if (!load_library()) return 1;
+    if (!init_agent(token_json_raw)) { cleanup(); return 1; }
+
+    // Subscribe once
+    if (fp_set_machine) fp_set_machine(g_agent, device_id);
+    g_printer_subscribed = false;
+    if (fp_start_sub) fp_start_sub(g_agent, std::string("device"));
+    wait_for(g_printer_subscribed, 3000, 100);
+
+    // Signal readiness
+    fprintf(out, "{\"ready\":true}\n");
+    fflush(out);
+
+    // Read commands from stdin, one per line
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty()) continue;
+        if (line == "quit" || line == "exit") break;
+
+        if (line == "status") {
+            // Collect MQTT messages for this poll
+            std::vector<std::string> messages;
+            std::mutex msg_list_mutex;
+            g_got_full_status = false;
+
+            if (fp_set_message_cb) {
+                fp_set_message_cb(g_agent, [&messages, &msg_list_mutex](std::string dev_id, std::string msg) {
+                    if (msg.empty() || msg == "{}") return;
+                    vlog("  watch_msg: %s\n", msg.substr(0, 200).c_str());
+                    std::lock_guard<std::mutex> lock(msg_list_mutex);
+                    messages.push_back(msg);
+                    if (msg.size() > 500 && msg.find("gcode_state") != std::string::npos)
+                        g_got_full_status = true;
+                });
+            }
+
+            // Send pushall and wait for response (event-driven)
+            std::string pushall = R"({"pushing":{"sequence_id":"0","command":"pushall","version":1,"push_target":1}})";
+            int ret = -1;
+            if (fp_send_msg_legacy) ret = fp_send_msg_legacy(g_agent, device_id, pushall, 0);
+            if (ret != 0 && fp_send_msg) ret = fp_send_msg(g_agent, device_id, pushall, 0, 0);
+            vlog("watch pushall: %d\n", ret);
+
+            // Wait up to 10s for full status, return early when available
+            for (int elapsed = 0; elapsed < 10000; elapsed += 100) {
+                if (g_got_full_status) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(msg_list_mutex);
+                std::string best;
+                for (const auto& m : messages) {
+                    if (m.size() > best.size()) best = m;
+                }
+                if (!best.empty()) {
+                    fprintf(out, "%s\n", best.c_str());
+                } else {
+                    fprintf(out, "{\"error\":\"no status received\"}\n");
+                }
+                fflush(out);
+            }
+        } else {
+            fprintf(out, "{\"error\":\"unknown command\"}\n");
+            fflush(out);
+        }
+    }
+
+    fast_exit(0);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Command: cancel
 // ---------------------------------------------------------------------------
 
@@ -936,12 +1023,14 @@ static void print_usage(const char* prog) {
         "Usage:\n"
         "  %s print  <3mf> <device_id> <token_file> [options]\n"
         "  %s status <device_id> <token_file> [-v]\n"
+        "  %s watch  <device_id> <token_file> [-v]\n"
         "  %s tasks  <token_file> [--limit N]\n"
         "  %s cancel <device_id> <token_file> [-v]\n"
         "\n"
         "Commands:\n"
         "  print   Upload a 3MF file and start a cloud print job\n"
         "  status  Query live printer state via MQTT (JSON output)\n"
+        "  watch   Long-lived mode: login once, read commands from stdin\n"
         "  tasks   List recent cloud print tasks (JSON output)\n"
         "  cancel  Stop the current print on a printer\n"
         "\n"
@@ -961,7 +1050,7 @@ static void print_usage(const char* prog) {
         "  {\"token\": \"...\", \"uid\": \"...\", \"name\": \"...\", \"email\": \"...\"}\n"
         "\n"
         "Output: All commands produce JSON on stdout. Logs go to stderr (-v).\n",
-        prog, prog, prog, prog);
+        prog, prog, prog, prog, prog);
 }
 
 int main(int argc, char* argv[]) {
@@ -1011,6 +1100,19 @@ int main(int argc, char* argv[]) {
         std::string token_json = read_file(token_file);
         if (token_json.empty()) { fprintf(stderr, "error: cannot read %s\n", token_file.c_str()); return 1; }
         return cmd_status(token_json, device_id);
+    }
+
+    // --- watch ---
+    if (command == "watch") {
+        if (argc < 4) {
+            fprintf(stderr, "Usage: %s watch <device_id> <token_file> [-v]\n", argv[0]);
+            return 1;
+        }
+        std::string device_id = argv[2];
+        std::string token_file = argv[3];
+        std::string token_json = read_file(token_file);
+        if (token_json.empty()) { fprintf(stderr, "error: cannot read %s\n", token_file.c_str()); return 1; }
+        return cmd_watch(token_json, device_id);
     }
 
     // --- cancel ---
