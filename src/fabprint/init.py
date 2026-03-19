@@ -299,127 +299,59 @@ def _detect_orca_version() -> str | None:
     return None
 
 
-_FILTER_THRESHOLD = 10  # show search prompt when list exceeds this size
-
-
 def _prompt_choice(prompt: str, options: list[str], allow_multi: bool = False) -> list[int]:
-    """Show a numbered list and return selected indices.
+    """Interactive picker — delegates to ``ui.pick``."""
+    from fabprint import ui
 
-    For long lists (>20 items), prompts user to type a search term first,
-    then shows only matching entries.
-    """
-    filtered = options
-    filter_indices = list(range(len(options)))
-
-    if len(options) > _FILTER_THRESHOLD:
-        filtered, filter_indices = _search_filter(options)
-
-    for i, opt in enumerate(filtered, 1):
-        print(f"  [{i}] {opt}")
-
-    while True:
-        raw = input(prompt).strip()
-        if not raw:
-            continue
-        # Allow re-searching from the selection prompt
-        if not raw[0].isdigit() and raw.lower() != "all":
-            filtered, filter_indices = _search_filter(options, raw)
-            for i, opt in enumerate(filtered, 1):
-                print(f"  [{i}] {opt}")
-            continue
-        if allow_multi and raw.lower() == "all":
-            return list(filter_indices)
-        try:
-            if allow_multi:
-                picks = [int(x.strip()) - 1 for x in raw.split(",")]
-            else:
-                picks = [int(raw) - 1]
-            if all(0 <= p < len(filtered) for p in picks):
-                return [filter_indices[p] for p in picks]
-        except ValueError:
-            pass
-        print(
-            f"  Enter a number 1-{len(filtered)}"
-            + (" (comma-separated, 'all', or type to search)" if allow_multi else "")
-            + (" or type to search" if not allow_multi and len(options) > _FILTER_THRESHOLD else "")
-        )
-
-
-def _search_filter(options: list[str], query: str | None = None) -> tuple[list[str], list[int]]:
-    """Prompt for a search term and return matching options with original indices."""
-    while True:
-        if query is None:
-            # Show first few examples so the user can see the naming format
-            preview = options[:10]
-            for ex in preview:
-                print(f"    {ex}")
-            if len(options) > len(preview):
-                print(f"    ... and {len(options) - len(preview)} more")
-            query = input(f"  Search ({len(options)} available, type to filter): ").strip()
-        if not query:
-            query = None
-            continue
-        q = query.lower()
-        matches = [(i, o) for i, o in enumerate(options) if q in o.lower()]
-        if matches:
-            print(f"  {len(matches)} match(es) for '{query}':")
-            indices = [i for i, _ in matches]
-            names = [o for _, o in matches]
-            return names, indices
-        print(f"  No matches for '{query}'. Try again.")
-        query = None
+    return ui.pick(options, prompt=prompt, allow_multi=allow_multi)
 
 
 def _prompt_str(prompt: str, default: str | None = None) -> str:
     """Prompt for a string value with optional default."""
-    suffix = f" [{default}]" if default else ""
-    raw = input(f"{prompt}{suffix}: ").strip()
-    return raw or (default or "")
+    from fabprint import ui
+
+    return ui.prompt_str(prompt, default)
 
 
 def _prompt_int(prompt: str, default: int) -> int:
     """Prompt for an integer with a default."""
-    raw = input(f"{prompt} [{default}]: ").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        print(f"  Using default: {default}")
-        return default
+    from fabprint import ui
+
+    return ui.prompt_int(prompt, default)
 
 
 def _prompt_yn(prompt: str, default: bool = True) -> bool:
     """Prompt yes/no with a default."""
-    hint = "Y/n" if default else "y/N"
-    raw = input(f"{prompt} [{hint}]: ").strip().lower()
-    if not raw:
-        return default
-    return raw.startswith("y")
+    from fabprint import ui
+
+    return ui.prompt_yn(prompt, default)
 
 
 def run_wizard(output: Path | None = None) -> str:
     """Run the interactive init wizard and return generated TOML."""
+    from fabprint import ui
     from fabprint.profiles import discover_profile_names
 
-    print("fabprint init — interactive config wizard\n")
+    ui.heading("fabprint init")
+    ui.console.print()
 
     engine = "orca"
 
     # --- Step 0: Check for configured printers ---
     configured = _list_configured_printers()
     if not configured:
-        print("No printers configured yet.")
+        ui.warn("No printers configured yet.")
         if _prompt_yn("Run 'fabprint setup' to add a printer first?"):
             from fabprint.credentials import setup_printer
 
-            print()
+            ui.console.print()
             setup_printer()
-            print()
+            ui.console.print()
             # Refresh after setup
             configured = _list_configured_printers()
         else:
-            print("  Continuing without printer setup.\n")
+            ui.info("Continuing without printer setup.")
+            ui.console.print()
 
     # --- Query AMS trays in background while we ask other questions ---
     ams_future = None
@@ -432,35 +364,37 @@ def run_wizard(output: Path | None = None) -> str:
     # --- Step 1: Discover profiles (system → pinned → bundled) ---
     profiles, profile_source = discover_profile_names(engine)
     if profile_source == "bundled":
-        print("(Using bundled profile list — install OrcaSlicer locally for full profile access)\n")
+        ui.info("Using bundled profile list — install OrcaSlicer locally for full access")
+        ui.console.print()
     elif profile_source == "none":
-        print("(No profiles found — profile names will need to be entered manually)\n")
+        ui.warn("No profiles found — profile names will need to be entered manually")
+        ui.console.print()
 
     # --- Step 3: Pick printer profile ---
     printer_profile = None
     machine_info = _MachineInfo()
     machines = sorted(profiles.get("machine", []))
     if machines:
-        print("Printer profiles:")
-        chosen = _prompt_choice("Pick a printer profile: ", machines)
+        ui.heading("Printer Profile")
+        chosen = _prompt_choice("Pick a printer profile", machines)
         printer_profile = machines[chosen[0]]
         machine_info = _read_machine_info(printer_profile, engine)
-        print()
+        ui.console.print()
     else:
         printer_profile = _prompt_str("Printer profile name (e.g. 'Bambu Lab P1S 0.4 nozzle')")
-        print()
+        ui.console.print()
 
     # --- Step 4: Pick process profile ---
     process_profile = None
     processes = sorted(profiles.get("process", []))
     if processes:
-        print("Process profiles:")
-        chosen = _prompt_choice("Pick a process profile: ", processes)
+        ui.heading("Process Profile")
+        chosen = _prompt_choice("Pick a process profile", processes)
         process_profile = processes[chosen[0]]
-        print()
+        ui.console.print()
     else:
         process_profile = _prompt_str("Process profile name (e.g. '0.20mm Standard @BBL X1C')")
-        print()
+        ui.console.print()
 
     # --- Collect AMS results (should be done by now) ---
     ams_trays: list[dict] = []
@@ -470,13 +404,11 @@ def run_wizard(output: Path | None = None) -> str:
         except Exception:
             pass
         if ams_trays:
-            print(f"AMS loaded ({len(ams_trays)} slot(s)):")
+            ui.info(f"AMS loaded ({len(ams_trays)} slot(s)):")
             for t in ams_trays:
-                c = t["color"]
-                r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
-                swatch = f"\033[48;2;{r};{g};{b}m  \033[0m"
-                print(f"  Slot {t['phys_slot'] + 1}: {t['type']}  {swatch}")
-            print()
+                swatch = ui.color_swatch(t["color"])
+                ui.console.print(f"  Slot {t['phys_slot'] + 1}: {t['type']}  {swatch}")
+            ui.console.print()
 
     # --- Step 5: Pick filament(s) ---
     filament_names: list[str] = []
@@ -489,64 +421,66 @@ def run_wizard(output: Path | None = None) -> str:
 
     if ams_suggestions and any(ams_suggestions):
         # Show what we matched from AMS and let user confirm/edit
-        print("Filament profiles (matched from AMS):")
+        ui.heading("Filament Profiles (matched from AMS)")
         for i, (tray, suggestion) in enumerate(zip(ams_trays, ams_suggestions)):
-            label = suggestion or "? (no match)"
-            print(f"  Slot {tray['phys_slot'] + 1}: {tray['type']} → {label}")
+            label = suggestion or "[dim]? (no match)[/dim]"
+            swatch = ui.color_swatch(tray["color"])
+            slot_num = tray["phys_slot"] + 1
+            ui.console.print(f"  Slot {slot_num}: {tray['type']} {swatch} \u2192 {label}")
         if _prompt_yn("Use these filaments?"):
             filament_names = [s for s in ams_suggestions if s]
-        print()
+        ui.console.print()
 
     if not filament_names and filament_options:
+        ui.heading("Filament Profile")
         if machine_info.multi_material:
-            print("Printer supports multi-material (AMS). Pick a filament for each slot.")
+            ui.info("Printer supports multi-material (AMS). Pick a filament for each slot.")
             slot = 1
             while True:
-                print(f"Slot {slot} filament:")
-                chosen = _prompt_choice(f"  Pick filament for slot {slot}: ", filament_options)
+                chosen = _prompt_choice(f"Pick filament for slot {slot}", filament_options)
                 filament_names.append(filament_options[chosen[0]])
-                print(f"  Slot {slot}: {filament_names[-1]}")
+                ui.success(f"Slot {slot}: {filament_names[-1]}")
                 if slot >= 4:
                     break
                 if not _prompt_yn(f"Add slot {slot + 1}?", default=slot < 2):
                     break
                 slot += 1
         else:
-            print("Filament profile:")
-            chosen = _prompt_choice("Pick a filament: ", filament_options)
+            chosen = _prompt_choice("Pick a filament", filament_options)
             filament_names.append(filament_options[chosen[0]])
-        print()
+        ui.console.print()
 
     if not filament_names:
         fil = _prompt_str("Filament profile name", "Generic PLA @base")
         filament_names = [fil]
-        print()
+        ui.console.print()
 
     # --- Step 6: Discover CAD files ---
+    ui.heading("CAD Files")
     cwd = Path.cwd()
     candidates = sorted(
         p for ext in ("*.stl", "*.3mf", "*.step", "*.STL", "*.3MF", "*.STEP") for p in cwd.glob(ext)
     )
     parts_config: list[dict] = []
     if candidates:
-        print(f"Found {len(candidates)} CAD file(s) in current directory:")
+        ui.info(f"Found {len(candidates)} CAD file(s) in current directory")
         names = [p.name for p in candidates]
         chosen = _prompt_choice(
-            "Select files to include (comma-separated or 'all'): ",
+            "Select files (comma-separated or 'all')",
             names,
             allow_multi=True,
         )
-        print()
+        ui.console.print()
         for idx in chosen:
             f = candidates[idx]
-            copies = _prompt_int(f"  {f.name} — copies?", 1)
-            print("  Orient options: flat, upright, side")
-            orient = _prompt_str(f"  {f.name} — orient?", "flat")
+            copies = _prompt_int(f"{f.name} — copies?", 1)
+            ui.info("Orient options: flat, upright, side")
+            orient = _prompt_str(f"{f.name} — orient?", "flat")
             if orient not in VALID_ORIENTS:
                 orient = "flat"
             fil_slot = 1
             if len(filament_names) > 1:
-                fil_slot = _prompt_int(f"  {f.name} — filament slot (1-{len(filament_names)})?", 1)
+                fil_slot = _prompt_int(f"{f.name} — filament slot (1-{len(filament_names)})?", 1)
             parts_config.append(
                 {
                     "file": f.name,
@@ -555,24 +489,27 @@ def run_wizard(output: Path | None = None) -> str:
                     "filament": fil_slot,
                 }
             )
-        print()
+        ui.console.print()
 
     if not parts_config:
         # No CAD files found or selected — add a placeholder
         file_name = _prompt_str("Part file path (relative to this directory)", "my-part.stl")
         parts_config.append({"file": file_name, "copies": 1, "orient": "flat", "filament": 1})
-        print()
+        ui.console.print()
 
     # --- Step 7: Plate size (default from printer profile if available) ---
+    ui.heading("Build Plate")
     default_plate = (256, 256)
     if machine_info.plate_size:
         default_plate = machine_info.plate_size
-        print(f"Detected plate size from printer profile: {default_plate[0]}x{default_plate[1]}mm")
+        w, d = default_plate
+        ui.success(f"Detected plate size from printer profile: {w}x{d}mm")
     plate_x = _prompt_int("Plate width (mm)?", default_plate[0])
     plate_y = _prompt_int("Plate depth (mm)?", default_plate[1])
-    print()
+    ui.console.print()
 
     # --- Step 8: Slicer version ---
+    ui.heading("Slicer Version")
     detected_version = _detect_orca_version()
     if detected_version:
         slicer_version = _prompt_str(
@@ -580,33 +517,33 @@ def run_wizard(output: Path | None = None) -> str:
         )
     else:
         slicer_version = _prompt_str("OrcaSlicer version to pin (leave blank to skip)")
-    print()
+    ui.console.print()
 
     # --- Step 9: Pipeline stages ---
+    ui.heading("Pipeline")
     stages = list(DEFAULT_STAGES)
     if not _prompt_yn("Include print stage in pipeline?"):
         stages = [s for s in stages if s != "print"]
-    print()
+    ui.console.print()
 
     # --- Step 10: Printer connection ---
     printer_name = None
     if "print" in stages:
+        ui.heading("Printer Connection")
         configured = _list_configured_printers()
         if configured:
             names = list(configured.keys())
-            print("Configured printers:")
-            for i, (n, creds) in enumerate(configured.items(), 1):
-                ptype = creds.get("type", "unknown")
-                print(f"  [{i}] {n} ({ptype})")
-            print(f"  [{len(names) + 1}] Skip")
-            chosen = _prompt_choice("Pick a printer: ", [*names, "Skip (configure later)"])
+            items = [(n, c.get("type", "unknown")) for n, c in configured.items()]
+            items.append(("Skip (configure later)", ""))
+            ui.choice_table(items, ["Printer", "Type"])
+            chosen = _prompt_choice("Pick a printer", [*names, "Skip (configure later)"])
             pick = names[chosen[0]] if chosen[0] < len(names) else None
             printer_name = pick
         elif _prompt_yn("Configure printer connection?", default=False):
-            printer_name = _prompt_str("  Printer name (from 'fabprint setup')", "")
+            printer_name = _prompt_str("Printer name (from 'fabprint setup')", "")
             if not printer_name:
                 printer_name = None
-        print()
+        ui.console.print()
 
     # --- Build TOML ---
     toml = _build_toml(
@@ -622,21 +559,20 @@ def run_wizard(output: Path | None = None) -> str:
     )
 
     # --- Preview and confirm ---
-    print("--- Generated fabprint.toml ---")
-    print(toml)
-    print("-------------------------------")
+    ui.heading("Preview")
+    ui.preview_toml(toml)
 
     dest = output or Path("fabprint.toml")
     if dest.exists():
         if not _prompt_yn(f"{dest} already exists. Overwrite?", default=False):
-            print("Aborted.")
+            ui.warn("Aborted.")
             return toml
 
     if _prompt_yn(f"Write to {dest}?"):
         dest.write_text(toml)
-        print(f"Wrote {dest}")
+        ui.success(f"Wrote {dest}")
     else:
-        print("Not written. Copy the output above to create your config.")
+        ui.info("Not written. Copy the output above to create your config.")
 
     return toml
 

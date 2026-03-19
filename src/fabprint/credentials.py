@@ -12,6 +12,14 @@ from pathlib import Path
 
 from fabprint import FabprintError
 
+
+def mask_serial(serial: str) -> str:
+    """Mask a printer serial, keeping only the last 4 characters visible."""
+    if len(serial) <= 4:
+        return serial
+    return "*" * (len(serial) - 4) + serial[-4:]
+
+
 # Valid printer types and their required/optional fields
 PRINTER_TYPES = {
     "bambu-lan": {
@@ -191,44 +199,40 @@ def cloud_token_json():
 
 def setup_printer() -> None:
     """Interactive wizard to add or update a printer in credentials.toml."""
+    from fabprint import ui
+
     path = _credentials_path()
     existing = _load_raw()
 
+    ui.heading("Printer Setup")
+
     printers = existing.get("printers", {})
     if printers:
-        print(f"Existing printers in {path}:")
-        for name, creds in printers.items():
-            ptype = creds.get("type", "unknown")
-            print(f"  {name} ({ptype})")
-        print()
+        ui.console.print()
+        items = [(n, c.get("type", "unknown")) for n, c in printers.items()]
+        ui.choice_table(items, ["Name", "Type"])
+        ui.console.print()
 
-    name = input("Printer name (e.g. 'workshop'): ").strip()
+    name = ui.prompt_str("Printer name (e.g. 'workshop')")
     if not name:
-        print("Aborted — printer name is required.")
+        ui.warn("Aborted — printer name is required.")
         return
 
     # Choose printer type
-    print("\nPrinter types:")
+    ui.console.print()
     type_list = list(PRINTER_TYPES.keys())
-    for i, t in enumerate(type_list, 1):
-        info = PRINTER_TYPES[t]
-        print(f"  [{i}] {t} — {info['description']}")
+    items = [(t, PRINTER_TYPES[t]["description"]) for t in type_list]
+    ui.choice_table(items, ["Type", "Description"])
 
     while True:
-        raw = input("Choose type [1]: ").strip()
-        if not raw:
-            ptype = type_list[0]
+        pick = ui.prompt_int("Choose type", 1)
+        if 1 <= pick <= len(type_list):
+            ptype = type_list[pick - 1]
             break
-        try:
-            idx = int(raw) - 1
-            if 0 <= idx < len(type_list):
-                ptype = type_list[idx]
-                break
-        except ValueError:
-            pass
-        print(f"  Enter a number 1-{len(type_list)}")
+        ui.console.print(f"  Enter a number 1-{len(type_list)}")
 
-    print(f"\nSetting up '{name}' ({ptype})")
+    ui.console.print()
+    ui.info(f"Setting up [bold]{name}[/bold] ({ptype})")
 
     entry: dict[str, str] = {"type": ptype}
     type_info = PRINTER_TYPES[ptype]
@@ -237,11 +241,11 @@ def setup_printer() -> None:
     if ptype == "bambu-cloud":
         cloud = existing.get("cloud")
         if cloud and cloud.get("token"):
-            print(f"\n  Cloud login already configured ({cloud.get('email', 'unknown')})")
+            ui.success(f"Cloud login already configured ({cloud.get('email', 'unknown')})")
         else:
-            print("\n  Cloud printing requires a Bambu Lab account login.")
-            do_login = input("  Log in now? [Y/n]: ").strip().lower()
-            if do_login != "n":
+            ui.console.print()
+            ui.info("Cloud printing requires a Bambu Lab account login.")
+            if ui.prompt_yn("Log in now?"):
                 _cloud_login_flow(existing)
 
         # Try to list bound printers so user can pick instead of typing serial
@@ -254,15 +258,15 @@ def setup_printer() -> None:
         if field in entry:
             continue
         while True:
-            val = input(f"  {field}: ").strip()
+            val = ui.prompt_str(field)
             if val:
                 entry[field] = val
                 break
-            print(f"    {field} is required")
+            ui.warn(f"{field} is required")
 
     # Collect optional fields
     for field in type_info["optional"]:
-        val = input(f"  {field} (optional): ").strip()
+        val = ui.prompt_str(f"{field} (optional)")
         if val:
             entry[field] = val
 
@@ -272,10 +276,15 @@ def setup_printer() -> None:
     existing["printers"][name] = entry
     _write_credentials(existing)
 
-    print(f"\nWrote {path} (mode 600)")
-    print("Reference this printer in fabprint.toml with:")
-    print("  [printer]")
-    print(f'  name = "{name}"')
+    ui.console.print()
+    ui.success(f"Wrote {path} (mode 600)")
+    toml_ref = f'[printer]\nname = "{name}"'
+    from rich.syntax import Syntax
+
+    ui.console.print(
+        "  Reference this printer in fabprint.toml with:",
+    )
+    ui.console.print(Syntax(toml_ref, "toml", theme="monokai", line_numbers=False))
 
 
 def _pick_cloud_printer(cloud: dict | None) -> str | None:
@@ -283,6 +292,8 @@ def _pick_cloud_printer(cloud: dict | None) -> str | None:
 
     Returns the serial number of the chosen printer, or None.
     """
+    from fabprint import ui
+
     if not cloud or not cloud.get("token"):
         return None
     try:
@@ -294,31 +305,27 @@ def _pick_cloud_printer(cloud: dict | None) -> str | None:
     if not devices:
         return None
 
-    print("\n  Printers on your Bambu account:")
-    for i, d in enumerate(devices, 1):
+    ui.console.print()
+    items = []
+    for d in devices:
         dname = d.get("name", "unnamed")
         model = d.get("dev_product_name", d.get("dev_model_name", "?"))
         serial = d.get("dev_id", "?")
-        online = "online" if d.get("online") else "offline"
-        print(f"    [{i}] {dname} ({model}) — {serial} [{online}]")
+        online_str = "[green]online[/green]" if d.get("online") else "[dim]offline[/dim]"
+        items.append((dname, model, mask_serial(serial), online_str))
+    ui.choice_table(items, ["Name", "Model", "Serial", "Status"])
 
     while True:
-        raw = input("  Pick a printer [1]: ").strip()
-        if not raw:
-            idx = 0
+        pick = ui.prompt_int("Pick a printer", 1)
+        idx = pick - 1
+        if 0 <= idx < len(devices):
             break
-        try:
-            idx = int(raw) - 1
-            if 0 <= idx < len(devices):
-                break
-        except ValueError:
-            pass
-        print(f"    Enter a number 1-{len(devices)}")
+        ui.console.print(f"  Enter a number 1-{len(devices)}")
 
     chosen = devices[idx]
     serial = chosen.get("dev_id", "")
     dname = chosen.get("name", "")
-    print(f"  Selected: {dname} (serial: {serial})")
+    ui.success(f"Selected: {dname} (serial: {mask_serial(serial)})")
     return serial
 
 
@@ -326,6 +333,7 @@ def _cloud_login_flow(existing: dict) -> None:
     """Run the Bambu Cloud login flow and save credentials."""
     import os
 
+    from fabprint import ui
     from fabprint.auth import _get_user_profile, _login, _show_devices
 
     # Check for existing valid token
@@ -333,22 +341,21 @@ def _cloud_login_flow(existing: dict) -> None:
     if cloud and cloud.get("token"):
         try:
             profile = _get_user_profile(cloud["token"])
-            print(f"  Cached token is valid ({profile.get('name') or profile['uid']})")
+            ui.success(f"Cached token is valid ({profile.get('name') or profile['uid']})")
             _show_devices(cloud["token"])
-            refresh = input("  Re-login anyway? [y/N]: ").strip().lower()
-            if refresh != "y":
+            if not ui.prompt_yn("Re-login anyway?", default=False):
                 return
         except Exception:
-            print("  Cached token is invalid or expired.")
+            ui.warn("Cached token is invalid or expired.")
 
     # Accept env vars or prompt
-    email = os.environ.get("BAMBU_EMAIL") or input("  Email: ").strip()
-    password = os.environ.get("BAMBU_PASSWORD") or input("  Password: ").strip()
+    email = os.environ.get("BAMBU_EMAIL") or ui.prompt_str("Email")
+    password = os.environ.get("BAMBU_PASSWORD") or ui.prompt_password("Password")
     if not email or not password:
-        print("  Skipped — email and password required.")
+        ui.warn("Skipped — email and password required.")
         return
 
-    print("\n  Logging in...")
+    ui.info("Logging in...")
     token, refresh_token = _login(email, password)
     profile = _get_user_profile(token)
 
@@ -359,5 +366,5 @@ def _cloud_login_flow(existing: dict) -> None:
         "uid": profile["uid"],
     }
 
-    print(f"\n  Login successful! User: {profile.get('name') or profile['uid']}")
+    ui.success(f"Login successful! User: {profile.get('name') or profile['uid']}")
     _show_devices(token)

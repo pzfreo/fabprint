@@ -10,9 +10,66 @@ from fabprint.credentials import (
     cloud_token_json,
     list_printers,
     load_cloud_credentials,
+    mask_serial,
     save_cloud_credentials,
     setup_printer,
 )
+
+
+class TestMaskSerial:
+    def test_long_serial(self):
+        assert mask_serial("01P00A451601106") == "***********1106"
+
+    def test_short_serial(self):
+        assert mask_serial("AB") == "AB"
+
+    def test_exactly_four(self):
+        assert mask_serial("ABCD") == "ABCD"
+
+    def test_five_chars(self):
+        assert mask_serial("ABCDE") == "*BCDE"
+
+
+def _mock_ui_inputs(monkeypatch, inputs):
+    """Mock ui prompt functions with an iterator of responses."""
+    it = iter(inputs)
+
+    def next_str(prompt, default=None):
+        try:
+            val = next(it)
+        except StopIteration:
+            return default or ""
+        return val if val != "" else (default or "")
+
+    def next_int(prompt, default=0):
+        try:
+            val = next(it)
+        except StopIteration:
+            return default
+        return int(val) if val != "" else default
+
+    def next_yn(prompt, default=True):
+        try:
+            val = next(it)
+        except StopIteration:
+            return default
+        if val == "":
+            return default
+        return str(val).lower().startswith("y")
+
+    monkeypatch.setattr("fabprint.ui.prompt_str", next_str)
+    monkeypatch.setattr("fabprint.ui.prompt_int", next_int)
+    monkeypatch.setattr("fabprint.ui.prompt_yn", next_yn)
+    monkeypatch.setattr("fabprint.ui.prompt_password", lambda prompt: next_str(prompt))
+    # Silence Rich output
+    monkeypatch.setattr("fabprint.ui.heading", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.success", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.warn", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.error", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.info", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.choice_table", lambda items, columns: None)
+    monkeypatch.setattr("fabprint.ui.preview_toml", lambda text: None)
+    monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
 
 
 class TestSetupPrinter:
@@ -21,8 +78,7 @@ class TestSetupPrinter:
         monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
 
         # name, type choice, ip, access_code, serial
-        inputs = iter(["workshop", "1", "192.168.1.100", "12345678", "01P00A123"])
-        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
+        _mock_ui_inputs(monkeypatch, ["workshop", "1", "192.168.1.100", "12345678", "01P00A123"])
 
         setup_printer()
 
@@ -41,8 +97,7 @@ class TestSetupPrinter:
         monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
 
         # name, type choice (3=moonraker), url, api_key (optional)
-        inputs = iter(["voron", "3", "http://voron.local:7125", "my-key"])
-        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
+        _mock_ui_inputs(monkeypatch, ["voron", "3", "http://voron.local:7125", "my-key"])
 
         setup_printer()
 
@@ -58,8 +113,7 @@ class TestSetupPrinter:
         monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
 
         # name, type (default=1), ip, access_code, serial
-        inputs = iter(["new-printer", "", "192.168.1.50", "99887766", "ABC123"])
-        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
+        _mock_ui_inputs(monkeypatch, ["new-printer", "1", "192.168.1.50", "99887766", "ABC123"])
 
         setup_printer()
 
@@ -71,23 +125,21 @@ class TestSetupPrinter:
         assert data["printers"]["new-printer"]["type"] == "bambu-lan"
         assert data["printers"]["new-printer"]["serial"] == "ABC123"
 
-    def test_aborts_on_empty_name(self, tmp_path, monkeypatch, capsys):
+    def test_aborts_on_empty_name(self, tmp_path, monkeypatch):
         cred_path = tmp_path / "credentials.toml"
         monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
 
-        monkeypatch.setattr("builtins.input", lambda _="": "")
+        _mock_ui_inputs(monkeypatch, [""])
 
         setup_printer()
 
         assert not cred_path.exists()
-        assert "Aborted" in capsys.readouterr().out
 
     def test_creates_parent_dirs(self, tmp_path, monkeypatch):
         cred_path = tmp_path / "deep" / "nested" / "credentials.toml"
         monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
 
-        inputs = iter(["p1", "1", "10.0.0.1", "12345678", "SN001"])
-        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
+        _mock_ui_inputs(monkeypatch, ["p1", "1", "10.0.0.1", "12345678", "SN001"])
 
         setup_printer()
 
@@ -100,8 +152,7 @@ class TestSetupPrinter:
         cred_path = tmp_path / "credentials.toml"
         monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
 
-        inputs = iter(["test", "1", "1.2.3.4", "99887766", "SN001"])
-        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
+        _mock_ui_inputs(monkeypatch, ["test", "1", "1.2.3.4", "99887766", "SN001"])
 
         main(["setup"])
 

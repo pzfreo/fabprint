@@ -9,7 +9,6 @@ from fabprint.cli import main
 from fabprint.init import (
     _build_toml,
     _closest_match,
-    _search_filter,
     dump_template,
     validate_config,
 )
@@ -33,6 +32,47 @@ version = "2.3.1"
 file = "{_posix(FIXTURES / "cube_10mm.stl")}"
 """)
     return toml
+
+
+def _mock_ui_inputs(monkeypatch, inputs):
+    """Mock ui prompt functions with an iterator of responses."""
+    it = iter(inputs)
+
+    def next_str(prompt, default=None):
+        try:
+            val = next(it)
+        except StopIteration:
+            return default or ""
+        return val if val != "" else (default or "")
+
+    def next_int(prompt, default=0):
+        try:
+            val = next(it)
+        except StopIteration:
+            return default
+        return int(val) if val != "" else default
+
+    def next_yn(prompt, default=True):
+        try:
+            val = next(it)
+        except StopIteration:
+            return default
+        if val == "":
+            return default
+        return str(val).lower().startswith("y")
+
+    monkeypatch.setattr("fabprint.ui.prompt_str", next_str)
+    monkeypatch.setattr("fabprint.ui.prompt_int", next_int)
+    monkeypatch.setattr("fabprint.ui.prompt_yn", next_yn)
+    monkeypatch.setattr("fabprint.ui.prompt_password", lambda prompt: next_str(prompt))
+    monkeypatch.setattr("fabprint.ui.heading", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.success", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.warn", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.error", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.info", lambda text: None)
+    monkeypatch.setattr("fabprint.ui.choice_table", lambda items, columns: None)
+    monkeypatch.setattr("fabprint.ui.preview_toml", lambda text: None)
+    monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
 
 
 # ---------------------------------------------------------------------------
@@ -162,34 +202,73 @@ class TestClosestMatch:
 
 
 # ---------------------------------------------------------------------------
-# Search filter helper
+# Interactive picker (ui.pick)
 # ---------------------------------------------------------------------------
 
 
-class TestSearchFilter:
-    def test_filter_matches(self):
-        options = ["Generic PLA @base", "Generic PETG @base", "Bambu PLA Basic"]
-        names, indices = _search_filter(options, "PLA")
-        assert len(names) == 2
-        assert "Generic PLA @base" in names
-        assert "Bambu PLA Basic" in names
-        # indices should map back to original positions
-        assert all(options[i] in names for i in indices)
+class TestPick:
+    def test_short_list_direct_select(self, monkeypatch):
+        """Short lists show all options; entering a number selects."""
+        from fabprint import ui
 
-    def test_filter_case_insensitive(self):
-        options = ["Generic PLA @base", "Generic PETG @base"]
-        names, indices = _search_filter(options, "pla")
-        assert len(names) == 1
-        assert names[0] == "Generic PLA @base"
+        _mock_ui_inputs(monkeypatch, ["2"])
+        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+        result = ui.pick(["A", "B", "C"], prompt="Pick")
+        assert result == [1]  # index 1 = "B"
 
-    def test_filter_no_match_reprompts(self, monkeypatch):
-        options = ["Generic PLA @base", "Generic PETG @base"]
-        # First query has no match, second does
-        inputs = iter(["xyz", "PLA"])
-        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
-        names, indices = _search_filter(options, "nothing")
-        assert len(names) == 1
-        assert names[0] == "Generic PLA @base"
+    def test_long_list_search_then_select(self, monkeypatch):
+        """Long lists require a search first, then selection."""
+        from fabprint import ui
+
+        options = [f"Profile {i}" for i in range(20)]
+        # First input: search "Profile 5", then select "1" from filtered
+        _mock_ui_inputs(monkeypatch, ["Profile 5", "1"])
+        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+        result = ui.pick(options, prompt="Pick")
+        # "Profile 5" and "Profile 15" match; selecting 1 picks "Profile 5"
+        assert result == [5]
+
+    def test_multi_select_all(self, monkeypatch):
+        """'all' selects every item."""
+        from fabprint import ui
+
+        _mock_ui_inputs(monkeypatch, ["all"])
+        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+        result = ui.pick(["A", "B", "C"], prompt="Pick", allow_multi=True)
+        assert result == [0, 1, 2]
+
+    def test_re_search_from_selection(self, monkeypatch):
+        """Typing text at selection prompt re-filters."""
+        from fabprint import ui
+
+        # Short list: "PLA" filters, then "1" selects
+        _mock_ui_inputs(monkeypatch, ["PLA", "1"])
+        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+        result = ui.pick(
+            ["Generic PLA @base", "Generic PETG @base", "Bambu PLA Basic"],
+            prompt="Pick",
+        )
+        assert result == [0]  # "Generic PLA @base"
+
+
+class TestHighlightMatch:
+    def test_basic_highlight(self):
+        from fabprint.ui import _highlight_match
+
+        result = _highlight_match("Generic PLA @base", "PLA")
+        assert "[bold yellow]PLA[/bold yellow]" in result
+
+    def test_case_insensitive(self):
+        from fabprint.ui import _highlight_match
+
+        result = _highlight_match("Generic PLA @base", "pla")
+        assert "[bold yellow]PLA[/bold yellow]" in result
+
+    def test_no_match(self):
+        from fabprint.ui import _highlight_match
+
+        result = _highlight_match("Hello World", "xyz")
+        assert "bold yellow" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +371,8 @@ class TestWizard:
         # Create a fake STL so it gets discovered
         (tmp_path / "test-part.stl").write_bytes(b"fake stl")
 
-        inputs = iter(
+        _mock_ui_inputs(
+            monkeypatch,
             [
                 "n",  # Run setup first? -> no
                 "Bambu Lab P1S 0.4 nozzle",  # Printer profile name
@@ -306,9 +386,8 @@ class TestWizard:
                 "",  # slicer version (skip)
                 "n",  # Include print stage?
                 "y",  # Write to fabprint.toml?
-            ]
+            ],
         )
-        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
 
         # Mock discover_profiles to return empty (no slicer installed in CI)
         monkeypatch.setattr(
@@ -329,7 +408,8 @@ class TestWizard:
 
         monkeypatch.chdir(tmp_path)
 
-        inputs = iter(
+        _mock_ui_inputs(
+            monkeypatch,
             [
                 "n",  # Run setup first? -> no
                 "My Printer",  # Printer profile name
@@ -341,9 +421,8 @@ class TestWizard:
                 "",  # slicer version
                 "n",  # Include print stage?
                 "n",  # Write?
-            ]
+            ],
         )
-        monkeypatch.setattr("builtins.input", lambda _="": next(inputs))
         monkeypatch.setattr(
             "fabprint.profiles.discover_profiles",
             lambda engine: {"machine": {}, "process": {}, "filament": {}},
