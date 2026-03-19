@@ -353,16 +353,22 @@ def validate(
 ) -> None:
     """Check a fabprint.toml for issues."""
     _setup_logging(verbose)
+    from fabprint import ui
     from fabprint.init import validate_config
 
     resolved_config = _resolve_config_path(config)
-    warnings = validate_config(resolved_config)
-    if warnings:
-        for w in warnings:
-            print(f"  warning: {w}")
-        print(f"\n{len(warnings)} warning(s) found.")
+    ui.heading(f"Validating {resolved_config.name}")
+    result = validate_config(resolved_config)
+    for p in result.passes:
+        ui.success(p)
+    for w in result.warnings:
+        ui.warn(w)
+    ui.console.print()
+    if result.warnings:
+        n = len(result.warnings)
+        ui.console.print(f"  [yellow]{n}[/yellow] warning{'s' if n != 1 else ''} found.")
     else:
-        print("Config OK \u2014 no issues found.")
+        ui.success("All checks passed.")
 
 
 @app.command()

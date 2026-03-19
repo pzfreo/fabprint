@@ -7,6 +7,7 @@ import pytest
 
 from fabprint.cli import main
 from fabprint.init import (
+    ValidationResult,
     _build_toml,
     _closest_match,
     dump_template,
@@ -122,10 +123,11 @@ class TestValidate:
     def test_valid_config_no_warnings(self, tmp_path):
         # Config with version set — no warnings expected (profiles may not be installed)
         cfg = _write_valid_config(tmp_path)
-        warnings = validate_config(cfg)
+        result = validate_config(cfg)
         # The only possible warnings are about profiles not being installed,
         # which is environment-dependent. No hard errors should occur.
-        assert isinstance(warnings, list)
+        assert isinstance(result, ValidationResult)
+        assert len(result.passes) > 0
 
     def test_missing_version_warning(self, tmp_path):
         toml = tmp_path / "fabprint.toml"

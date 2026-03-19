@@ -74,17 +74,36 @@ def dump_template() -> str:
 # ---------------------------------------------------------------------------
 
 
-def validate_config(path: Path) -> list[str]:
-    """Validate a fabprint.toml and return a list of warnings.
+@dataclass
+class ValidationResult:
+    """Result of config validation with passes and warnings."""
+
+    passes: list[str]
+    warnings: list[str]
+
+    def __iter__(self):  # type: ignore[override]
+        """Iterate over warnings for backward compatibility."""
+        return iter(self.warnings)
+
+    def __len__(self) -> int:
+        return len(self.warnings)
+
+    def __bool__(self) -> bool:
+        return len(self.warnings) > 0
+
+
+def validate_config(path: Path) -> ValidationResult:
+    """Validate a fabprint.toml and return passes and warnings.
 
     Raises FabprintError for hard errors (via load_config).
-    Returns a list of actionable warning strings for soft issues.
+    Returns a ValidationResult with passes and warnings.
     """
     from fabprint.config import load_config
     from fabprint.pipeline import STAGE_OUTPUTS
     from fabprint.profiles import discover_profile_names
 
     cfg = load_config(path)
+    passes: list[str] = []
     warnings: list[str] = []
 
     # Check slicer version pinning
@@ -92,6 +111,8 @@ def validate_config(path: Path) -> list[str]:
         warnings.append(
             'slicer.version is not set — pin it for reproducible builds (e.g. version = "2.3.1")'
         )
+    else:
+        passes.append(f"Slicer version pinned: {cfg.slicer.version}")
 
     # Check profile names — system → pinned → bundled
     profiles, source = discover_profile_names(
@@ -100,6 +121,7 @@ def validate_config(path: Path) -> list[str]:
         project_dir=cfg.base_dir,
     )
 
+    profile_ok = True
     if source != "none":
         if cfg.slicer.printer:
             machines = profiles.get("machine", [])
@@ -110,6 +132,7 @@ def validate_config(path: Path) -> list[str]:
                     f"slicer.printer '{cfg.slicer.printer}' not found in "
                     f"{cfg.slicer.engine} profiles ({source}).{hint}"
                 )
+                profile_ok = False
 
         if cfg.slicer.process:
             processes = profiles.get("process", [])
@@ -120,6 +143,7 @@ def validate_config(path: Path) -> list[str]:
                     f"slicer.process '{cfg.slicer.process}' not found in "
                     f"{cfg.slicer.engine} profiles ({source}).{hint}"
                 )
+                profile_ok = False
 
         filaments = profiles.get("filament", [])
         if filaments:
@@ -131,6 +155,10 @@ def validate_config(path: Path) -> list[str]:
                         f"slicer filament '{fil}' not found in "
                         f"{cfg.slicer.engine} profiles ({source}).{hint}"
                     )
+                    profile_ok = False
+
+        if profile_ok:
+            passes.append(f"Slicer profiles valid ({source})")
     else:
         warnings.append(
             f"slicer profile names could not be validated — {cfg.slicer.engine} is not "
@@ -160,6 +188,8 @@ def validate_config(path: Path) -> list[str]:
                 warnings.append(
                     f"printer '{cfg.printer.name}' not found in {cred_path}. Available: {available}"
                 )
+            else:
+                passes.append(f"Printer '{cfg.printer.name}' found in credentials")
 
     # Check for absolute part paths (check raw TOML value, not resolved path)
     import tomllib
@@ -177,12 +207,14 @@ def validate_config(path: Path) -> list[str]:
     # (existence and orient are already hard errors in load_config)
     _SUPPORTED_EXTENSIONS = {".stl", ".3mf", ".step", ".stp", ".obj"}
     seen_files: set[str] = set()
+    parts_ok = True
     for i, part in enumerate(cfg.parts):
         part_path = part.file
 
         # Check readability (file exists at this point — load_config validated that)
         if not os.access(part_path, os.R_OK):
             warnings.append(f"parts[{i}].file '{part_path}' is not readable")
+            parts_ok = False
 
         # Check file extension
         ext = part_path.suffix.lower()
@@ -191,26 +223,39 @@ def validate_config(path: Path) -> list[str]:
                 f"parts[{i}].file has unsupported extension '{ext}' "
                 f"— expected one of {sorted(_SUPPORTED_EXTENSIONS)}"
             )
+            parts_ok = False
 
         # Check for duplicate files
         canon = str(part_path)
         if canon in seen_files:
             warnings.append(f"parts[{i}].file '{part_path.name}' appears more than once")
+            parts_ok = False
         seen_files.add(canon)
+
+    n = len(cfg.parts)
+    if parts_ok:
+        passes.append(f"{n} part file{'s' if n != 1 else ''} readable")
 
     # Check plate dimensions
     width, depth = cfg.plate.size
+    plate_ok = True
     if width < 50 or depth < 50:
         warnings.append(
             f"plate.size [{width}, {depth}] seems very small — most beds are at least 100mm"
         )
+        plate_ok = False
     if width > 1000 or depth > 1000:
         warnings.append(f"plate.size [{width}, {depth}] seems very large — check units are in mm")
+        plate_ok = False
+    if plate_ok:
+        passes.append(f"Plate size {width:.0f}×{depth:.0f}mm")
 
     # Check pipeline stages
+    stages_ok = True
     for stage in cfg.pipeline.stages:
         if stage not in STAGE_OUTPUTS:
             warnings.append(f"pipeline stage '{stage}' is unknown")
+            stages_ok = False
 
     # Check pipeline stage ordering
     stage_order = list(STAGE_OUTPUTS.keys())
@@ -223,9 +268,13 @@ def validate_config(path: Path) -> list[str]:
                     f"pipeline stage '{stage}' is out of order — expected after "
                     f"'{stage_order[prev_idx]}'"
                 )
+                stages_ok = False
             prev_idx = idx
 
-    return warnings
+    if stages_ok:
+        passes.append(f"Pipeline: {' → '.join(cfg.pipeline.stages)}")
+
+    return ValidationResult(passes=passes, warnings=warnings)
 
 
 def _closest_match(name: str, candidates: list[str]) -> str | None:
