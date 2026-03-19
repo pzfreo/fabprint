@@ -299,76 +299,11 @@ def _detect_orca_version() -> str | None:
     return None
 
 
-_FILTER_THRESHOLD = 10  # show search prompt when list exceeds this size
-
-
 def _prompt_choice(prompt: str, options: list[str], allow_multi: bool = False) -> list[int]:
-    """Show a numbered list and return selected indices.
-
-    For long lists (>20 items), prompts user to type a search term first,
-    then shows only matching entries.
-    """
+    """Interactive picker — delegates to ``ui.pick``."""
     from fabprint import ui
 
-    filtered = options
-    filter_indices = list(range(len(options)))
-
-    if len(options) > _FILTER_THRESHOLD:
-        filtered, filter_indices = _search_filter(options)
-
-    ui.choice_table([(o,) for o in filtered], ["Name"])
-
-    while True:
-        raw = ui.prompt_str(prompt)
-        if not raw:
-            continue
-        # Allow re-searching from the selection prompt
-        if not raw[0].isdigit() and raw.lower() != "all":
-            filtered, filter_indices = _search_filter(options, raw)
-            ui.choice_table([(o,) for o in filtered], ["Name"])
-            continue
-        if allow_multi and raw.lower() == "all":
-            return list(filter_indices)
-        try:
-            if allow_multi:
-                picks = [int(x.strip()) - 1 for x in raw.split(",")]
-            else:
-                picks = [int(raw) - 1]
-            if all(0 <= p < len(filtered) for p in picks):
-                return [filter_indices[p] for p in picks]
-        except ValueError:
-            pass
-        hint = " (comma-separated, 'all', or type to search)" if allow_multi else ""
-        if not allow_multi and len(options) > _FILTER_THRESHOLD:
-            hint = " or type to search"
-        ui.console.print(f"  Enter a number 1-{len(filtered)}{hint}")
-
-
-def _search_filter(options: list[str], query: str | None = None) -> tuple[list[str], list[int]]:
-    """Prompt for a search term and return matching options with original indices."""
-    from fabprint import ui
-
-    while True:
-        if query is None:
-            # Show first few examples so the user can see the naming format
-            preview = options[:10]
-            for ex in preview:
-                ui.console.print(f"    [dim]{ex}[/dim]")
-            if len(options) > len(preview):
-                ui.console.print(f"    [dim]... and {len(options) - len(preview)} more[/dim]")
-            query = ui.prompt_str(f"Search ({len(options)} available, type to filter)")
-        if not query:
-            query = None
-            continue
-        q = query.lower()
-        matches = [(i, o) for i, o in enumerate(options) if q in o.lower()]
-        if matches:
-            ui.info(f"{len(matches)} match(es) for '{query}':")
-            indices = [i for i, _ in matches]
-            names = [o for _, o in matches]
-            return names, indices
-        ui.warn(f"No matches for '{query}'. Try again.")
-        query = None
+    return ui.pick(options, prompt=prompt, allow_multi=allow_multi)
 
 
 def _prompt_str(prompt: str, default: str | None = None) -> str:
