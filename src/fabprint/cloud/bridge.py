@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from fabprint import require_file
@@ -32,6 +33,40 @@ BRIDGE_TIMEOUT = 300
 BRIDGE_STATUS_TIMEOUT = 60
 BRIDGE_TASK_LIST_TIMEOUT = 30
 BRIDGE_CANCEL_TIMEOUT = 30
+
+# Docker pull staleness: only pull if last pull was more than 24h ago.
+# Override with FABPRINT_DOCKER_PULL=always|never|auto (default: auto).
+_PULL_INTERVAL_SECONDS = 86400
+_PULL_TS_PATH = Path.home() / ".cache" / "fabprint" / "cloud-bridge-pull-ts"
+
+
+def _should_pull_image() -> bool:
+    """Return True if the Docker image should be pulled.
+
+    Checks the FABPRINT_DOCKER_PULL env var (always/never/auto) and,
+    in auto mode, a timestamp file to avoid pulling more than once
+    per ``_PULL_INTERVAL_SECONDS``.
+    """
+    mode = os.environ.get("FABPRINT_DOCKER_PULL", "auto").lower()
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    # auto: check timestamp
+    try:
+        ts = float(_PULL_TS_PATH.read_text().strip())
+        return (time.time() - ts) >= _PULL_INTERVAL_SECONDS
+    except (FileNotFoundError, ValueError):
+        return True
+
+
+def _record_pull() -> None:
+    """Record the current time as the last successful pull timestamp."""
+    try:
+        _PULL_TS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _PULL_TS_PATH.write_text(str(time.time()))
+    except OSError:
+        pass  # best-effort; don't break the print workflow
 
 
 def _find_bridge() -> str | None:
@@ -86,15 +121,21 @@ def _run_bridge(
                 "Install Docker Desktop from https://www.docker.com/products/docker-desktop/"
             ) from None
 
-        # Pull latest image quietly — only log on actual update.
-        pull = subprocess.run(
-            ["docker", "pull", DOCKER_IMAGE],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if pull.returncode == 0 and "Downloaded newer image" in pull.stdout:
-            log.info("Updated Docker image %s", DOCKER_IMAGE)
+        # Pull image if stale (default: once per 24h). Override with
+        # FABPRINT_DOCKER_PULL=always|never|auto.
+        if _should_pull_image():
+            pull = subprocess.run(
+                ["docker", "pull", DOCKER_IMAGE],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if pull.returncode == 0:
+                _record_pull()
+                if "Downloaded newer image" in pull.stdout:
+                    log.info("Updated Docker image %s", DOCKER_IMAGE)
+            else:
+                log.debug("Docker pull failed (will use cached image): %s", pull.stderr.strip())
 
         # Mount each input file individually using its realpath.
         # Directory mounts on macOS/Docker Desktop have persistent symlink and

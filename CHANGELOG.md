@@ -2,6 +2,11 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.112 — 2026-03-19
+
+- Skip redundant `docker pull` for cloud-bridge image (pull once per 24h instead of every invocation)
+- Add `FABPRINT_DOCKER_PULL` env var override (always/never/auto)
+
 ## 0.1.111 — 2026-03-19
 
 - Add tests for PersistentBridge (container lifecycle, status, timeout, token mount)
