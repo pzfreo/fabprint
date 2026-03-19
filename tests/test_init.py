@@ -174,6 +174,86 @@ file = "{_posix(abs_path.resolve())}"
             main(["validate"])
         assert exc_info.value.code == 1
 
+    def test_missing_part_file_hard_error(self, tmp_path):
+        """Missing part file is a hard error from load_config, not a warning."""
+        from fabprint import FabprintError
+
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text("""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[[parts]]
+file = "nonexistent.stl"
+""")
+        with pytest.raises(FabprintError, match="file not found"):
+            validate_config(toml)
+
+    def test_unreadable_part_extension(self, tmp_path):
+        bad_file = tmp_path / "model.zip"
+        bad_file.write_bytes(b"fake")
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text(f"""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[[parts]]
+file = "{_posix(bad_file)}"
+""")
+        warnings = validate_config(toml)
+        assert any("unsupported extension" in w for w in warnings)
+
+    def test_duplicate_part_files(self, tmp_path):
+        stl = FIXTURES / "cube_10mm.stl"
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text(f"""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[[parts]]
+file = "{_posix(stl)}"
+
+[[parts]]
+file = "{_posix(stl)}"
+""")
+        warnings = validate_config(toml)
+        assert any("appears more than once" in w for w in warnings)
+
+    def test_small_plate_warning(self, tmp_path):
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text(f"""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[plate]
+size = [10, 10]
+
+[[parts]]
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
+""")
+        warnings = validate_config(toml)
+        assert any("seems very small" in w for w in warnings)
+
+    def test_large_plate_warning(self, tmp_path):
+        toml = tmp_path / "fabprint.toml"
+        toml.write_text(f"""
+[slicer]
+engine = "orca"
+version = "2.3.1"
+
+[plate]
+size = [2000, 2000]
+
+[[parts]]
+file = "{_posix(FIXTURES / "cube_10mm.stl")}"
+""")
+        warnings = validate_config(toml)
+        assert any("seems very large" in w for w in warnings)
+
     def test_printer_name_no_credentials(self, tmp_path):
         toml = tmp_path / "fabprint.toml"
         toml.write_text(f"""

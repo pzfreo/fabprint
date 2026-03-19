@@ -11,6 +11,7 @@ All notable changes to fabprint are documented here.
 - Mask verification code and 2FA code input
 - Add slicer override picker to `fabprint init` — choose common settings like infill, supports, seam position with value pickers
 - Slicer version picker fetches available Docker image versions from DockerHub instead of free text input
+- Enhanced `fabprint validate`: check part file readability, file extensions, duplicate parts, plate size sanity, and pipeline stage ordering
 
 ## 0.1.94 — 2026-03-19
 

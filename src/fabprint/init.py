@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Union
@@ -172,10 +173,57 @@ def validate_config(path: Path) -> list[str]:
                 f"parts[{i}].file is an absolute path — consider making it relative for portability"
             )
 
+    # Check part files: readability, extension, duplicates
+    # (existence and orient are already hard errors in load_config)
+    _SUPPORTED_EXTENSIONS = {".stl", ".3mf", ".step", ".stp", ".obj"}
+    seen_files: set[str] = set()
+    for i, part in enumerate(cfg.parts):
+        part_path = part.file
+
+        # Check readability (file exists at this point — load_config validated that)
+        if not os.access(part_path, os.R_OK):
+            warnings.append(f"parts[{i}].file '{part_path}' is not readable")
+
+        # Check file extension
+        ext = part_path.suffix.lower()
+        if ext and ext not in _SUPPORTED_EXTENSIONS:
+            warnings.append(
+                f"parts[{i}].file has unsupported extension '{ext}' "
+                f"— expected one of {sorted(_SUPPORTED_EXTENSIONS)}"
+            )
+
+        # Check for duplicate files
+        canon = str(part_path)
+        if canon in seen_files:
+            warnings.append(f"parts[{i}].file '{part_path.name}' appears more than once")
+        seen_files.add(canon)
+
+    # Check plate dimensions
+    width, depth = cfg.plate.size
+    if width < 50 or depth < 50:
+        warnings.append(
+            f"plate.size [{width}, {depth}] seems very small — most beds are at least 100mm"
+        )
+    if width > 1000 or depth > 1000:
+        warnings.append(f"plate.size [{width}, {depth}] seems very large — check units are in mm")
+
     # Check pipeline stages
     for stage in cfg.pipeline.stages:
         if stage not in STAGE_OUTPUTS:
             warnings.append(f"pipeline stage '{stage}' is unknown")
+
+    # Check pipeline stage ordering
+    stage_order = list(STAGE_OUTPUTS.keys())
+    prev_idx = -1
+    for stage in cfg.pipeline.stages:
+        if stage in stage_order:
+            idx = stage_order.index(stage)
+            if idx < prev_idx:
+                warnings.append(
+                    f"pipeline stage '{stage}' is out of order — expected after "
+                    f"'{stage_order[prev_idx]}'"
+                )
+            prev_idx = idx
 
     return warnings
 
