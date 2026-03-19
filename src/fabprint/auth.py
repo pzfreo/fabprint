@@ -55,9 +55,10 @@ def _login(email: str, password: str) -> tuple[str, str]:
     login_type = data.get("loginType", "")
 
     # Step 2: Handle verification code flow
+    # Note: Bambu API auto-sends a code when loginType == "verifyCode",
+    # so we do NOT call _request_verification_code() here (that would send a second code).
     if not token and login_type == "verifyCode":
-        _request_verification_code(email)
-
+        ui.success(f"Verification code sent to {email}")
         code = ui.prompt_password("Enter verification code")
         resp = requests.post(
             f"{API_BASE}/v1/user-service/user/login",
