@@ -136,8 +136,10 @@ def _build_picker_display(
 ) -> Text:
     """Build the Rich renderable for the live picker.
 
-    Returns a single Text object so Rich Live can accurately calculate
-    the number of lines to overwrite on each refresh.
+    Always produces exactly ``_MAX_VISIBLE + 2`` lines so that Rich Live's
+    cursor-up count is constant across refreshes.  Variable height causes
+    Rich to miscalculate how many lines to overwrite, resulting in duplicate
+    or side-by-side rendering.
     """
     lines: list[str] = []
 
@@ -147,13 +149,20 @@ def _build_picker_display(
         label = _highlight_match(name, query) if query else escape(name)
         lines.append(f"  [dim]{i:>4}[/dim]  {label}")
 
+    # Pad to fixed height so Rich Live cursor math is always correct
+    while len(lines) < _MAX_VISIBLE:
+        lines.append("")
+
+    # Status line (always exactly 1 line)
     if len(filtered) > _MAX_VISIBLE:
         remaining = len(filtered) - _MAX_VISIBLE
         lines.append(f"  [dim]... and {remaining} more (keep typing to narrow)[/dim]")
     elif not filtered:
         lines.append("  [dim]No matches — keep typing or backspace[/dim]")
+    else:
+        lines.append("")
 
-    # Status / input line
+    # Prompt line (always exactly 1 line)
     multi_hint = " [dim](comma-sep, 'all')[/dim]" if allow_multi else ""
     lines.append(f"  [bold]{prompt}>[/bold] {escape(query)}[blink]▌[/blink]{multi_hint}")
 

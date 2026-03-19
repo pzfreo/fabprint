@@ -299,6 +299,23 @@ class TestBuildPickerDisplay:
         out = buf.getvalue()
         assert "Alpha" in out  # match is still visible
 
+    def test_constant_height(self):
+        """Output must always have the same number of lines regardless of item count."""
+        from fabprint.ui import _MAX_VISIBLE
+
+        expected = _MAX_VISIBLE + 2  # items + status + prompt
+
+        few = _build_picker_display(["A", "B"], "", "Pick", False, 2)
+        many = _build_picker_display([f"item{i}" for i in range(30)], "", "Pick", False, 30)
+        none = _build_picker_display([], "xyz", "Pick", False, 5)
+
+        for renderable in (few, many, none):
+            buf = StringIO()
+            c = Console(file=buf, highlight=False, width=120)
+            c.print(renderable, end="")
+            line_count = buf.getvalue().count("\n") + 1
+            assert line_count == expected, f"Expected {expected} lines, got {line_count}"
+
 
 # ---------------------------------------------------------------------------
 # _try_select
