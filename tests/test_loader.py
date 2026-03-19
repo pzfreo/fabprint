@@ -192,3 +192,230 @@ def test_load_3mf_objects_with_transform(tmp_path):
     objects = load_3mf_objects(path)
     center_x = (objects[0][1].bounds[0][0] + objects[0][1].bounds[1][0]) / 2
     assert abs(center_x - 50.0) < 0.1
+
+
+# --- Additional tests for improved coverage ---
+
+
+class TestLoadMeshSceneAndErrors:
+    """Test load_mesh with Scene (multiple geometries) and non-Trimesh error."""
+
+    def test_multi_geometry_3mf_merged(self, tmp_path):
+        """A 3MF with multiple geometries is merged into a single Trimesh."""
+        path = tmp_path / "multi_geom.3mf"
+        box1 = trimesh.creation.box(extents=[10, 10, 10])
+        box2 = trimesh.creation.box(extents=[5, 5, 5])
+        box2.apply_translation([20, 0, 0])
+        scene = trimesh.Scene()
+        scene.add_geometry(box1, node_name="box1")
+        scene.add_geometry(box2, node_name="box2")
+        scene.export(str(path))
+
+        mesh = load_mesh(path)
+        assert isinstance(mesh, trimesh.Trimesh)
+        # Merged mesh should span from box1 to box2
+        assert mesh.extents[0] > 15.0  # at least wide enough for both
+
+    def test_empty_scene_raises(self, tmp_path, monkeypatch):
+        """A 3MF that loads as an empty Scene raises ValueError."""
+        path = tmp_path / "empty.3mf"
+        path.write_bytes(b"dummy")  # file must exist for the existence check
+
+        # Mock trimesh.load to return an empty Scene
+        monkeypatch.setattr("trimesh.load", lambda *a, **kw: trimesh.Scene())
+
+        with pytest.raises(ValueError, match="No geometry found"):
+            load_mesh(path)
+
+    def test_step_extension_without_build123d(self, tmp_path, monkeypatch):
+        """STEP files raise ImportError when build123d is not installed."""
+        path = tmp_path / "model.step"
+        path.write_text("dummy step content")
+
+        # Mock the import to fail
+        import builtins
+
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "build123d":
+                raise ImportError("No module named 'build123d'")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", mock_import)
+
+        with pytest.raises(ImportError, match="build123d is required"):
+            load_mesh(path)
+
+
+class TestExtractPaintColorsEdgeCases:
+    """Test extract_paint_colors with non-3MF and edge cases."""
+
+    def test_non_3mf_returns_none(self):
+        """Non-3MF files return None."""
+        assert extract_paint_colors(Path("/tmp/model.stl")) is None
+        assert extract_paint_colors(Path("/tmp/model.obj")) is None
+
+    def test_bad_zip_returns_none(self, tmp_path):
+        """A corrupted 3MF file returns None."""
+        path = tmp_path / "corrupt.3mf"
+        path.write_bytes(b"not a zip file at all")
+        assert extract_paint_colors(path) is None
+
+    def test_3mf_without_model_files(self, tmp_path):
+        """A 3MF zip without model XML files returns None."""
+        path = tmp_path / "nomodel.3mf"
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("readme.txt", "no model here")
+        assert extract_paint_colors(path) is None
+
+
+class TestLoad3mfObjectsEdgeCases:
+    """Test load_3mf_objects with mesh_elem None, missing obj_id, build is None."""
+
+    def test_object_without_mesh_skipped(self, tmp_path):
+        """Objects without a mesh element are skipped."""
+        ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+        ET.register_namespace("", ns)
+
+        model = ET.Element(f"{{{ns}}}model", attrib={"unit": "millimeter"})
+        resources = ET.SubElement(model, f"{{{ns}}}resources")
+        build = ET.SubElement(model, f"{{{ns}}}build")
+
+        # Object 1: no mesh element (should be skipped)
+        ET.SubElement(resources, f"{{{ns}}}object", id="1", name="no_mesh", type="model")
+
+        # Object 2: valid mesh
+        box = trimesh.creation.box(extents=[10, 10, 10])
+        obj2 = ET.SubElement(resources, f"{{{ns}}}object", id="2", name="valid", type="model")
+        mesh_elem = ET.SubElement(obj2, f"{{{ns}}}mesh")
+        verts_elem = ET.SubElement(mesh_elem, f"{{{ns}}}vertices")
+        for v in box.vertices:
+            ET.SubElement(verts_elem, f"{{{ns}}}vertex", x=str(v[0]), y=str(v[1]), z=str(v[2]))
+        tris_elem = ET.SubElement(mesh_elem, f"{{{ns}}}triangles")
+        for f in box.faces:
+            ET.SubElement(tris_elem, f"{{{ns}}}triangle", v1=str(f[0]), v2=str(f[1]), v3=str(f[2]))
+
+        # Only object 2 in build
+        ET.SubElement(build, f"{{{ns}}}item", objectid="2")
+
+        path = tmp_path / "skip_nomesh.3mf"
+        xml_str = ET.tostring(model, encoding="unicode", xml_declaration=True)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("3D/3dmodel.model", xml_str)
+
+        objects = load_3mf_objects(path)
+        assert len(objects) == 1
+        assert objects[0][0] == "valid"
+
+    def test_build_item_missing_obj_id_skipped(self, tmp_path):
+        """Build items referencing non-existent object IDs are skipped."""
+        ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+        ET.register_namespace("", ns)
+
+        model = ET.Element(f"{{{ns}}}model", attrib={"unit": "millimeter"})
+        resources = ET.SubElement(model, f"{{{ns}}}resources")
+        build = ET.SubElement(model, f"{{{ns}}}build")
+
+        box = trimesh.creation.box(extents=[10, 10, 10])
+        obj = ET.SubElement(resources, f"{{{ns}}}object", id="1", name="box", type="model")
+        mesh_elem = ET.SubElement(obj, f"{{{ns}}}mesh")
+        verts_elem = ET.SubElement(mesh_elem, f"{{{ns}}}vertices")
+        for v in box.vertices:
+            ET.SubElement(verts_elem, f"{{{ns}}}vertex", x=str(v[0]), y=str(v[1]), z=str(v[2]))
+        tris_elem = ET.SubElement(mesh_elem, f"{{{ns}}}triangles")
+        for f in box.faces:
+            ET.SubElement(tris_elem, f"{{{ns}}}triangle", v1=str(f[0]), v2=str(f[1]), v3=str(f[2]))
+
+        # Build references obj 1 (exists) and obj 99 (doesn't exist)
+        ET.SubElement(build, f"{{{ns}}}item", objectid="1")
+        ET.SubElement(build, f"{{{ns}}}item", objectid="99")
+
+        path = tmp_path / "missing_ref.3mf"
+        xml_str = ET.tostring(model, encoding="unicode", xml_declaration=True)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("3D/3dmodel.model", xml_str)
+
+        objects = load_3mf_objects(path)
+        assert len(objects) == 1
+        assert objects[0][0] == "box"
+
+    def test_no_build_section_uses_all_objects(self, tmp_path):
+        """When build section is absent, all parsed objects are returned."""
+        ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+        ET.register_namespace("", ns)
+
+        model = ET.Element(f"{{{ns}}}model", attrib={"unit": "millimeter"})
+        resources = ET.SubElement(model, f"{{{ns}}}resources")
+        # No <build> element
+
+        for i, (name, extents) in enumerate([("a", [10, 10, 10]), ("b", [5, 5, 5])], 1):
+            box = trimesh.creation.box(extents=extents)
+            obj = ET.SubElement(resources, f"{{{ns}}}object", id=str(i), name=name, type="model")
+            mesh_elem = ET.SubElement(obj, f"{{{ns}}}mesh")
+            verts_elem = ET.SubElement(mesh_elem, f"{{{ns}}}vertices")
+            for v in box.vertices:
+                ET.SubElement(verts_elem, f"{{{ns}}}vertex", x=str(v[0]), y=str(v[1]), z=str(v[2]))
+            tris_elem = ET.SubElement(mesh_elem, f"{{{ns}}}triangles")
+            for f in box.faces:
+                ET.SubElement(
+                    tris_elem, f"{{{ns}}}triangle", v1=str(f[0]), v2=str(f[1]), v3=str(f[2])
+                )
+
+        path = tmp_path / "no_build.3mf"
+        xml_str = ET.tostring(model, encoding="unicode", xml_declaration=True)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("3D/3dmodel.model", xml_str)
+
+        objects = load_3mf_objects(path)
+        assert len(objects) == 2
+        names = [n for n, _ in objects]
+        assert "a" in names
+        assert "b" in names
+
+    def test_no_objects_at_all_raises(self, tmp_path):
+        """A 3MF with no mesh objects raises ValueError."""
+        ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+        ET.register_namespace("", ns)
+
+        model = ET.Element(f"{{{ns}}}model", attrib={"unit": "millimeter"})
+        ET.SubElement(model, f"{{{ns}}}resources")
+        ET.SubElement(model, f"{{{ns}}}build")
+
+        path = tmp_path / "empty_objects.3mf"
+        xml_str = ET.tostring(model, encoding="unicode", xml_declaration=True)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("3D/3dmodel.model", xml_str)
+
+        with pytest.raises(ValueError, match="No mesh objects found"):
+            load_3mf_objects(path)
+
+    def test_object_default_name(self, tmp_path):
+        """Objects without a name attribute get a default name."""
+        ns = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+        ET.register_namespace("", ns)
+
+        model = ET.Element(f"{{{ns}}}model", attrib={"unit": "millimeter"})
+        resources = ET.SubElement(model, f"{{{ns}}}resources")
+        build = ET.SubElement(model, f"{{{ns}}}build")
+
+        box = trimesh.creation.box(extents=[10, 10, 10])
+        # No name attribute on the object
+        obj = ET.SubElement(resources, f"{{{ns}}}object", id="7", type="model")
+        mesh_elem = ET.SubElement(obj, f"{{{ns}}}mesh")
+        verts_elem = ET.SubElement(mesh_elem, f"{{{ns}}}vertices")
+        for v in box.vertices:
+            ET.SubElement(verts_elem, f"{{{ns}}}vertex", x=str(v[0]), y=str(v[1]), z=str(v[2]))
+        tris_elem = ET.SubElement(mesh_elem, f"{{{ns}}}triangles")
+        for f in box.faces:
+            ET.SubElement(tris_elem, f"{{{ns}}}triangle", v1=str(f[0]), v2=str(f[1]), v3=str(f[2]))
+        ET.SubElement(build, f"{{{ns}}}item", objectid="7")
+
+        path = tmp_path / "noname.3mf"
+        xml_str = ET.tostring(model, encoding="unicode", xml_declaration=True)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("3D/3dmodel.model", xml_str)
+
+        objects = load_3mf_objects(path)
+        assert len(objects) == 1
+        assert objects[0][0] == "object_7"

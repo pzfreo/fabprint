@@ -14,6 +14,7 @@ All notable changes to fabprint are documented here.
 - Extract `_resolve_filaments()` helper from `load_config()` for readability
 - Split `run_wizard()` into 6 focused step functions
 - Add `PrinterCredentials` TypedDict for structured credential returns
+- Improve test coverage from 60% to 69%: new tests for auth, adapters, ui, cli, pipeline, credentials, loader
 
 ## 0.1.95 — 2026-03-19
 

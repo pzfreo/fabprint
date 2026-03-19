@@ -256,3 +256,170 @@ class TestCloudTokenJson:
         with pytest.raises(FabprintError, match="No cloud credentials"):
             with cloud_token_json():
                 pass
+
+    def test_cleanup_on_exception(self, tmp_path, monkeypatch):
+        """Temp file is cleaned up even if an exception occurs inside the context."""
+        cred_path = tmp_path / "credentials.toml"
+        cred_path.write_text(
+            '[cloud]\ntoken = "tok"\nrefresh_token = "ref"\nemail = "a@b.com"\nuid = "1"\n'
+        )
+        monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
+
+        temp_path = None
+        with pytest.raises(RuntimeError):
+            with cloud_token_json() as path:
+                temp_path = path
+                assert path.exists()
+                raise RuntimeError("deliberate error")
+
+        assert temp_path is not None
+        assert not temp_path.exists()
+
+    def test_file_permissions(self, tmp_path, monkeypatch):
+        """Temp JSON file should have 0o600 permissions."""
+        cred_path = tmp_path / "credentials.toml"
+        cred_path.write_text(
+            '[cloud]\ntoken = "tok"\nrefresh_token = "ref"\nemail = "a@b.com"\nuid = "1"\n'
+        )
+        monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
+
+        if sys.platform != "win32":
+            with cloud_token_json() as path:
+                assert path.stat().st_mode & 0o777 == 0o600
+
+
+class TestCredentialsPath:
+    def test_env_var_override(self, tmp_path, monkeypatch):
+        """FABPRINT_CREDENTIALS env var overrides default path."""
+        from fabprint.credentials import _credentials_path
+
+        custom_path = tmp_path / "custom_creds.toml"
+        monkeypatch.setenv("FABPRINT_CREDENTIALS", str(custom_path))
+        assert _credentials_path() == custom_path
+
+    def test_windows_path(self, monkeypatch):
+        """On Windows, credentials go to AppData/Roaming."""
+        from fabprint.credentials import _credentials_path
+
+        monkeypatch.delenv("FABPRINT_CREDENTIALS", raising=False)
+        monkeypatch.setattr("sys.platform", "win32")
+        path = _credentials_path()
+        assert "AppData" in str(path) or "Roaming" in str(path)
+
+    def test_linux_path(self, monkeypatch):
+        """On Linux, credentials go to .config/fabprint."""
+        from fabprint.credentials import _credentials_path
+
+        monkeypatch.delenv("FABPRINT_CREDENTIALS", raising=False)
+        monkeypatch.setattr("sys.platform", "linux")
+        path = _credentials_path()
+        assert ".config/fabprint" in str(path)
+
+
+class TestLoadPrinterCredentials:
+    def test_env_var_overrides(self, tmp_path, monkeypatch):
+        """Environment variables override file credentials."""
+        from fabprint.credentials import load_printer_credentials
+
+        cred_path = tmp_path / "credentials.toml"
+        cred_path.write_text(
+            '[printers.test]\ntype = "bambu-lan"\nip = "10.0.0.1"\n'
+            'access_code = "filecode"\nserial = "FILESERIAL"\n'
+        )
+        monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
+        monkeypatch.setenv("BAMBU_PRINTER_IP", "192.168.1.99")
+        monkeypatch.setenv("BAMBU_ACCESS_CODE", "envcode")
+        monkeypatch.setenv("BAMBU_SERIAL", "ENVSERIAL")
+
+        creds = load_printer_credentials("test")
+        assert creds["ip"] == "192.168.1.99"
+        assert creds["access_code"] == "envcode"
+        assert creds["serial"] == "ENVSERIAL"
+        assert creds["type"] == "bambu-lan"
+
+    def test_no_name_returns_env_only(self, monkeypatch):
+        """With name=None, only env vars are returned."""
+        from fabprint.credentials import load_printer_credentials
+
+        monkeypatch.setenv("BAMBU_PRINTER_IP", "1.2.3.4")
+        monkeypatch.setenv("BAMBU_ACCESS_CODE", "code")
+        monkeypatch.setenv("BAMBU_SERIAL", "SN123")
+
+        creds = load_printer_credentials(None)
+        assert creds["ip"] == "1.2.3.4"
+        assert creds["access_code"] == "code"
+        assert creds["serial"] == "SN123"
+        assert creds["type"] is None
+
+    def test_missing_credentials_file_raises(self, tmp_path, monkeypatch):
+        """Raises FabprintError when credentials file doesn't exist."""
+        from fabprint import FabprintError
+        from fabprint.credentials import load_printer_credentials
+
+        cred_path = tmp_path / "nonexistent" / "credentials.toml"
+        monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
+
+        with pytest.raises(FabprintError, match="Credentials file not found"):
+            load_printer_credentials("myprinter")
+
+    def test_printer_not_in_file_raises(self, tmp_path, monkeypatch):
+        """Raises FabprintError when named printer isn't in the file."""
+        from fabprint import FabprintError
+        from fabprint.credentials import load_printer_credentials
+
+        cred_path = tmp_path / "credentials.toml"
+        cred_path.write_text('[printers.workshop]\ntype = "bambu-lan"\nip = "10.0.0.1"\n')
+        monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
+
+        with pytest.raises(FabprintError, match="Printer 'missing' not found"):
+            load_printer_credentials("missing")
+
+
+class TestMaskSerialEdgeCases:
+    def test_empty_string(self):
+        assert mask_serial("") == ""
+
+    def test_one_char(self):
+        assert mask_serial("X") == "X"
+
+    def test_three_chars(self):
+        assert mask_serial("ABC") == "ABC"
+
+    def test_eight_chars(self):
+        assert mask_serial("12345678") == "****5678"
+
+
+class TestSetupPrinterBambuCloud:
+    def test_bambu_cloud_without_login(self, tmp_path, monkeypatch):
+        """Bambu cloud setup with no existing token and user skips login."""
+        cred_path = tmp_path / "credentials.toml"
+        monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
+
+        # name, type=2 (bambu-cloud), skip login (n), serial
+        _mock_ui_inputs(monkeypatch, ["cloudprinter", "2", "n", "SN_CLOUD_001"])
+        # Mock _pick_cloud_printer to return None (no token)
+        monkeypatch.setattr("fabprint.credentials._pick_cloud_printer", lambda cloud: None)
+
+        setup_printer()
+
+        assert cred_path.exists()
+        with open(cred_path, "rb") as f:
+            data = tomllib.load(f)
+        assert data["printers"]["cloudprinter"]["type"] == "bambu-cloud"
+        assert data["printers"]["cloudprinter"]["serial"] == "SN_CLOUD_001"
+
+    def test_moonraker_no_api_key(self, tmp_path, monkeypatch):
+        """Moonraker setup without optional api_key."""
+        cred_path = tmp_path / "credentials.toml"
+        monkeypatch.setattr("fabprint.credentials._credentials_path", lambda: cred_path)
+
+        # name, type=3 (moonraker), url, api_key empty (optional)
+        _mock_ui_inputs(monkeypatch, ["klipper", "3", "http://klipper.local:7125", ""])
+
+        setup_printer()
+
+        with open(cred_path, "rb") as f:
+            data = tomllib.load(f)
+        assert data["printers"]["klipper"]["type"] == "moonraker"
+        assert data["printers"]["klipper"]["url"] == "http://klipper.local:7125"
+        assert "api_key" not in data["printers"]["klipper"]
