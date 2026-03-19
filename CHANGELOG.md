@@ -15,6 +15,8 @@ All notable changes to fabprint are documented here.
 - Split `run_wizard()` into 6 focused step functions
 - Add `PrinterCredentials` TypedDict for structured credential returns
 - Improve test coverage from 60% to 69%: new tests for auth, adapters, ui, cli, pipeline, credentials, loader
+- Split `cloud.py` (1180 lines) into `cloud/` package: `bridge.py`, `http.py`, `ams.py` with backward-compatible re-exports
+- Extract thumbnail rendering from `slicer.py` into new `thumbnails.py` module
 
 ## 0.1.95 — 2026-03-19
 
