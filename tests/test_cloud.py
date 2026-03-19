@@ -14,7 +14,9 @@ from fabprint.cloud import (
     _build_ams_mapping,
     _build_ams_mapping_from_state,
     _find_bridge,
+    _record_pull,
     _run_bridge,
+    _should_pull_image,
     cloud_cancel,
     cloud_print,
     cloud_status,
@@ -317,31 +319,159 @@ class TestPersistentBridge:
 # ---------------------------------------------------------------------------
 
 
+class TestShouldPullImage:
+    """Tests for the _should_pull_image / _record_pull staleness logic."""
+
+    def test_returns_true_when_no_timestamp(self, tmp_path, monkeypatch):
+        """First run (no timestamp file) should trigger a pull."""
+        ts_path = tmp_path / "cloud-bridge-pull-ts"
+        monkeypatch.setattr("fabprint.cloud.bridge._PULL_TS_PATH", ts_path)
+        monkeypatch.delenv("FABPRINT_DOCKER_PULL", raising=False)
+        assert _should_pull_image() is True
+
+    def test_returns_false_when_recent(self, tmp_path, monkeypatch):
+        """Recent pull (< 24h) should skip."""
+        import time
+
+        ts_path = tmp_path / "cloud-bridge-pull-ts"
+        ts_path.write_text(str(time.time() - 60))  # 1 minute ago
+        monkeypatch.setattr("fabprint.cloud.bridge._PULL_TS_PATH", ts_path)
+        monkeypatch.delenv("FABPRINT_DOCKER_PULL", raising=False)
+        assert _should_pull_image() is False
+
+    def test_returns_true_when_stale(self, tmp_path, monkeypatch):
+        """Stale pull (> 24h) should trigger a new pull."""
+        import time
+
+        ts_path = tmp_path / "cloud-bridge-pull-ts"
+        ts_path.write_text(str(time.time() - 90000))  # >24h ago
+        monkeypatch.setattr("fabprint.cloud.bridge._PULL_TS_PATH", ts_path)
+        monkeypatch.delenv("FABPRINT_DOCKER_PULL", raising=False)
+        assert _should_pull_image() is True
+
+    def test_returns_true_when_corrupt_timestamp(self, tmp_path, monkeypatch):
+        """Corrupt timestamp file should trigger a pull."""
+        ts_path = tmp_path / "cloud-bridge-pull-ts"
+        ts_path.write_text("not-a-number")
+        monkeypatch.setattr("fabprint.cloud.bridge._PULL_TS_PATH", ts_path)
+        monkeypatch.delenv("FABPRINT_DOCKER_PULL", raising=False)
+        assert _should_pull_image() is True
+
+    def test_env_always_forces_pull(self, tmp_path, monkeypatch):
+        """FABPRINT_DOCKER_PULL=always should always pull."""
+        import time
+
+        ts_path = tmp_path / "cloud-bridge-pull-ts"
+        ts_path.write_text(str(time.time()))  # just pulled
+        monkeypatch.setattr("fabprint.cloud.bridge._PULL_TS_PATH", ts_path)
+        monkeypatch.setenv("FABPRINT_DOCKER_PULL", "always")
+        assert _should_pull_image() is True
+
+    def test_env_never_skips_pull(self, monkeypatch):
+        """FABPRINT_DOCKER_PULL=never should never pull."""
+        monkeypatch.setenv("FABPRINT_DOCKER_PULL", "never")
+        assert _should_pull_image() is False
+
+    def test_env_auto_is_default(self, tmp_path, monkeypatch):
+        """Unset env var defaults to auto (timestamp-based)."""
+        import time
+
+        ts_path = tmp_path / "cloud-bridge-pull-ts"
+        ts_path.write_text(str(time.time()))  # just pulled
+        monkeypatch.setattr("fabprint.cloud.bridge._PULL_TS_PATH", ts_path)
+        monkeypatch.delenv("FABPRINT_DOCKER_PULL", raising=False)
+        assert _should_pull_image() is False
+
+
+class TestRecordPull:
+    """Tests for _record_pull timestamp writing."""
+
+    def test_creates_timestamp_file(self, tmp_path, monkeypatch):
+        ts_path = tmp_path / "subdir" / "cloud-bridge-pull-ts"
+        monkeypatch.setattr("fabprint.cloud.bridge._PULL_TS_PATH", ts_path)
+        _record_pull()
+        assert ts_path.exists()
+        val = float(ts_path.read_text().strip())
+        import time
+
+        assert time.time() - val < 5
+
+    def test_overwrites_existing(self, tmp_path, monkeypatch):
+        ts_path = tmp_path / "cloud-bridge-pull-ts"
+        ts_path.write_text("0")
+        monkeypatch.setattr("fabprint.cloud.bridge._PULL_TS_PATH", ts_path)
+        _record_pull()
+        val = float(ts_path.read_text().strip())
+        assert val > 1000  # not zero anymore
+
+
 class TestRunBridgeDockerPull:
-    """Tests for _run_bridge Docker image pull behaviour.
+    """Tests for _run_bridge Docker image pull behaviour."""
 
-    These test the current always-pull behaviour and will serve as
-    regression tests when we add pull staleness optimisation.
-    """
-
-    def test_pulls_image_when_using_docker(self):
-        """When bridge not found, _run_bridge should use Docker and pull the image."""
+    def test_pulls_image_when_stale(self):
+        """When image is stale, _run_bridge should pull."""
         mock_docker_info = MagicMock(returncode=0)
-        mock_pull = MagicMock(returncode=0, stdout="Status: Image is up to date", stderr="")
-        mock_run_result = MagicMock(returncode=0, stdout='{"result":"ok"}', stderr="")
-
+        mock_pull = MagicMock(
+            returncode=0,
+            stdout="Status: Image is up to date",
+            stderr="",
+        )
+        mock_run_result = MagicMock(
+            returncode=0,
+            stdout='{"result":"ok"}',
+            stderr="",
+        )
         results = [mock_docker_info, mock_pull, mock_run_result]
 
         with (
             patch("fabprint.cloud.bridge._find_bridge", return_value=None),
             patch("platform.system", return_value="Linux"),
-            patch("fabprint.cloud.bridge.subprocess.run", side_effect=results) as mock_run,
+            patch(
+                "fabprint.cloud.bridge._should_pull_image",
+                return_value=True,
+            ),
+            patch("fabprint.cloud.bridge._record_pull"),
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                side_effect=results,
+            ) as mock_run,
         ):
             _run_bridge(["status", "DEV123", "/tmp/tok.json"])
 
             # Second call should be the pull
             pull_cmd = mock_run.call_args_list[1][0][0]
             assert pull_cmd == ["docker", "pull", "fabprint/cloud-bridge"]
+
+    def test_skips_pull_when_recent(self):
+        """When image was recently pulled, skip the pull."""
+        mock_docker_info = MagicMock(returncode=0)
+        mock_run_result = MagicMock(
+            returncode=0,
+            stdout='{"result":"ok"}',
+            stderr="",
+        )
+        # Only 2 calls: docker info + docker run (no pull)
+        results = [mock_docker_info, mock_run_result]
+
+        with (
+            patch("fabprint.cloud.bridge._find_bridge", return_value=None),
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "fabprint.cloud.bridge._should_pull_image",
+                return_value=False,
+            ),
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                side_effect=results,
+            ) as mock_run,
+        ):
+            _run_bridge(["status", "DEV123", "/tmp/tok.json"])
+
+            # Should only have 2 subprocess calls (no pull)
+            assert len(mock_run.call_args_list) == 2
+            cmds = [c[0][0][0] for c in mock_run.call_args_list]
+            assert "docker" in cmds[0]  # docker info
+            assert "docker" in cmds[1]  # docker run
 
     def test_pull_failure_still_runs_container(self):
         """If docker pull fails, _run_bridge should still attempt to run."""
@@ -363,6 +493,11 @@ class TestRunBridgeDockerPull:
             patch("fabprint.cloud.bridge._find_bridge", return_value=None),
             patch("platform.system", return_value="Linux"),
             patch(
+                "fabprint.cloud.bridge._should_pull_image",
+                return_value=True,
+            ),
+            patch("fabprint.cloud.bridge._record_pull"),
+            patch(
                 "fabprint.cloud.bridge.subprocess.run",
                 side_effect=results,
             ),
@@ -370,19 +505,84 @@ class TestRunBridgeDockerPull:
             result = _run_bridge(["status", "DEV123", "/tmp/tok.json"])
             assert result.stdout == '{"result":"ok"}'
 
+    def test_records_pull_on_success(self):
+        """Successful pull should record timestamp."""
+        mock_docker_info = MagicMock(returncode=0)
+        mock_pull = MagicMock(
+            returncode=0,
+            stdout="Up to date",
+            stderr="",
+        )
+        mock_run_result = MagicMock(
+            returncode=0,
+            stdout='{"result":"ok"}',
+            stderr="",
+        )
+        results = [mock_docker_info, mock_pull, mock_run_result]
+
+        with (
+            patch("fabprint.cloud.bridge._find_bridge", return_value=None),
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "fabprint.cloud.bridge._should_pull_image",
+                return_value=True,
+            ),
+            patch(
+                "fabprint.cloud.bridge._record_pull",
+            ) as mock_record,
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                side_effect=results,
+            ),
+        ):
+            _run_bridge(["status", "DEV123", "/tmp/tok.json"])
+            mock_record.assert_called_once()
+
+    def test_does_not_record_pull_on_failure(self):
+        """Failed pull should not record timestamp."""
+        mock_docker_info = MagicMock(returncode=0)
+        mock_pull = MagicMock(
+            returncode=1,
+            stdout="Error",
+            stderr="fail",
+        )
+        mock_run_result = MagicMock(
+            returncode=0,
+            stdout='{"result":"ok"}',
+            stderr="",
+        )
+        results = [mock_docker_info, mock_pull, mock_run_result]
+
+        with (
+            patch("fabprint.cloud.bridge._find_bridge", return_value=None),
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "fabprint.cloud.bridge._should_pull_image",
+                return_value=True,
+            ),
+            patch(
+                "fabprint.cloud.bridge._record_pull",
+            ) as mock_record,
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                side_effect=results,
+            ),
+        ):
+            _run_bridge(["status", "DEV123", "/tmp/tok.json"])
+            mock_record.assert_not_called()
+
     def test_always_uses_docker_on_macos(self, tmp_path):
         """On macOS, _run_bridge must use Docker even with local bridge."""
         bridge = tmp_path / "bambu_cloud_bridge"
         bridge.write_text("#!/bin/sh\n")
 
         mock_docker_info = MagicMock(returncode=0)
-        mock_pull = MagicMock(returncode=0, stdout="", stderr="")
         mock_run_result = MagicMock(
             returncode=0,
             stdout='{"result":"ok"}',
             stderr="",
         )
-        side = [mock_docker_info, mock_pull, mock_run_result]
+        side = [mock_docker_info, mock_run_result]
 
         with (
             patch(
@@ -390,6 +590,10 @@ class TestRunBridgeDockerPull:
                 return_value=str(bridge),
             ),
             patch("platform.system", return_value="Darwin"),
+            patch(
+                "fabprint.cloud.bridge._should_pull_image",
+                return_value=False,
+            ),
             patch(
                 "fabprint.cloud.bridge.subprocess.run",
                 side_effect=side,
@@ -399,7 +603,8 @@ class TestRunBridgeDockerPull:
                 ["print", "/tmp/file.3mf", "DEV123", "/tmp/tok.json"],
             )
 
-            run_cmd = mock_run.call_args_list[2][0][0]
+            # Last call should be docker run
+            run_cmd = mock_run.call_args_list[-1][0][0]
             assert run_cmd[0] == "docker"
             assert "fabprint/cloud-bridge" in run_cmd
 
@@ -453,13 +658,12 @@ class TestRunBridgeDockerPull:
         token.write_text('{"token":"x"}')
 
         mock_docker_info = MagicMock(returncode=0)
-        mock_pull = MagicMock(returncode=0, stdout="", stderr="")
         mock_run_result = MagicMock(
             returncode=0,
             stdout='{"result":"ok"}',
             stderr="",
         )
-        side = [mock_docker_info, mock_pull, mock_run_result]
+        side = [mock_docker_info, mock_run_result]
 
         with (
             patch(
@@ -467,6 +671,10 @@ class TestRunBridgeDockerPull:
                 return_value=None,
             ),
             patch("platform.system", return_value="Linux"),
+            patch(
+                "fabprint.cloud.bridge._should_pull_image",
+                return_value=False,
+            ),
             patch(
                 "fabprint.cloud.bridge.subprocess.run",
                 side_effect=side,
@@ -476,7 +684,7 @@ class TestRunBridgeDockerPull:
                 ["print", str(threemf), "DEV123", str(token)],
             )
 
-            run_cmd = mock_run.call_args_list[2][0][0]
+            run_cmd = mock_run.call_args_list[-1][0][0]
             v_indices = [i for i, arg in enumerate(run_cmd) if arg == "-v"]
             assert len(v_indices) == 2
             for idx in v_indices:
