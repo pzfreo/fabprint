@@ -113,29 +113,6 @@ def _gather_inputs(
     }
 
 
-def _display_results(result: dict) -> None:
-    """Print human-readable output from pipeline results."""
-    if "part_summary" in result:
-        print(result["part_summary"])
-    if "plate_3mf_path" in result:
-        print(f"Plate exported to {result['plate_3mf_path']}")
-    if "preview_path" in result:
-        print(f"Preview: {result['preview_path']}")
-    if "sliced_output_dir" in result:
-        print(f"Sliced gcode in {result['sliced_output_dir']}")
-    if "gcode_stats" in result:
-        stats = result["gcode_stats"]
-        parts = []
-        if "filament_g" in stats:
-            parts.append(f"{stats['filament_g']:.1f}g filament")
-        elif "filament_cm3" in stats:
-            parts.append(f"{stats['filament_cm3']:.1f}cm3 filament")
-        if "print_time" in stats:
-            parts.append(f"estimated {stats['print_time']}")
-        if parts:
-            print(f"  {', '.join(parts)}")
-
-
 # ---------------------------------------------------------------------------
 # Version callback (top-level)
 # ---------------------------------------------------------------------------
