@@ -32,6 +32,21 @@ jobs:
       - run: uv sync --extra dev
       - run: uv run pytest -v
 
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --extra dev
+      - run: uv run pytest --cov=fabprint --cov-report=xml -v
+      - uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: false
+
   build-bridge:
     runs-on: ubuntu-latest
     steps:
