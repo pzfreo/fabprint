@@ -2,9 +2,11 @@
 # Build and optionally push fabprint Docker images.
 #
 # Usage:
-#   ./scripts/build-docker.sh slicer 2.3.1       # build slicer image
+#   ./scripts/build-docker.sh orca-base 2.3.1       # build orca-base image
+#   ./scripts/build-docker.sh orca-base 2.3.1 --push
+#   ./scripts/build-docker.sh slicer 2.3.1           # build slicer image
 #   ./scripts/build-docker.sh slicer 2.3.1 --push
-#   ./scripts/build-docker.sh cloud-bridge        # build cloud bridge image
+#   ./scripts/build-docker.sh cloud-bridge           # build cloud bridge image
 #   ./scripts/build-docker.sh cloud-bridge --push
 #
 # Legacy (slicer only):
@@ -13,9 +15,33 @@
 
 set -euo pipefail
 
-TARGET="${1:?Usage: $0 <slicer|cloud-bridge|orca-version> [version] [--push]}"
+TARGET="${1:?Usage: $0 <orca-base|slicer|cloud-bridge|orca-version> [version] [--push]}"
 
 case "$TARGET" in
+    orca-base)
+        VERSION="${2:?Usage: $0 orca-base <orca-version> [--push]}"
+        PUSH="${3:-}"
+        IMAGE="fabprint/orca-base:${VERSION}"
+
+        echo "Building ${IMAGE} ..."
+        docker build \
+            --platform linux/amd64 \
+            -f Dockerfile.orca-base \
+            --build-arg "ORCA_VERSION=${VERSION}" \
+            -t "${IMAGE}" \
+            .
+
+        echo "Tagging as fabprint/orca-base:latest ..."
+        docker tag "${IMAGE}" fabprint/orca-base:latest
+        echo "Build complete: ${IMAGE}"
+
+        if [ "${PUSH}" = "--push" ]; then
+            docker push "${IMAGE}"
+            docker push fabprint/orca-base:latest
+            echo "Pushed."
+        fi
+        ;;
+
     slicer)
         VERSION="${2:?Usage: $0 slicer <orca-version> [--push]}"
         PUSH="${3:-}"

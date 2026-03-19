@@ -2,6 +2,13 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.114 — 2026-03-19
+
+- Split OrcaSlicer into a separate base image (`fabprint/orca-base`) for faster code-only rebuilds
+- Main `fabprint/fabprint` image now layers on top of pre-built base (~10s vs ~3-5min rebuild)
+- CI auto-publishes orca-base when `Dockerfile.orca-base` changes
+- Build script: `./scripts/build-docker.sh orca-base 2.3.1`
+
 ## 0.1.113 — 2026-03-19
 
 - Faster Docker rebuilds: split dependency and source layers in Orca Dockerfile

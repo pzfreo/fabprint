@@ -1,0 +1,58 @@
+# Base image: OrcaSlicer + runtime deps
+#
+# Rebuild only when OrcaSlicer version changes. The main Dockerfile
+# (fabprint/fabprint) layers on top of this for fast code-only rebuilds.
+#
+# Usage:
+#   docker build -f Dockerfile.orca-base --build-arg ORCA_VERSION=2.3.1 \
+#     -t fabprint/orca-base:2.3.1 .
+
+# ---------------------------------------------------------------------------
+# Stage 1: Extract OrcaSlicer from AppImage (x86_64 only)
+# ---------------------------------------------------------------------------
+FROM --platform=linux/amd64 ubuntu:24.04 AS orca
+
+ARG ORCA_VERSION=2.3.1
+
+WORKDIR /tmp
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+RUN curl -fSL -o orca.AppImage \
+        "https://github.com/SoftFever/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage" \
+    && chmod +x orca.AppImage \
+    && ./orca.AppImage --appimage-extract \
+    && mv squashfs-root /opt/orca-slicer \
+    && rm orca.AppImage
+
+# ---------------------------------------------------------------------------
+# Stage 2: Runtime image with OrcaSlicer + system deps
+# ---------------------------------------------------------------------------
+FROM --platform=linux/amd64 ubuntu:24.04
+
+ARG ORCA_VERSION=2.3.1
+LABEL org.opencontainers.image.description="OrcaSlicer ${ORCA_VERSION} base image for fabprint"
+LABEL fabprint.orca-version="${ORCA_VERSION}"
+
+# OrcaSlicer runtime deps (needed even for CLI — links GTK/GL at startup)
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libgl1-mesa-dri libegl1 \
+        libgtk-3-0 \
+        libwebkit2gtk-4.1-0 \
+        libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
+        xvfb \
+        ca-certificates
+
+# Copy extracted OrcaSlicer
+COPY --from=orca /opt/orca-slicer /opt/orca-slicer
+RUN ln -s /opt/orca-slicer/bin/orca-slicer /usr/bin/orca-slicer
+
+# Wire up system profiles so fabprint can discover them
+# fabprint looks at ~/.config/OrcaSlicer/system/BBL on Linux
+ENV HOME=/home/fabprint
+RUN useradd -m -d /home/fabprint fabprint \
+    && mkdir -p /home/fabprint/.config/OrcaSlicer/system \
+    && ln -s /opt/orca-slicer/resources/profiles/BBL \
+             /home/fabprint/.config/OrcaSlicer/system/BBL

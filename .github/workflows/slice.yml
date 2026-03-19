@@ -18,6 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Pull or build orca-base image
+        run: |
+          docker pull fabprint/orca-base:${{ inputs.orca_version }} 2>/dev/null \
+            || docker build --platform linux/amd64 \
+              -f Dockerfile.orca-base \
+              --build-arg ORCA_VERSION=${{ inputs.orca_version }} \
+              -t fabprint/orca-base:${{ inputs.orca_version }} .
+
       - name: Build fabprint image
         run: |
           docker build \
