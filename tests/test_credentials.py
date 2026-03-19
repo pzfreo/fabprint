@@ -313,7 +313,7 @@ class TestCredentialsPath:
         monkeypatch.delenv("FABPRINT_CREDENTIALS", raising=False)
         monkeypatch.setattr("sys.platform", "linux")
         path = _credentials_path()
-        assert ".config/fabprint" in str(path)
+        assert ".config" in path.parts and "fabprint" in path.parts
 
 
 class TestLoadPrinterCredentials:
