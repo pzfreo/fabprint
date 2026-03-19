@@ -7,6 +7,8 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from fabprint import require_file
+
 # Number of lines to scan from the start/end of gcode for metadata
 GCODE_HEADER_LINES = 300
 GCODE_TAIL_LINES = 50
@@ -97,8 +99,7 @@ class GcodeInfo:
 def read_gcode(path: Path) -> str:
     """Read gcode from a .gcode file or from inside a .gcode.3mf zip."""
     path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
+    require_file(path, "Gcode file")
 
     if path.suffix == ".3mf" or path.name.endswith(".gcode.3mf"):
         with zipfile.ZipFile(path, "r") as zf:

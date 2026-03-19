@@ -20,8 +20,12 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hamilton.lifecycle import NodeExecutionHook
+
+if TYPE_CHECKING:
+    from rich.status import Status
 
 log = logging.getLogger(__name__)
 
@@ -93,11 +97,10 @@ class ProgressAdapter(NodeExecutionHook):
 
     def __init__(self) -> None:
         from rich.console import Console
-        from rich.status import Status as _Status  # noqa: F401 — imported for type
 
         self._console = Console(highlight=False)
         self._starts: dict[str, float] = {}
-        self._status: _Status | None = None
+        self._status: Status | None = None
         self._slice_version: str | None = None
 
     # ------------------------------------------------------------------

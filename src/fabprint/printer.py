@@ -276,7 +276,7 @@ def _send_cloud_bridge(
                     "Wait for current job to finish or cancel it first."
                 )
             if gcode_state:
-                print(f"  Printer ready (state: {gcode_state})")
+                log.info("Printer ready (state: %s)", gcode_state)
             ams_trays = parse_ams_trays(status)
             if ams_trays:
                 log.debug(

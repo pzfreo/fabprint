@@ -58,7 +58,7 @@ class TestFindBridge:
     def test_not_found(self, monkeypatch):
         monkeypatch.delenv("BAMBU_BRIDGE_PATH", raising=False)
         # Mock which to return None
-        with patch("fabprint.cloud.shutil.which", return_value=None):
+        with patch("fabprint.cloud.bridge.shutil.which", return_value=None):
             # It should check common paths too; none will exist
             result = _find_bridge()
             # Could be None or a valid path if bridge exists locally
@@ -83,7 +83,7 @@ class TestCloudPrint:
         mock_result.stderr = ""
         mock_result.returncode = 0
 
-        with patch("fabprint.cloud._run_bridge", return_value=mock_result):
+        with patch("fabprint.cloud.bridge._run_bridge", return_value=mock_result):
             result = cloud_print(threemf_file, "DEV123", token_file)
             assert result["result"] == "success"
             assert result["return_code"] == 0
@@ -94,7 +94,7 @@ class TestCloudPrint:
         mock_result.stderr = "error details"
         mock_result.returncode = 1
 
-        with patch("fabprint.cloud._run_bridge", return_value=mock_result):
+        with patch("fabprint.cloud.bridge._run_bridge", return_value=mock_result):
             with pytest.raises(RuntimeError, match="non-JSON"):
                 cloud_print(threemf_file, "DEV123", token_file)
 
@@ -108,7 +108,7 @@ class TestCloudPrint:
         )
         mock_result.stderr = ""
 
-        with patch("fabprint.cloud._run_bridge", return_value=mock_result) as mock_run:
+        with patch("fabprint.cloud.bridge._run_bridge", return_value=mock_result) as mock_run:
             cloud_print(threemf_file, "DEV", token_file, config_3mf=config)
             args = mock_run.call_args[0][0]
             assert "--config-3mf" in args
@@ -124,7 +124,7 @@ class TestCloudStatus:
         mock_result.stdout = '{"print":{"gcode_state":"IDLE","bed_temper":22.5}}'
         mock_result.returncode = 0
 
-        with patch("fabprint.cloud._run_bridge", return_value=mock_result):
+        with patch("fabprint.cloud.bridge._run_bridge", return_value=mock_result):
             status = cloud_status("DEV123", token_file)
             assert status["gcode_state"] == "IDLE"
             assert status["bed_temper"] == 22.5
@@ -134,7 +134,7 @@ class TestCloudStatus:
         mock_result.stdout = ""
         mock_result.returncode = 2
 
-        with patch("fabprint.cloud._run_bridge", return_value=mock_result):
+        with patch("fabprint.cloud.bridge._run_bridge", return_value=mock_result):
             with pytest.raises(RuntimeError, match="No status"):
                 cloud_status("DEV123", token_file)
 
@@ -149,7 +149,7 @@ class TestCloudTasks:
         mock_result.stdout = '{"total":2,"hits":[{"id":1,"title":"job1"},{"id":2,"title":"job2"}]}'
         mock_result.returncode = 0
 
-        with patch("fabprint.cloud._run_bridge", return_value=mock_result):
+        with patch("fabprint.cloud.bridge._run_bridge", return_value=mock_result):
             tasks = cloud_tasks(token_file, limit=5)
             assert len(tasks) == 2
             assert tasks[0]["title"] == "job1"
@@ -165,7 +165,7 @@ class TestCloudCancel:
         mock_result.stdout = '{"command":"stop","device_id":"DEV123","sent":true}'
         mock_result.returncode = 0
 
-        with patch("fabprint.cloud._run_bridge", return_value=mock_result):
+        with patch("fabprint.cloud.bridge._run_bridge", return_value=mock_result):
             result = cloud_cancel("DEV123", token_file)
             assert result["sent"] is True
             assert result["device_id"] == "DEV123"

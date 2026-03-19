@@ -3,14 +3,29 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import tempfile
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
+from typing import TypedDict
 
 from fabprint import FabprintError
+
+log = logging.getLogger(__name__)
+
+
+class PrinterCredentials(TypedDict):
+    """Credentials for a configured printer."""
+
+    type: str | None
+    ip: str | None
+    access_code: str | None
+    serial: str | None
+    url: str | None
+    api_key: str | None
 
 
 def mask_serial(serial: str) -> str:
@@ -85,7 +100,7 @@ def _write_credentials(data: dict) -> None:
     path.chmod(0o600)
 
 
-def load_printer_credentials(name: str | None) -> dict[str, str | None]:
+def load_printer_credentials(name: str | None) -> PrinterCredentials:
     """Load credentials for a named printer.
 
     Resolution order for each field:
@@ -111,14 +126,14 @@ def load_printer_credentials(name: str | None) -> dict[str, str | None]:
             raise FabprintError(f"Printer '{name}' not found in {path}. Available: {available}")
         file_creds = printers[name]
 
-    return {
-        "type": file_creds.get("type"),
-        "ip": os.environ.get("BAMBU_PRINTER_IP", file_creds.get("ip")),
-        "access_code": os.environ.get("BAMBU_ACCESS_CODE", file_creds.get("access_code")),
-        "serial": os.environ.get("BAMBU_SERIAL", file_creds.get("serial")),
-        "url": file_creds.get("url"),
-        "api_key": file_creds.get("api_key"),
-    }
+    return PrinterCredentials(
+        type=file_creds.get("type"),
+        ip=os.environ.get("BAMBU_PRINTER_IP", file_creds.get("ip")),
+        access_code=os.environ.get("BAMBU_ACCESS_CODE", file_creds.get("access_code")),
+        serial=os.environ.get("BAMBU_SERIAL", file_creds.get("serial")),
+        url=file_creds.get("url"),
+        api_key=file_creds.get("api_key"),
+    )
 
 
 def list_printers() -> dict[str, dict[str, str]]:
@@ -301,6 +316,7 @@ def _pick_cloud_printer(cloud: dict | None) -> str | None:
 
         devices = _get_devices(cloud["token"])
     except Exception:
+        log.debug("Failed to get cloud printer list", exc_info=True)
         return None
     if not devices:
         return None

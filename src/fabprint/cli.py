@@ -3,7 +3,7 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import click
 import typer
@@ -21,6 +21,28 @@ app = typer.Typer(
 
 profiles_app = typer.Typer(help="List or pin slicer profiles.")
 app.add_typer(profiles_app, name="profiles")
+
+# Bambu printer stage IDs → human-readable labels
+_PRINT_STAGES: dict[str, str] = {
+    "0": "printing",
+    "1": "auto bed leveling",
+    "2": "heatbed preheating",
+    "3": "sweeping XY mech mode",
+    "4": "changing filament",
+    "5": "M400 pause",
+    "6": "filament runout pause",
+    "7": "heating hotend",
+    "8": "calibrating extrusion",
+    "9": "scanning bed surface",
+    "10": "inspecting first layer",
+    "11": "identifying build plate type",
+    "12": "calibrating micro lidar",
+    "13": "homing toolhead",
+    "14": "cleaning nozzle tip",
+    "17": "calibrating extrusion flow",
+    "18": "vibration compensation",
+    "19": "motor noise calibration",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +63,7 @@ def _setup_logging(verbose: bool) -> None:
     )
 
 
-def _resolve_config_path(config: Optional[Path]) -> Path:
+def _resolve_config_path(config: Path | None) -> Path:
     """Resolve config path, defaulting to ./fabprint.toml."""
     if config is not None:
         return config
@@ -86,10 +108,10 @@ def _gather_inputs(
     config: Path,
     output_dir: Path,
     output_3mf: Path,
-    scale: Optional[float],
+    scale: float | None,
     local: bool,
-    docker_version: Optional[str],
-    filament_type: Optional[str],
+    docker_version: str | None,
+    filament_type: str | None,
     filament_slot: int,
     dry_run: bool,
     upload_only: bool,
@@ -134,30 +156,30 @@ def _app_callback(
 
 @app.command()
 def run(
-    config: Annotated[Optional[Path], typer.Argument(help="Path to config file")] = None,
+    config: Annotated[Path | None, typer.Argument(help="Path to config file")] = None,
     output_dir: Annotated[
-        Optional[Path], typer.Option("-o", "--output-dir", help="Output directory")
+        Path | None, typer.Option("-o", "--output-dir", help="Output directory")
     ] = None,
     until: Annotated[
-        Optional[str], typer.Option(help="Run pipeline up to and including this stage")
+        str | None, typer.Option(help="Run pipeline up to and including this stage")
     ] = None,
     only: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(help="Run only this stage (fail if required artifacts don't exist)"),
     ] = None,
     scale: Annotated[
-        Optional[float],
+        float | None,
         typer.Option(help="Scale all parts by this factor (multiplies per-part scale)"),
     ] = None,
     local: Annotated[
         bool, typer.Option("--local", help="Force local slicer (fail if not installed)")
     ] = False,
     docker_version: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(help="Use a specific OrcaSlicer Docker image version (e.g. 2.3.1)"),
     ] = None,
     filament_type: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(help="Override filament profile name (e.g. 'Generic PLA @base')"),
     ] = None,
     filament_slot: Annotated[int, typer.Option(help="AMS slot for --filament-type")] = 1,
@@ -206,18 +228,18 @@ def run(
 
 @app.command()
 def watch(
-    config: Annotated[Optional[Path], typer.Argument(help="Path to config file")] = None,
+    config: Annotated[Path | None, typer.Argument(help="Path to config file")] = None,
     output_dir: Annotated[
-        Optional[Path], typer.Option("-o", "--output-dir", help="Output directory")
+        Path | None, typer.Option("-o", "--output-dir", help="Output directory")
     ] = None,
     until: Annotated[
-        Optional[str], typer.Option(help="Run pipeline up to and including this stage")
+        str | None, typer.Option(help="Run pipeline up to and including this stage")
     ] = None,
     local: Annotated[
         bool, typer.Option("--local", help="Force local slicer (fail if not installed)")
     ] = False,
     docker_version: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(help="Use a specific OrcaSlicer Docker image version"),
     ] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
@@ -331,7 +353,7 @@ def init(
         bool, typer.Option("--template", help="Dump a commented template to stdout (no wizard)")
     ] = False,
     output: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("-o", "--output", help="Output file path (default: ./fabprint.toml)"),
     ] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
@@ -348,7 +370,7 @@ def init(
 
 @app.command()
 def validate(
-    config: Annotated[Optional[Path], typer.Argument(help="Path to config file")] = None,
+    config: Annotated[Path | None, typer.Argument(help="Path to config file")] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
 ) -> None:
     """Check a fabprint.toml for issues."""
@@ -388,7 +410,7 @@ def setup(
 
 
 def _resolve_status_printers(
-    printer_name: Optional[str], serial: Optional[str], list_printers_fn, load_creds_fn
+    printer_name: str | None, serial: str | None, list_printers_fn, load_creds_fn
 ):
     """Build list of (name, creds) tuples for status/watch commands."""
     if printer_name:
@@ -443,27 +465,6 @@ def _query_printer_status(name: str, creds: dict) -> dict:
 def _render_printer(status: dict, name: str, serial: str) -> list[str]:
     """Render a single printer's status as lines of text."""
     from fabprint.cloud import parse_ams_trays
-
-    _PRINT_STAGES = {
-        "0": "printing",
-        "1": "auto bed leveling",
-        "2": "heatbed preheating",
-        "3": "sweeping XY mech mode",
-        "4": "changing filament",
-        "5": "M400 pause",
-        "6": "filament runout pause",
-        "7": "heating hotend",
-        "8": "calibrating extrusion",
-        "9": "scanning bed surface",
-        "10": "inspecting first layer",
-        "11": "identifying build plate type",
-        "12": "calibrating micro lidar",
-        "13": "homing toolhead",
-        "14": "cleaning nozzle tip",
-        "17": "calibrating extrusion flow",
-        "18": "vibration compensation",
-        "19": "motor noise calibration",
-    }
 
     lines: list[str] = []
     state = status.get("gcode_state", "unknown")
@@ -532,11 +533,9 @@ def _render_printer(status: dict, name: str, serial: str) -> list[str]:
 
 @app.command()
 def status(
-    printer: Annotated[
-        Optional[str], typer.Option(help="Printer name from credentials.toml")
-    ] = None,
+    printer: Annotated[str | None, typer.Option(help="Printer name from credentials.toml")] = None,
     serial: Annotated[
-        Optional[str], typer.Option(help="Bambu printer serial (cloud only, legacy)")
+        str | None, typer.Option(help="Bambu printer serial (cloud only, legacy)")
     ] = None,
     watch: Annotated[bool, typer.Option("-w", "--watch", help="Live dashboard mode")] = False,
     interval: Annotated[int, typer.Option(help="Refresh interval in seconds (with --watch)")] = 10,
@@ -624,7 +623,7 @@ def status(
 def profiles_list(
     engine: Annotated[str, typer.Option(help="Slicer engine")] = "orca",
     category: Annotated[
-        Optional[str], typer.Option(help="Filter by category (machine, process, filament)")
+        str | None, typer.Option(help="Filter by category (machine, process, filament)")
     ] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
 ) -> None:
@@ -643,7 +642,7 @@ def profiles_list(
 
 @profiles_app.command("pin")
 def profiles_pin(
-    config: Annotated[Optional[Path], typer.Argument(help="Path to config file")] = None,
+    config: Annotated[Path | None, typer.Argument(help="Path to config file")] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
 ) -> None:
     """Pin profiles from config into local profiles/ dir.
@@ -672,11 +671,11 @@ def profiles_pin(
 def profiles_add(
     source: Annotated[str, typer.Argument(help="Local file path or URL to a profile JSON")],
     category: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(help="Profile category (machine/process/filament). Auto-detected if omitted."),
     ] = None,
     name: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(help="Profile name (default: filename or JSON 'name' field)"),
     ] = None,
     verbose: Annotated[bool, typer.Option("-v", "--verbose", help="Enable debug logging")] = False,
