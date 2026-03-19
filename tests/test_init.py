@@ -543,6 +543,7 @@ class TestWizard:
                 "256",  # plate depth
                 "",  # slicer version (skip)
                 "n",  # Configure printer connection? -> no
+                "my-project",  # Project name
                 "y",  # Write to fabprint.toml?
             ],
         )
@@ -561,6 +562,7 @@ class TestWizard:
         result = run_wizard()
         assert "[slicer]" in result
         assert "test-part.stl" in result
+        assert 'name = "my-project"' in result
         assert (tmp_path / "fabprint.toml").exists()
 
     def test_wizard_no_write(self, tmp_path, monkeypatch):
@@ -582,6 +584,7 @@ class TestWizard:
                 "256",  # plate depth
                 "",  # slicer version (skip)
                 "n",  # Configure printer connection? -> no
+                "",  # Project name (use default)
                 "n",  # Write?
             ],
         )

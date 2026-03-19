@@ -887,8 +887,13 @@ def run_wizard(output: Path | None = None) -> str:
     # --- Step 10: Printer connection ---
     printer_name = _wizard_pick_printer(stages)
 
+    # --- Project name ---
+    default_name = Path.cwd().name
+    project_name = ui.prompt_str("Project name", default=default_name) or default_name
+
     # --- Build TOML ---
     toml = _build_toml(
+        project_name=project_name,
         engine=engine,
         printer_profile=printer_profile,
         process_profile=process_profile,
@@ -922,6 +927,7 @@ def run_wizard(output: Path | None = None) -> str:
 
 def _build_toml(
     *,
+    project_name: str | None = None,
     engine: str,
     printer_profile: str | None,
     process_profile: str | None,
@@ -935,6 +941,11 @@ def _build_toml(
 ) -> str:
     """Build a TOML string from wizard answers."""
     lines: list[str] = []
+
+    # Project name
+    if project_name:
+        lines.append(f'name = "{project_name}"')
+        lines.append("")
 
     # Pipeline
     stage_list = ", ".join(f'"{s}"' for s in stages)
