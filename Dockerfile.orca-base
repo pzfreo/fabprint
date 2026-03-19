@@ -15,8 +15,8 @@ FROM --platform=linux/amd64 ubuntu:24.04 AS orca
 ARG ORCA_VERSION=2.3.1
 
 WORKDIR /tmp
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=cache,id=apt-orca,target=/var/cache/apt \
+    --mount=type=cache,id=apt-orca,target=/var/lib/apt/lists \
     apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
 RUN curl -fSL -o orca.AppImage \
         "https://github.com/SoftFever/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage" \
@@ -35,8 +35,8 @@ LABEL org.opencontainers.image.description="OrcaSlicer ${ORCA_VERSION} base imag
 LABEL fabprint.orca-version="${ORCA_VERSION}"
 
 # OrcaSlicer runtime deps (needed even for CLI — links GTK/GL at startup)
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=cache,id=apt-runtime,target=/var/cache/apt \
+    --mount=type=cache,id=apt-runtime,target=/var/lib/apt/lists \
     apt-get update && apt-get install -y --no-install-recommends \
         libgl1 libgl1-mesa-dri libegl1 \
         libgtk-3-0 \
