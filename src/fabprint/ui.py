@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.markup import escape
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
@@ -132,32 +132,28 @@ def _build_picker_display(
     prompt: str,
     allow_multi: bool,
     total: int,
-) -> Table:
+) -> Group:
     """Build the Rich renderable for the live picker."""
-    outer = Table.grid(padding=(0, 0), expand=False)
+    parts: list[str] = []
 
-    # Options table
-    table = Table(show_header=False, box=None, padding=(0, 2), expand=False)
-    table.add_column("#", style="dim", width=4, justify="right")
-    table.add_column("Name", no_wrap=True, overflow="ellipsis")
+    # Options list — one line per item, plain Text objects
     visible = filtered[:_MAX_VISIBLE]
     for i, name in enumerate(visible, 1):
         label = _highlight_match(name, query) if query else escape(name)
-        table.add_row(str(i), label)
-    outer.add_row(table)
+        parts.append(f"  [dim]{i:>4}[/dim]  {label}")
 
     if len(filtered) > _MAX_VISIBLE:
         remaining = len(filtered) - _MAX_VISIBLE
-        outer.add_row(f"  [dim]... and {remaining} more (keep typing to narrow)[/dim]")
+        parts.append(f"  [dim]... and {remaining} more (keep typing to narrow)[/dim]")
     elif not filtered:
-        outer.add_row("  [dim]No matches — keep typing or backspace[/dim]")
+        parts.append("  [dim]No matches — keep typing or backspace[/dim]")
 
     # Status / input line
     multi_hint = " [dim](comma-sep, 'all')[/dim]" if allow_multi else ""
     cursor = f"  [bold]{prompt}>[/bold] {escape(query)}[blink]▌[/blink]{multi_hint}"
-    outer.add_row(cursor)
+    parts.append(cursor)
 
-    return outer
+    return Group(*parts)
 
 
 def _readkey() -> str:
