@@ -285,75 +285,32 @@ Minutes on code-only rebuilds (base image pull ~30s vs rebuild ~3-5 min).
 
 ---
 
-## 6. Expand PersistentBridge usage for multi-step workflows
+## ~~6. Expand PersistentBridge usage for multi-step workflows~~ — SKIPPED
 
-**Problem:** The `fabprint run` command may call `_run_bridge()` multiple times
-(print, then status polling). Each call currently starts a new `docker run`,
-paying container startup + image pull overhead each time.
-
-**Fix:** Use `PersistentBridge` context manager for multi-command workflows.
-
-### Steps
-
-1. In `src/fabprint/printer.py` (or the `run` command handler), wrap the
-   cloud print + status polling sequence in a `PersistentBridge` context:
-   ```python
-   with PersistentBridge(token_file) as bridge:
-       result = bridge.print(threemf, device_id, ...)
-       while not done:
-           status = bridge.status(device_id)
-           ...
-   ```
-
-2. Add a `print()` method to `PersistentBridge` (currently only has `status()`):
-   - Uses `docker exec` on the persistent container instead of `docker run`.
-   - Accepts the same args as `cloud_print()`.
-
-3. Add a `cancel()` method for completeness.
-
-### Tests (PersistentBridge already covered)
-
-- `TestPersistentBridge::test_enter_creates_container`
-- `TestPersistentBridge::test_exit_removes_container`
-- `TestPersistentBridge::test_status_runs_docker_exec`
-- `TestPersistentBridge::test_status_timeout_raises`
-- `TestPersistentBridge::test_status_non_json_raises`
-- `TestPersistentBridge::test_token_file_mounted_readonly`
-
-### New tests to add
-
-- `test_print_runs_docker_exec` — verify `docker exec` with print args
-- `test_cancel_runs_docker_exec` — verify `docker exec` with cancel args
-- `test_multi_command_reuses_container` — print then status on same container
-
-### Estimated savings
-
-2-5 seconds per follow-up bridge call (avoids container startup overhead).
+Decided not to pursue. The 2-3s container startup savings per call isn't worth
+the added complexity for typical usage patterns.
 
 ---
 
 ## Implementation order
 
-| Phase | Change | Risk | Effort |
-|-------|--------|------|--------|
-| 1 | Skip redundant pull (#1) | Low | Small |
-| 2 | Split dep layer (#2) + cache mounts (#3) | Low | Small |
-| 3 | Multi-stage cloud-bridge (#4) | Low | Small |
-| 4 | OrcaSlicer base image (#5) | Medium | Medium |
-| 5 | PersistentBridge expansion (#6) | Medium | Medium |
-
-Phases 1-3 are independent and can be done in any order or in parallel.
-Phases 4-5 are larger and should be done after 1-3 are validated.
+| Phase | Change | Risk | Effort | Status |
+|-------|--------|------|--------|--------|
+| 1 | Skip redundant pull (#1) | Low | Small | Done (PR #159) |
+| 2 | Split dep layer (#2) + cache mounts (#3) | Low | Small | Done (PR #160) |
+| 3 | Multi-stage cloud-bridge (#4) | Low | Small | Done (PR #160) |
+| 4 | OrcaSlicer base image (#5) | Medium | Medium | Done (PRs #161, #162, #163) |
+| 5 | PersistentBridge expansion (#6) | Medium | Medium | Skipped — not worth the complexity |
 
 ---
 
 ## Test coverage summary
 
-| Area | Existing tests | New tests needed |
-|------|---------------|-----------------|
-| Pull staleness (#1) | 2 (pull + graceful fail) | 4 (stale, recent, env overrides) |
-| Dep layer split (#2) | CI integration | 0 (Dockerfile only) |
-| Cache mounts (#3) | CI integration | 0 (Dockerfile only) |
-| Multi-stage bridge (#4) | 7 (_run_bridge) | 1 (CI smoke test) |
-| Base image (#5) | 3 (Docker CLI integration) | 0 |
-| PersistentBridge (#6) | 8 (enter/exit/status) | 3 (print/cancel/multi-cmd) |
+| Area | Tests | Status |
+|------|-------|--------|
+| Pull staleness (#1) | 6 (pull, graceful fail, stale, recent, env overrides) | Done |
+| Dep layer split (#2) | CI integration | Done |
+| Cache mounts (#3) | CI integration | Done |
+| Multi-stage bridge (#4) | 7 (_run_bridge) | Done |
+| Base image (#5) | CI integration | Done |
+| PersistentBridge (#6) | 8 (enter/exit/status) | Skipped |
