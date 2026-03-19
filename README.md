@@ -7,6 +7,9 @@
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/pzfreo/fabprint/branch/main/graph/badge.svg)](https://codecov.io/gh/pzfreo/fabprint)
+[![Downloads](https://img.shields.io/pypi/dm/fabprint)](https://pypi.org/project/fabprint/)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 
 3D printing has a reproducibility problem:
 
