@@ -46,6 +46,11 @@ fabprint = "fabprint.cli:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# cadquery-ocp pins vtk==9.3.1 which lacks cp313 wheels;
+# override to allow vtk 9.6.0+ which supports Python 3.11-3.13
+override-dependencies = ["vtk>=9.4"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

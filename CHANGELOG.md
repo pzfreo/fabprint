@@ -2,6 +2,11 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.94 — 2026-03-19
+
+- Override cadquery-ocp's vtk==9.3.1 pin to vtk>=9.4, enabling Python 3.13 support
+- Remove Python 3.14 from CI matrix (cadquery-ocp lacks cp314 wheels)
+
 ## 0.1.92 — 2026-03-19
 
 - Mask printer serial numbers in setup and status output for security (shows last 4 chars only)
