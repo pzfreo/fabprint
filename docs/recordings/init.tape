@@ -33,27 +33,23 @@ Set CursorBlink false
 # =====================================================================
 Hide
 
-# Ensure Docker is on PATH (VHS shell may not inherit it)
-Type "export PATH=$PATH:/usr/local/bin"
-Enter
-Sleep 300ms
-
-Type "rm -f ~/.config/fabprint/credentials.toml"
-Enter
-Sleep 500ms
 
 Type "rm -f ~/repos/decoy-case/fabprint.toml"
 Enter
 Sleep 500ms
 
-Type "cd ~/repos/decoy-case && python decoy_case.py 2>/dev/null"
+Type "cd ~/repos/decoy-case"
 Enter
-Sleep 8s
+Sleep 1s
 
-# Pre-warm Docker so AMS query doesn't timeout during init
-Type "fabprint status -v 2>/dev/null || true"
+Type "export PATH=$PATH:/usr/local/bin"
 Enter
-Sleep 15s
+Sleep 500ms
+
+# Pre-warm Docker bridge so AMS query completes during init
+Type "fabprint status > /tmp/vhs-status-debug.txt 2>&1"
+Enter
+Sleep 30s
 
 Type "clear"
 Enter
@@ -61,69 +57,6 @@ Sleep 500ms
 
 Show
 
-# =====================================================================
-# PART 1: fabprint setup — cloud printer
-# =====================================================================
-
-Type "# Step 1: Configure a cloud printer (globally across 3D print projects)"
-Enter
-Sleep 1s
-
-Type "fabprint setup"
-Enter
-
-# Printer name — accept default "workshop"
-Wait+Screen /Printer name/
-Enter
-
-# Choose printer type — 2 = bambu-cloud
-Wait+Screen /Choose type/
-Type "2"
-Enter
-
-# Confirm cloud login
-Wait+Screen /Log in now/
-Type "y"
-Enter
-
-# Type email
-Wait+Screen /Email/
-Type "paul@fremantle.org"
-Enter
-
-# Password — copy it to clipboard before running, VHS pastes it
-Wait+Screen /Password/
-Sleep 1s
-Paste
-Enter
-
-# Verification code — hide the wait, show a brief pause
-Wait+Screen /Verification code sent/
-Hide
-Sleep 45s
-Show
-Sleep 2s
-Paste
-Enter
-
-# Wait for login to succeed
-Wait+Screen /Login successful/
-Sleep 1s
-
-# Pick printer from the list — select #1
-Wait+Screen /Pick a printer/
-Type "1"
-Enter
-
-Wait+Screen /Selected:/
-Sleep 1s
-
-Wait+Screen /Wrote.*credentials/
-Sleep 2s
-
-Type "clear"
-Enter
-Sleep 500ms
 
 # =====================================================================
 # PART 2: fabprint init — interactive config wizard
@@ -134,6 +67,7 @@ Enter
 Sleep 1s
 
 Type "fabprint init"
+Sleep 1s
 Enter
 
 Wait+Screen /fabprint init/
@@ -155,15 +89,16 @@ Wait+Screen /Process Profile/
 Sleep 500ms
 
 # Type to filter, Enter selects highlighted match
-Type@100ms "0.20mm Standard @BBL X1C"
+Type "0.20mm Standard @BBL X1C"
 Sleep 200ms
 Enter
-Sleep 1s
+Sleep 5s
 
 # --- Filament (AMS connected — accept matched suggestions) ---
 # Accept AMS-matched filaments
 Wait+Screen /Use these filaments/
 Sleep 1s
+Type "y"
 Enter
 
 # --- CAD Files (simple-term-menu, multi-select) ---
