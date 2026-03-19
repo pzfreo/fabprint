@@ -19,6 +19,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Install dependencies first (cached unless lockfile changes)
 WORKDIR /opt/fabprint
 COPY pyproject.toml uv.lock README.md LICENSE ./
+# Stub so hatchling can discover the package during dep install
+RUN mkdir -p src/fabprint && touch src/fabprint/__init__.py
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv python install 3.12 \
     && uv sync --frozen --no-dev --no-editable --python 3.12

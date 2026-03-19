@@ -2,6 +2,10 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.116 — 2026-03-19
+
+- Fix Dockerfile: add stub `src/fabprint/__init__.py` before dep install so hatchling can discover the package
+
 ## 0.1.114 — 2026-03-19
 
 - Split OrcaSlicer into a separate base image (`fabprint/orca-base`) for faster code-only rebuilds
