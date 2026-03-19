@@ -243,4 +243,6 @@ class TestPick:
                 search_key=None,
                 multi_select=True,
                 show_multi_select_hint=True,
+                show_search_hint=True,
+                show_search_hint_text="(type to filter)",
             )

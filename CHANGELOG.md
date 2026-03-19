@@ -2,6 +2,12 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.103 — 2026-03-19
+
+- Show "(type to filter)" search hint in interactive picker
+- Validate slicer overrides: auto-append `%` for density, enforce integer/float types
+- Fix multi-select file picker prompt (removed stale "comma-separated" hint)
+
 ## 0.1.102 — 2026-03-19
 
 - Replace broken Rich Live picker with `simple-term-menu` for reliable interactive selection

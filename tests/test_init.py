@@ -11,6 +11,7 @@ from fabprint.init import (
     ValidationResult,
     _build_toml,
     _closest_match,
+    _validate_override,
     dump_template,
     validate_config,
 )
@@ -295,6 +296,62 @@ class TestClosestMatch:
     def test_no_match(self):
         result = _closest_match("xyz_nothing", ["abc", "def"])
         assert result is None or isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# Override validation
+# ---------------------------------------------------------------------------
+
+
+class TestValidateOverride:
+    def test_percent_bare_number(self):
+        assert _validate_override("25", "percent") == "25%"
+
+    def test_percent_with_sign(self):
+        assert _validate_override("25%", "percent") == "25%"
+
+    def test_percent_with_spaces(self):
+        assert _validate_override(" 30 ", "percent") == "30%"
+
+    def test_percent_rejects_text(self):
+        assert _validate_override("abc", "percent") is None
+
+    def test_percent_rejects_negative(self):
+        assert _validate_override("-5", "percent") is None
+
+    def test_percent_rejects_over_100(self):
+        assert _validate_override("150", "percent") is None
+
+    def test_percent_zero(self):
+        assert _validate_override("0", "percent") == "0%"
+
+    def test_int_valid(self):
+        assert _validate_override("3", "int") == "3"
+
+    def test_int_rejects_float(self):
+        assert _validate_override("3.5", "int") is None
+
+    def test_int_rejects_text(self):
+        assert _validate_override("abc", "int") is None
+
+    def test_int_rejects_negative(self):
+        assert _validate_override("-1", "int") is None
+
+    def test_float_valid(self):
+        assert _validate_override("0.20", "float") == "0.20"
+
+    def test_float_rejects_zero(self):
+        assert _validate_override("0", "float") is None
+
+    def test_float_rejects_text(self):
+        assert _validate_override("abc", "float") is None
+
+    def test_text_passthrough(self):
+        assert _validate_override("anything", "text") == "anything"
+
+    def test_empty_returns_none(self):
+        assert _validate_override("", "percent") is None
+        assert _validate_override("  ", "int") is None
 
 
 # ---------------------------------------------------------------------------
