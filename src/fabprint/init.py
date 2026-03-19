@@ -490,10 +490,16 @@ def _prompt_yn(prompt: str, default: bool = True) -> bool:
 
 # Each entry: (display_name, slicer_key, value_spec)
 # value_spec is either ("text", "hint string") or ("choice", [...options])
+# value_spec types:
+#   ("choice", [...options])  — user picks from a list
+#   ("percent", "hint")      — numeric, auto-appends % if missing
+#   ("int", "hint")          — positive integer
+#   ("float", "hint")        — positive float
+#   ("text", "hint")         — free-form text (no validation)
 OverrideSpec = tuple[str, str, tuple[str, str] | tuple[str, list[str]]]
 
 COMMON_OVERRIDES: list[OverrideSpec] = [
-    ("Infill density", "sparse_infill_density", ("text", "e.g. 15%, 25%, 50%")),
+    ("Infill density", "sparse_infill_density", ("percent", "e.g. 15, 25, 50")),
     (
         "Infill pattern",
         "sparse_infill_pattern",
@@ -511,8 +517,8 @@ COMMON_OVERRIDES: list[OverrideSpec] = [
             ],
         ),
     ),
-    ("Wall loops", "wall_loops", ("text", "e.g. 2, 3, 4")),
-    ("Layer height", "layer_height", ("text", "e.g. 0.12, 0.16, 0.20, 0.28")),
+    ("Wall loops", "wall_loops", ("int", "e.g. 2, 3, 4")),
+    ("Layer height", "layer_height", ("float", "e.g. 0.12, 0.16, 0.20, 0.28")),
     (
         "Enable support",
         "enable_support",
@@ -523,8 +529,8 @@ COMMON_OVERRIDES: list[OverrideSpec] = [
         "support_type",
         ("choice", ["normal", "tree", "hybrid"]),
     ),
-    ("Top shell layers", "top_shell_layers", ("text", "e.g. 3, 5")),
-    ("Bottom shell layers", "bottom_shell_layers", ("text", "e.g. 3, 5")),
+    ("Top shell layers", "top_shell_layers", ("int", "e.g. 3, 5")),
+    ("Bottom shell layers", "bottom_shell_layers", ("int", "e.g. 3, 5")),
     (
         "Brim type",
         "brim_type",
@@ -536,6 +542,56 @@ COMMON_OVERRIDES: list[OverrideSpec] = [
         ("choice", ["nearest", "aligned", "back", "random"]),
     ),
 ]
+
+
+def _validate_override(value: str, spec_type: str) -> str | None:
+    """Validate and normalise an override value.
+
+    Returns the normalised value, or ``None`` if invalid.
+    """
+    from fabprint import ui
+
+    value = value.strip()
+    if not value:
+        return None
+
+    if spec_type == "percent":
+        raw = value.rstrip("%").strip()
+        try:
+            num = float(raw)
+        except ValueError:
+            ui.warn(f"Expected a number, got '{value}'")
+            return None
+        if num < 0 or num > 100:
+            ui.warn("Percentage must be between 0 and 100")
+            return None
+        # Auto-append %
+        return f"{raw}%"
+
+    if spec_type == "int":
+        try:
+            num = int(value)
+        except ValueError:
+            ui.warn(f"Expected an integer, got '{value}'")
+            return None
+        if num < 0:
+            ui.warn("Value must be a positive integer")
+            return None
+        return str(num)
+
+    if spec_type == "float":
+        try:
+            num = float(value)
+        except ValueError:
+            ui.warn(f"Expected a number, got '{value}'")
+            return None
+        if num <= 0:
+            ui.warn("Value must be a positive number")
+            return None
+        return value
+
+    # "text" or unknown — accept as-is
+    return value
 
 
 def _prompt_overrides() -> dict[str, str]:
@@ -587,10 +643,14 @@ def _prompt_overrides() -> dict[str, str]:
                     continue
             else:
                 hint = spec[1]
-                value = _prompt_str(f"Value for {key} ({hint})")
-                if value:
-                    overrides[key] = value
-                    ui.success(f'{key} = "{value}"')
+                spec_type = spec[0]
+                raw = _prompt_str(f"Value for {key} ({hint})")
+                validated = _validate_override(raw, spec_type) if raw else None
+                if validated:
+                    overrides[key] = validated
+                    ui.success(f'{key} = "{validated}"')
+                elif raw:
+                    continue  # validation failed, loop back
 
         ui.console.print()
         if not _prompt_yn("Add another override?", default=False):
@@ -741,7 +801,7 @@ def _wizard_pick_parts(filament_names: list[str]) -> list[dict]:
         ui.info(f"Found {len(candidates)} CAD file(s) in current directory")
         names = [p.name for p in candidates]
         chosen = _prompt_choice(
-            "Select files (comma-separated or 'all')",
+            "Select files",
             names,
             allow_multi=True,
         )

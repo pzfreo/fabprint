@@ -131,6 +131,8 @@ def pick(
         search_key=None,  # type-to-filter without pressing /
         multi_select=allow_multi,
         show_multi_select_hint=allow_multi,
+        show_search_hint=True,
+        show_search_hint_text="(type to filter)",
     )
     result = menu.show()
 
