@@ -125,14 +125,19 @@ def pick(
     """
     from simple_term_menu import TerminalMenu
 
+    # For single-select: search_key=None enables type-to-filter (any key searches).
+    # For multi-select: keep search_key="/" so Space/Tab work for toggling items.
+    search_key: str | None = "/" if allow_multi else None
+    search_hint = "(/ to filter, Space to toggle)" if allow_multi else "(type to filter)"
+
     menu = TerminalMenu(
         options,
         title=f"  {prompt}",
-        search_key=None,  # type-to-filter without pressing /
+        search_key=search_key,
         multi_select=allow_multi,
         show_multi_select_hint=allow_multi,
         show_search_hint=True,
-        show_search_hint_text="(type to filter)",
+        show_search_hint_text=search_hint,
     )
     result = menu.show()
 

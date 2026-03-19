@@ -2,6 +2,12 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.104 — 2026-03-19
+
+- Fix multi-select picker: Space now toggles selection instead of triggering search
+- Use `/` for search in multi-select mode, type-to-filter in single-select mode
+- Show contextual hints: "(type to filter)" vs "(/ to filter, Space to toggle)"
+
 ## 0.1.103 — 2026-03-19
 
 - Show "(type to filter)" search hint in interactive picker

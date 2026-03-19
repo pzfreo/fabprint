@@ -240,9 +240,9 @@ class TestPick:
             MockMenu.assert_called_once_with(
                 ["x", "y"],
                 title="  Select",
-                search_key=None,
+                search_key="/",
                 multi_select=True,
                 show_multi_select_hint=True,
                 show_search_hint=True,
-                show_search_hint_text="(type to filter)",
+                show_search_hint_text="(/ to filter, Space to toggle)",
             )
