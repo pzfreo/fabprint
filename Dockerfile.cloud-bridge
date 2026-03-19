@@ -17,8 +17,8 @@
 # ---------------------------------------------------------------------------
 FROM --platform=linux/amd64 ubuntu:24.04 AS builder
 
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=cache,id=apt-bridge-builder,target=/var/cache/apt \
+    --mount=type=cache,id=apt-bridge-builder,target=/var/lib/apt/lists \
     apt-get update && apt-get install -y --no-install-recommends g++
 
 COPY scripts/bambu_cloud_bridge.cpp /opt/bridge/bambu_cloud_bridge.cpp
@@ -35,8 +35,8 @@ FROM --platform=linux/amd64 ubuntu:24.04
 LABEL org.opencontainers.image.description="Bambu Lab cloud print bridge (headless)"
 
 # Runtime deps only — no g++
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=cache,id=apt-bridge-runtime,target=/var/cache/apt \
+    --mount=type=cache,id=apt-bridge-runtime,target=/var/lib/apt/lists \
     apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
