@@ -10,9 +10,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from fabprint.cloud import (
+    PersistentBridge,
     _build_ams_mapping,
     _build_ams_mapping_from_state,
     _find_bridge,
+    _run_bridge,
     cloud_cancel,
     cloud_print,
     cloud_status,
@@ -169,6 +171,346 @@ class TestCloudCancel:
             result = cloud_cancel("DEV123", token_file)
             assert result["sent"] is True
             assert result["device_id"] == "DEV123"
+
+
+# ---------------------------------------------------------------------------
+# PersistentBridge tests
+# ---------------------------------------------------------------------------
+
+
+class TestPersistentBridge:
+    def test_enter_creates_container(self, token_file):
+        mock_result = MagicMock(stdout="abc123def456\n", returncode=0)
+        with patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_result) as mock_run:
+            bridge = PersistentBridge(token_file)
+            bridge.__enter__()
+
+            cmd = mock_run.call_args[0][0]
+            assert cmd[0] == "docker"
+            assert "run" in cmd
+            assert "-d" in cmd
+            assert "--platform" in cmd
+            assert "linux/amd64" in cmd
+            assert "sleep" in cmd
+            assert "infinity" in cmd
+            assert bridge._container_id == "abc123def456"
+
+    def test_exit_removes_container(self, token_file):
+        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
+        mock_rm = MagicMock(returncode=0)
+
+        with patch(
+            "fabprint.cloud.bridge.subprocess.run",
+            side_effect=[mock_create, mock_rm],
+        ) as mock_run:
+            with PersistentBridge(token_file) as bridge:
+                assert bridge._container_id == "abc123def456"
+
+            # Verify docker rm -f was called on exit
+            rm_call = mock_run.call_args_list[-1]
+            rm_cmd = rm_call[0][0]
+            assert rm_cmd[0] == "docker"
+            assert "rm" in rm_cmd
+            assert "-f" in rm_cmd
+            assert "abc123def456" in rm_cmd
+
+    def test_exit_clears_container_id(self, token_file):
+        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
+        mock_rm = MagicMock(returncode=0)
+
+        with patch("fabprint.cloud.bridge.subprocess.run", side_effect=[mock_create, mock_rm]):
+            bridge = PersistentBridge(token_file)
+            bridge.__enter__()
+            bridge.__exit__(None, None, None)
+            assert bridge._container_id is None
+
+    def test_exit_noop_when_no_container(self, token_file):
+        """Exit does nothing if no container was created."""
+        bridge = PersistentBridge(token_file)
+        # Should not raise
+        bridge.__exit__(None, None, None)
+
+    def test_status_runs_docker_exec(self, token_file):
+        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
+        mock_proc = MagicMock()
+        status_json = '{"print":{"gcode_state":"IDLE","bed_temper":25.0}}\n'
+        mock_proc.stdout.readline.return_value = status_json
+
+        mock_sel = MagicMock()
+        mock_sel.select.return_value = [True]  # data ready
+
+        with (
+            patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_create),
+            patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc) as mock_popen,
+            patch("selectors.DefaultSelector", return_value=mock_sel),
+        ):
+            with PersistentBridge(token_file) as bridge:
+                status = bridge.status("DEV123")
+
+            # Verify docker exec command
+            popen_cmd = mock_popen.call_args[0][0]
+            assert popen_cmd[0] == "docker"
+            assert "exec" in popen_cmd
+            assert "abc123def456" in popen_cmd
+            assert "bambu_cloud_bridge" in popen_cmd
+            assert "status" in popen_cmd
+            assert "DEV123" in popen_cmd
+
+            assert status["gcode_state"] == "IDLE"
+            assert status["bed_temper"] == 25.0
+            mock_proc.kill.assert_called_once()
+            mock_proc.wait.assert_called_once()
+
+    def test_status_timeout_raises(self, token_file):
+        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
+        mock_proc = MagicMock()
+
+        mock_sel = MagicMock()
+        mock_sel.select.return_value = []  # timeout — no data
+
+        with (
+            patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_create),
+            patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc),
+            patch("selectors.DefaultSelector", return_value=mock_sel),
+        ):
+            with PersistentBridge(token_file) as bridge:
+                with pytest.raises(RuntimeError, match="timed out"):
+                    bridge.status("DEV123", timeout=5)
+
+            mock_proc.kill.assert_called_once()
+
+    def test_status_non_json_raises(self, token_file):
+        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
+        mock_proc = MagicMock()
+        mock_proc.stdout.readline.return_value = "not json at all\n"
+        mock_proc.returncode = 1
+
+        mock_sel = MagicMock()
+        mock_sel.select.return_value = [True]
+
+        with (
+            patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_create),
+            patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc),
+            patch("selectors.DefaultSelector", return_value=mock_sel),
+        ):
+            with PersistentBridge(token_file) as bridge:
+                with pytest.raises(RuntimeError, match="non-JSON"):
+                    bridge.status("DEV123")
+
+    def test_token_file_mounted_readonly(self, token_file):
+        """Token file should be mounted as read-only in the container."""
+        mock_result = MagicMock(stdout="abc123def456\n", returncode=0)
+        with patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_result) as mock_run:
+            bridge = PersistentBridge(token_file)
+            bridge.__enter__()
+
+            cmd = mock_run.call_args[0][0]
+            # Find the -v mount arg
+            v_idx = cmd.index("-v")
+            mount_arg = cmd[v_idx + 1]
+            assert mount_arg.endswith(":ro")
+            assert "/input/token.json" in mount_arg
+
+
+# ---------------------------------------------------------------------------
+# _run_bridge Docker pull behaviour tests
+# ---------------------------------------------------------------------------
+
+
+class TestRunBridgeDockerPull:
+    """Tests for _run_bridge Docker image pull behaviour.
+
+    These test the current always-pull behaviour and will serve as
+    regression tests when we add pull staleness optimisation.
+    """
+
+    def test_pulls_image_when_using_docker(self):
+        """When bridge not found, _run_bridge should use Docker and pull the image."""
+        mock_docker_info = MagicMock(returncode=0)
+        mock_pull = MagicMock(returncode=0, stdout="Status: Image is up to date", stderr="")
+        mock_run_result = MagicMock(returncode=0, stdout='{"result":"ok"}', stderr="")
+
+        results = [mock_docker_info, mock_pull, mock_run_result]
+
+        with (
+            patch("fabprint.cloud.bridge._find_bridge", return_value=None),
+            patch("platform.system", return_value="Linux"),
+            patch("fabprint.cloud.bridge.subprocess.run", side_effect=results) as mock_run,
+        ):
+            _run_bridge(["status", "DEV123", "/tmp/tok.json"])
+
+            # Second call should be the pull
+            pull_cmd = mock_run.call_args_list[1][0][0]
+            assert pull_cmd == ["docker", "pull", "fabprint/cloud-bridge"]
+
+    def test_pull_failure_still_runs_container(self):
+        """If docker pull fails, _run_bridge should still attempt to run."""
+        mock_docker_info = MagicMock(returncode=0)
+        mock_pull = MagicMock(
+            returncode=1,
+            stdout="Error",
+            stderr="network error",
+        )
+        mock_run_result = MagicMock(
+            returncode=0,
+            stdout='{"result":"ok"}',
+            stderr="",
+        )
+
+        results = [mock_docker_info, mock_pull, mock_run_result]
+
+        with (
+            patch("fabprint.cloud.bridge._find_bridge", return_value=None),
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                side_effect=results,
+            ),
+        ):
+            result = _run_bridge(["status", "DEV123", "/tmp/tok.json"])
+            assert result.stdout == '{"result":"ok"}'
+
+    def test_always_uses_docker_on_macos(self, tmp_path):
+        """On macOS, _run_bridge must use Docker even with local bridge."""
+        bridge = tmp_path / "bambu_cloud_bridge"
+        bridge.write_text("#!/bin/sh\n")
+
+        mock_docker_info = MagicMock(returncode=0)
+        mock_pull = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run_result = MagicMock(
+            returncode=0,
+            stdout='{"result":"ok"}',
+            stderr="",
+        )
+        side = [mock_docker_info, mock_pull, mock_run_result]
+
+        with (
+            patch(
+                "fabprint.cloud.bridge._find_bridge",
+                return_value=str(bridge),
+            ),
+            patch("platform.system", return_value="Darwin"),
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                side_effect=side,
+            ) as mock_run,
+        ):
+            _run_bridge(
+                ["print", "/tmp/file.3mf", "DEV123", "/tmp/tok.json"],
+            )
+
+            run_cmd = mock_run.call_args_list[2][0][0]
+            assert run_cmd[0] == "docker"
+            assert "fabprint/cloud-bridge" in run_cmd
+
+    def test_uses_local_bridge_on_linux(self):
+        """On Linux with local bridge, should use it directly."""
+        bridge_path = "/usr/local/bin/bambu_cloud_bridge"
+        mock_result = MagicMock(
+            returncode=0,
+            stdout='{"result":"ok"}',
+            stderr="",
+        )
+
+        with (
+            patch(
+                "fabprint.cloud.bridge._find_bridge",
+                return_value=bridge_path,
+            ),
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                return_value=mock_result,
+            ) as mock_run,
+        ):
+            _run_bridge(["status", "DEV123", "/tmp/tok.json"])
+
+            cmd = mock_run.call_args[0][0]
+            assert cmd[0] == bridge_path
+            assert "docker" not in cmd
+
+    def test_no_docker_raises_runtime_error(self):
+        """Without bridge or Docker, raises RuntimeError."""
+        with (
+            patch(
+                "fabprint.cloud.bridge._find_bridge",
+                return_value=None,
+            ),
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                side_effect=FileNotFoundError,
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="Docker is required"):
+                _run_bridge(["status", "DEV123", "/tmp/tok.json"])
+
+    def test_docker_run_mounts_file_args(self, tmp_path):
+        """File arguments should be mounted individually."""
+        threemf = tmp_path / "test.3mf"
+        threemf.write_bytes(b"PK")
+        token = tmp_path / "token.json"
+        token.write_text('{"token":"x"}')
+
+        mock_docker_info = MagicMock(returncode=0)
+        mock_pull = MagicMock(returncode=0, stdout="", stderr="")
+        mock_run_result = MagicMock(
+            returncode=0,
+            stdout='{"result":"ok"}',
+            stderr="",
+        )
+        side = [mock_docker_info, mock_pull, mock_run_result]
+
+        with (
+            patch(
+                "fabprint.cloud.bridge._find_bridge",
+                return_value=None,
+            ),
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                side_effect=side,
+            ) as mock_run,
+        ):
+            _run_bridge(
+                ["print", str(threemf), "DEV123", str(token)],
+            )
+
+            run_cmd = mock_run.call_args_list[2][0][0]
+            v_indices = [i for i, arg in enumerate(run_cmd) if arg == "-v"]
+            assert len(v_indices) == 2
+            for idx in v_indices:
+                mount = run_cmd[idx + 1]
+                assert ":ro" in mount
+                assert "/input/" in mount
+
+    def test_verbose_flag_appended(self):
+        """verbose=True should append -v to the command."""
+        bridge_path = "/usr/local/bin/bambu_cloud_bridge"
+        mock_result = MagicMock(
+            returncode=0,
+            stdout='{"result":"ok"}',
+            stderr="",
+        )
+
+        with (
+            patch(
+                "fabprint.cloud.bridge._find_bridge",
+                return_value=bridge_path,
+            ),
+            patch("platform.system", return_value="Linux"),
+            patch(
+                "fabprint.cloud.bridge.subprocess.run",
+                return_value=mock_result,
+            ) as mock_run,
+        ):
+            _run_bridge(
+                ["status", "DEV123", "/tmp/tok.json"],
+                verbose=True,
+            )
+
+            cmd = mock_run.call_args[0][0]
+            assert cmd[-1] == "-v"
 
 
 # ---------------------------------------------------------------------------
