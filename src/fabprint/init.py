@@ -919,7 +919,7 @@ def run_wizard(output: Path | None = None) -> str:
     ams_trays: list[dict] = []
     if ams_future is not None:
         try:
-            ams_trays = ams_future.result(timeout=10)
+            ams_trays = ams_future.result(timeout=30)
         except Exception:
             log.debug("AMS tray query failed", exc_info=True)
         if ams_trays:
