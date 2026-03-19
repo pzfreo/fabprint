@@ -404,11 +404,7 @@ def run_wizard(output: Path | None = None) -> str:
         except Exception:
             pass
         if ams_trays:
-            ui.info(f"AMS loaded ({len(ams_trays)} slot(s)):")
-            for t in ams_trays:
-                swatch = ui.color_swatch(t["color"])
-                ui.console.print(f"  Slot {t['phys_slot'] + 1}: {t['type']}  {swatch}")
-            ui.console.print()
+            ui.info(f"AMS detected ({len(ams_trays)} slot(s))")
 
     # --- Step 5: Pick filament(s) ---
     filament_names: list[str] = []
