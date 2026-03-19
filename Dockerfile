@@ -12,8 +12,9 @@ FROM --platform=linux/amd64 ubuntu:24.04 AS orca
 ARG ORCA_VERSION=2.3.1
 
 WORKDIR /tmp
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
 RUN curl -fSL -o orca.AppImage \
         "https://github.com/SoftFever/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Linux_AppImage_Ubuntu2404_V${ORCA_VERSION}.AppImage" \
     && chmod +x orca.AppImage \
@@ -31,14 +32,15 @@ LABEL org.opencontainers.image.description="fabprint with OrcaSlicer ${ORCA_VERS
 LABEL fabprint.orca-version="${ORCA_VERSION}"
 
 # OrcaSlicer runtime deps (needed even for CLI — links GTK/GL at startup)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    apt-get update && apt-get install -y --no-install-recommends \
         libgl1 libgl1-mesa-dri libegl1 \
         libgtk-3-0 \
         libwebkit2gtk-4.1-0 \
         libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
         xvfb \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+        ca-certificates
 
 # Copy extracted OrcaSlicer
 COPY --from=orca /opt/orca-slicer /opt/orca-slicer
@@ -55,13 +57,17 @@ RUN useradd -m -d /home/fabprint fabprint \
 # Install uv (fast Python package manager)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Install fabprint
+# Install dependencies first (cached unless lockfile changes)
 WORKDIR /opt/fabprint
 COPY pyproject.toml uv.lock README.md LICENSE ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv python install 3.12 \
+    && uv sync --frozen --no-dev --no-editable --python 3.12
+
+# Copy source and re-link (fast — deps already installed)
 COPY src/ ./src/
-RUN uv python install 3.12 \
-    && uv sync --frozen --no-dev --no-editable --python 3.12 \
-    && uv cache clean
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-editable --python 3.12
 
 ENV PATH="/opt/fabprint/.venv/bin:$PATH"
 
