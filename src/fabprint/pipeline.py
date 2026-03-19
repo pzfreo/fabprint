@@ -21,7 +21,6 @@ Typical execution::
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import trimesh
 
@@ -59,8 +58,8 @@ STAGE_REQUIRES: dict[str, list[tuple[str, str]]] = {
 
 def resolve_outputs(
     stages: list[str],
-    until: Optional[str] = None,
-    only: Optional[str] = None,
+    until: str | None = None,
+    only: str | None = None,
 ) -> list[str]:
     """Resolve the list of Hamilton output nodes to request.
 
@@ -145,7 +144,7 @@ class LoadedParts:
 class ResolvedFilaments:
     """Filament profiles and IDs ready for the slicer."""
 
-    filaments: Optional[list[str]] = None
+    filaments: list[str] | None = None
     filament_ids: list[int] = field(default_factory=list)
 
 
@@ -154,7 +153,7 @@ class ResolvedFilaments:
 # ---------------------------------------------------------------------------
 
 
-def load_parts(cfg: FabprintConfig, global_scale: Optional[float] = None) -> LoadedParts:
+def load_parts(cfg: FabprintConfig, global_scale: float | None = None) -> LoadedParts:
     """Load and prepare meshes from config parts.
 
     For parts with 'object' set, loads a specific named object from a
@@ -310,7 +309,7 @@ def config(config_path: Path) -> FabprintConfig:
     return load_config(config_path)
 
 
-def loaded_parts(config: FabprintConfig, global_scale: Optional[float]) -> LoadedParts:
+def loaded_parts(config: FabprintConfig, global_scale: float | None) -> LoadedParts:
     """Load, orient, and scale all meshes from the config."""
     return load_parts(config, global_scale)
 
@@ -354,7 +353,7 @@ def preview_path(placements: list[Placement], config: FabprintConfig, output_3mf
 def resolved_filaments(
     config: FabprintConfig,
     loaded_parts: LoadedParts,
-    filament_type_override: Optional[str],
+    filament_type_override: str | None,
     filament_slot_override: int,
 ) -> ResolvedFilaments:
     """Resolve filament profiles and IDs, applying CLI overrides."""
@@ -378,7 +377,7 @@ def sliced_output_dir(
     resolved_filaments: ResolvedFilaments,
     output_dir: Path,
     slicer_local: bool,
-    docker_version: Optional[str],
+    docker_version: str | None,
 ) -> Path:
     """Slice the plate 3MF via OrcaSlicer/BambuStudio."""
     from fabprint.slicer import slice_plate

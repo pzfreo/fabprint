@@ -36,6 +36,8 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
+from fabprint import require_file
+
 log = logging.getLogger(__name__)
 
 BRIDGE_NAME = "bambu_cloud_bridge"
@@ -347,10 +349,8 @@ def cloud_print(
         RuntimeError: If bridge binary not found and Docker not available
         FileNotFoundError: If 3mf file or token file doesn't exist
     """
-    if not threemf_path.exists():
-        raise FileNotFoundError(f"3MF file not found: {threemf_path}")
-    if not token_file.exists():
-        raise FileNotFoundError(f"Token file not found: {token_file}")
+    require_file(threemf_path, "3MF file")
+    require_file(token_file, "Token file")
 
     args = [
         "print",
@@ -434,8 +434,7 @@ def cloud_status(
 
     Returns the printer's status as a dict (the 'print' key from the MQTT message).
     """
-    if not token_file.exists():
-        raise FileNotFoundError(f"Token file not found: {token_file}")
+    require_file(token_file, "Token file")
 
     args = ["status", device_id, str(token_file.resolve())]
     result = _run_bridge(args, timeout=BRIDGE_STATUS_TIMEOUT, verbose=verbose)
@@ -460,8 +459,7 @@ def cloud_tasks(
 
     Returns list of task dicts.
     """
-    if not token_file.exists():
-        raise FileNotFoundError(f"Token file not found: {token_file}")
+    require_file(token_file, "Token file")
 
     args = ["tasks", str(token_file.resolve()), "--limit", str(limit)]
     result = _run_bridge(args, timeout=BRIDGE_TASK_LIST_TIMEOUT)
@@ -508,8 +506,7 @@ def cloud_cancel(
 
     Returns dict with command confirmation.
     """
-    if not token_file.exists():
-        raise FileNotFoundError(f"Token file not found: {token_file}")
+    require_file(token_file, "Token file")
 
     args = ["cancel", device_id, str(token_file.resolve())]
     result = _run_bridge(args, timeout=BRIDGE_CANCEL_TIMEOUT, verbose=verbose)
@@ -981,10 +978,8 @@ def cloud_print_http(
             "Pure Python cloud print requires 'requests'. Install with: pip install fabprint[cloud]"
         )
 
-    if not threemf_path.exists():
-        raise FileNotFoundError(f"3MF file not found: {threemf_path}")
-    if not token_file.exists():
-        raise FileNotFoundError(f"Token file not found: {token_file}")
+    require_file(threemf_path, "3MF file")
+    require_file(token_file, "Token file")
 
     token_data = json.loads(token_file.read_text())
     token = token_data["token"]

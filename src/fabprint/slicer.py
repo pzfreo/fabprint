@@ -12,6 +12,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from fabprint import require_file
 from fabprint.gcode import parse_gcode_metadata
 from fabprint.profiles import resolve_profile_data
 
@@ -727,8 +728,7 @@ def slice_plate(
     log.debug("Slicer: OrcaSlicer %s%s", detected_version or "unknown", docker_str)
 
     input_3mf = input_3mf.resolve()
-    if not input_3mf.exists():
-        raise FileNotFoundError(f"Input file not found: {input_3mf}")
+    require_file(input_3mf, "Input 3MF file")
 
     if output_dir is None:
         output_dir = input_3mf.parent / "output"

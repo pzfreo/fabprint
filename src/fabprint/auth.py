@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
-import sys
 
 import requests
+
+from fabprint import FabprintError
 
 API_BASE = "https://api.bambulab.com"
 
@@ -81,8 +82,7 @@ def _login(email: str, password: str) -> tuple[str, str]:
         refresh_token = data.get("refreshToken", "")
 
     if not token:
-        ui.error(f"Login failed. Response: {json.dumps(data, indent=2)}")
-        sys.exit(1)
+        raise FabprintError(f"Login failed. Response: {json.dumps(data, indent=2)}")
 
     return token, refresh_token
 

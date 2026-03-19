@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from fabprint.config import DEFAULT_STAGES, VALID_ORIENTS
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Template
@@ -323,7 +326,7 @@ def _read_machine_info(profile_name: str, engine: str) -> _MachineInfo:
         if data.get("single_extruder_multi_material"):
             info.multi_material = True
     except Exception:
-        pass
+        log.debug("Failed to read machine info", exc_info=True)
     return info
 
 
@@ -334,6 +337,7 @@ def _list_configured_printers() -> dict[str, dict]:
 
         return list_printers() or {}
     except Exception:
+        log.debug("Failed to list configured printers", exc_info=True)
         return {}
 
 
@@ -358,6 +362,7 @@ def _query_ams_trays(configured: dict[str, dict]) -> list[dict]:
                 status = cloud_status(serial, token_file)
             return parse_ams_trays(status)
         except Exception:
+            log.debug("Failed to query AMS trays", exc_info=True)
             return []
     return []
 
@@ -391,7 +396,7 @@ def _detect_orca_version() -> str | None:
         if slicer and slicer.exists():
             return _detect_slicer_version(slicer)
     except Exception:
-        pass
+        log.debug("Failed to detect OrcaSlicer version", exc_info=True)
     return None
 
 
@@ -413,6 +418,7 @@ def _fetch_available_versions() -> list[str]:
                 versions.append(tag[5:])  # strip "orca-" prefix
         return sorted(versions, reverse=True)
     except Exception:
+        log.debug("Failed to fetch Docker image versions", exc_info=True)
         return []
 
 
@@ -673,7 +679,7 @@ def run_wizard(output: Path | None = None) -> str:
         try:
             ams_trays = ams_future.result(timeout=10)
         except Exception:
-            pass
+            log.debug("AMS tray query failed", exc_info=True)
         if ams_trays:
             ui.info(f"AMS detected ({len(ams_trays)} slot(s))")
 

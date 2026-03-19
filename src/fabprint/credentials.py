@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -11,6 +12,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from fabprint import FabprintError
+
+log = logging.getLogger(__name__)
 
 
 def mask_serial(serial: str) -> str:
@@ -301,6 +304,7 @@ def _pick_cloud_printer(cloud: dict | None) -> str | None:
 
         devices = _get_devices(cloud["token"])
     except Exception:
+        log.debug("Failed to get cloud printer list", exc_info=True)
         return None
     if not devices:
         return None

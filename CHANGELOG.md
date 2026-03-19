@@ -2,6 +2,16 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.96 — 2026-03-19
+
+- Standardize type annotations: `Optional[X]` → `X | None` across cli.py and pipeline.py
+- Add `log.debug()` to all silent `except Exception` catches for easier debugging
+- Replace `sys.exit(1)` in auth.py with `raise FabprintError` for consistent error handling
+- Move `_PRINT_STAGES` dict to module level in cli.py
+- Use `TYPE_CHECKING` guard for Rich `Status` import in adapters.py
+- Replace bare `print()` with `log.info()` in printer.py
+- Add `require_file()` helper to reduce duplicated file-existence checks across cloud.py, slicer.py, gcode.py
+
 ## 0.1.95 — 2026-03-19
 
 - Fix duplicate printer table shown during cloud setup
