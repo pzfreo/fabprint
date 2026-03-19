@@ -965,22 +965,29 @@ def run_wizard(output: Path | None = None) -> str:
     )
 
     # --- Preview and confirm ---
-    ui.heading("Preview")
-    ui.preview_toml(toml)
-
     dest = output or Path("fabprint.toml")
-    if dest.exists():
-        if not _prompt_yn(f"{dest} already exists. Overwrite?", default=False):
-            ui.warn("Aborted.")
+
+    while True:
+        ui.heading("Preview")
+        ui.preview_toml(toml)
+
+        answer = _prompt_str("Write / Go back / Quit? (W/g/q)", "w").strip().lower()
+
+        if answer in ("w", "write", "y", "yes", ""):
+            if dest.exists():
+                if not _prompt_yn(f"{dest} already exists. Overwrite?", default=False):
+                    continue
+            dest.write_text(toml)
+            ui.success(f"Wrote {dest}")
             return toml
 
-    if _prompt_yn(f"Write to {dest}?"):
-        dest.write_text(toml)
-        ui.success(f"Wrote {dest}")
-    else:
-        ui.info("Not written. Copy the output above to create your config.")
+        if answer in ("q", "quit"):
+            ui.info("Not written. Copy the output above to create your config.")
+            return toml
 
-    return toml
+        # Go back — re-run wizard from the top
+        ui.console.print()
+        return run_wizard(output=output)
 
 
 def _build_toml(

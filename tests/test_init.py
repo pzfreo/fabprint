@@ -546,7 +546,7 @@ class TestWizard:
                 "",  # slicer version (skip)
                 "n",  # Configure printer connection? -> no
                 "my-project",  # Project name
-                "y",  # Write to fabprint.toml?
+                "w",  # Write / Go back / Quit
             ],
         )
 
@@ -587,7 +587,7 @@ class TestWizard:
                 "",  # slicer version (skip)
                 "n",  # Configure printer connection? -> no
                 "",  # Project name (use default)
-                "n",  # Write?
+                "q",  # Write / Go back / Quit
             ],
         )
         monkeypatch.setattr(
