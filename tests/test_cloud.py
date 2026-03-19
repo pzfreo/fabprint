@@ -181,137 +181,118 @@ class TestCloudCancel:
 
 
 class TestPersistentBridge:
-    def test_enter_creates_container(self, token_file):
-        mock_result = MagicMock(stdout="abc123def456\n", returncode=0)
-        with patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_result) as mock_run:
-            bridge = PersistentBridge(token_file)
+    def _make_mock_proc(self, ready_line='{"ready":true}\n', status_line=None):
+        """Create a mock Popen for the watch command."""
+        mock_proc = MagicMock()
+        mock_proc.stdin = MagicMock()
+        mock_proc.stderr = MagicMock()
+        # readline returns ready line on first call, then status lines
+        lines = [ready_line]
+        if status_line:
+            lines.append(status_line)
+        mock_proc.stdout.readline = MagicMock(side_effect=lines)
+        return mock_proc
+
+    def test_enter_starts_watch(self, token_file):
+        mock_proc = self._make_mock_proc()
+        with patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            bridge = PersistentBridge(token_file, "DEV123")
             bridge.__enter__()
 
-            cmd = mock_run.call_args[0][0]
+            cmd = mock_popen.call_args[0][0]
             assert cmd[0] == "docker"
             assert "run" in cmd
-            assert "-d" in cmd
-            assert "--platform" in cmd
-            assert "linux/amd64" in cmd
-            assert "sleep" in cmd
-            assert "infinity" in cmd
-            assert bridge._container_id == "abc123def456"
+            assert "-i" in cmd
+            assert "watch" in cmd
+            assert "DEV123" in cmd
+            assert bridge._proc is not None
 
-    def test_exit_removes_container(self, token_file):
-        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
-        mock_rm = MagicMock(returncode=0)
-
-        with patch(
-            "fabprint.cloud.bridge.subprocess.run",
-            side_effect=[mock_create, mock_rm],
-        ) as mock_run:
-            with PersistentBridge(token_file) as bridge:
-                assert bridge._container_id == "abc123def456"
-
-            # Verify docker rm -f was called on exit
-            rm_call = mock_run.call_args_list[-1]
-            rm_cmd = rm_call[0][0]
-            assert rm_cmd[0] == "docker"
-            assert "rm" in rm_cmd
-            assert "-f" in rm_cmd
-            assert "abc123def456" in rm_cmd
-
-    def test_exit_clears_container_id(self, token_file):
-        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
-        mock_rm = MagicMock(returncode=0)
-
-        with patch("fabprint.cloud.bridge.subprocess.run", side_effect=[mock_create, mock_rm]):
-            bridge = PersistentBridge(token_file)
+    def test_exit_sends_quit(self, token_file):
+        mock_proc = self._make_mock_proc()
+        with patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc):
+            bridge = PersistentBridge(token_file, "DEV123")
             bridge.__enter__()
             bridge.__exit__(None, None, None)
-            assert bridge._container_id is None
 
-    def test_exit_noop_when_no_container(self, token_file):
-        """Exit does nothing if no container was created."""
-        bridge = PersistentBridge(token_file)
+            mock_proc.stdin.write.assert_called_with("quit\n")
+            mock_proc.kill.assert_called_once()
+            mock_proc.wait.assert_called_once()
+            assert bridge._proc is None
+
+    def test_exit_noop_when_no_proc(self, token_file):
+        """Exit does nothing if no process was started."""
+        bridge = PersistentBridge(token_file, "DEV123")
         # Should not raise
         bridge.__exit__(None, None, None)
 
-    def test_status_runs_docker_exec(self, token_file):
-        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
-        mock_proc = MagicMock()
+    def test_status_sends_command(self, token_file):
         status_json = '{"print":{"gcode_state":"IDLE","bed_temper":25.0}}\n'
-        mock_proc.stdout.readline.return_value = status_json
-
-        mock_sel = MagicMock()
-        mock_sel.select.return_value = [True]  # data ready
-
-        with (
-            patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_create),
-            patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc) as mock_popen,
-            patch("selectors.DefaultSelector", return_value=mock_sel),
-        ):
-            with PersistentBridge(token_file) as bridge:
-                status = bridge.status("DEV123")
-
-            # Verify docker exec command
-            popen_cmd = mock_popen.call_args[0][0]
-            assert popen_cmd[0] == "docker"
-            assert "exec" in popen_cmd
-            assert "abc123def456" in popen_cmd
-            assert "bambu_cloud_bridge" in popen_cmd
-            assert "status" in popen_cmd
-            assert "DEV123" in popen_cmd
-
-            assert status["gcode_state"] == "IDLE"
-            assert status["bed_temper"] == 25.0
-            mock_proc.kill.assert_called_once()
-            mock_proc.wait.assert_called_once()
-
-    def test_status_timeout_raises(self, token_file):
-        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
-        mock_proc = MagicMock()
-
-        mock_sel = MagicMock()
-        mock_sel.select.return_value = []  # timeout — no data
-
-        with (
-            patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_create),
-            patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc),
-            patch("selectors.DefaultSelector", return_value=mock_sel),
-        ):
-            with PersistentBridge(token_file) as bridge:
-                with pytest.raises(RuntimeError, match="timed out"):
-                    bridge.status("DEV123", timeout=5)
-
-            mock_proc.kill.assert_called_once()
-
-    def test_status_non_json_raises(self, token_file):
-        mock_create = MagicMock(stdout="abc123def456\n", returncode=0)
-        mock_proc = MagicMock()
-        mock_proc.stdout.readline.return_value = "not json at all\n"
-        mock_proc.returncode = 1
+        mock_proc = self._make_mock_proc(status_line=status_json)
 
         mock_sel = MagicMock()
         mock_sel.select.return_value = [True]
 
         with (
-            patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_create),
             patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc),
             patch("selectors.DefaultSelector", return_value=mock_sel),
         ):
-            with PersistentBridge(token_file) as bridge:
+            with PersistentBridge(token_file, "DEV123") as bridge:
+                status = bridge.status()
+
+            # Verify "status\n" was written to stdin
+            mock_proc.stdin.write.assert_any_call("status\n")
+            assert status["gcode_state"] == "IDLE"
+            assert status["bed_temper"] == 25.0
+
+    def test_status_timeout_raises(self, token_file):
+        mock_proc = self._make_mock_proc()
+
+        mock_sel = MagicMock()
+        mock_sel.select.return_value = []  # timeout
+
+        with (
+            patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc),
+            patch("selectors.DefaultSelector", return_value=mock_sel),
+        ):
+            with PersistentBridge(token_file, "DEV123") as bridge:
+                with pytest.raises(RuntimeError, match="timed out"):
+                    bridge.status(timeout=5)
+
+    def test_status_non_json_raises(self, token_file):
+        mock_proc = self._make_mock_proc(status_line="not json at all\n")
+
+        mock_sel = MagicMock()
+        mock_sel.select.return_value = [True]
+
+        with (
+            patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc),
+            patch("selectors.DefaultSelector", return_value=mock_sel),
+        ):
+            with PersistentBridge(token_file, "DEV123") as bridge:
                 with pytest.raises(RuntimeError, match="non-JSON"):
-                    bridge.status("DEV123")
+                    bridge.status()
 
     def test_token_file_mounted_readonly(self, token_file):
         """Token file should be mounted as read-only in the container."""
-        mock_result = MagicMock(stdout="abc123def456\n", returncode=0)
-        with patch("fabprint.cloud.bridge.subprocess.run", return_value=mock_result) as mock_run:
-            bridge = PersistentBridge(token_file)
+        mock_proc = self._make_mock_proc()
+        with patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            bridge = PersistentBridge(token_file, "DEV123")
             bridge.__enter__()
 
-            cmd = mock_run.call_args[0][0]
+            cmd = mock_popen.call_args[0][0]
             # Find the -v mount arg
             v_idx = cmd.index("-v")
             mount_arg = cmd[v_idx + 1]
             assert mount_arg.endswith(":ro")
             assert "/input/token.json" in mount_arg
+
+    def test_enter_fails_on_non_ready(self, token_file):
+        """Should raise if bridge doesn't signal ready."""
+        mock_proc = self._make_mock_proc(ready_line='{"ready":false}\n')
+        with patch("fabprint.cloud.bridge.subprocess.Popen", return_value=mock_proc):
+            bridge = PersistentBridge(token_file, "DEV123")
+            with pytest.raises(RuntimeError, match="failed to start"):
+                bridge.__enter__()
 
 
 # ---------------------------------------------------------------------------

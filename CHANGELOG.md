@@ -5,6 +5,8 @@ All notable changes to fabprint are documented here.
 ## 0.1.119 — 2026-03-19
 
 - Speed up `fabprint status` for cloud printers: replace fixed sleeps with event-driven waits in the C++ bridge (~16s → ~3-5s typical)
+- Add `watch` mode to cloud bridge: single MQTT login/subscribe for repeated status queries
+- `fabprint status -w` now maintains one persistent MQTT session per printer instead of re-logging in every poll
 
 ## 0.1.116 — 2026-03-19
 
