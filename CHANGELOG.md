@@ -2,6 +2,11 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.106 — 2026-03-19
+
+- Init wizard preview now offers Write / Go back / Quit instead of simple y/n
+- "Go back" restarts the wizard so you can change answers
+
 ## 0.1.105 — 2026-03-19
 
 - Move slicer overrides prompt after CAD file selection in init wizard
