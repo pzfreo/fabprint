@@ -1,5 +1,6 @@
 """Tests for fabprint init, validate, and template commands."""
 
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -301,6 +302,7 @@ class TestClosestMatch:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="simple-term-menu requires Unix")
 class TestPick:
     def test_single_select(self, monkeypatch):
         """Single selection returns a one-element list."""

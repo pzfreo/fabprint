@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from io import StringIO
 from unittest.mock import patch
+
+import pytest
 
 from fabprint.ui import (
     choice_table,
@@ -202,6 +205,7 @@ class TestColorSwatch:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="simple-term-menu requires Unix")
 class TestPick:
     @patch("fabprint.ui.success")
     def test_single_select(self, mock_success):
