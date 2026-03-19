@@ -93,7 +93,7 @@ OrcaSlicer CLI is great for slicing a prepared plate. fabprint builds a reproduc
 
 ## Quick start
 
-**Prerequisites:** Python 3.11+ and either [Docker](https://docs.docker.com/get-docker/) or a local [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) install. Docker is required for Bambu Cloud printing and **recommended for reproducible slicing** — it lets you pin the exact OrcaSlicer version so every machine produces identical G-code.
+**Prerequisites:** Python 3.11+ and [Docker](https://docs.docker.com/get-docker/). Docker is central to fabprint — it runs OrcaSlicer in a container with a pinned version so every machine produces identical G-code, and it powers cloud printing via the Bambu Connect bridge. A local [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) install can be used as an alternative for slicing only.
 
 ```bash
 pip install fabprint

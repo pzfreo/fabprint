@@ -20,13 +20,14 @@ Require fabprint
 Set Shell "bash"
 Set FontSize 16
 Set Width 1400
-Set Height 800
+Set Height 1200
 Set Padding 20
 Set Theme "Catppuccin Mocha"
 Set WindowBar Colorful
 Set BorderRadius 8
 Set TypingSpeed 50ms
 Set CursorBlink false
+Set WaitTimeout 120s
 
 # =====================================================================
 # Preparation (hidden)
@@ -44,12 +45,17 @@ Sleep 1s
 
 Type "export PATH=$PATH:/usr/local/bin"
 Enter
+Type "export FABPRINT_SKIP_SLICER_DETECT=1"
+Enter
 Sleep 500ms
 
+
 # Pre-warm Docker bridge so AMS query completes during init
-Type "fabprint status > /tmp/vhs-status-debug.txt 2>&1"
+# Pre-warm Docker bridge — must complete before init starts
+Type "fabprint status > /tmp/vhs-status-debug.txt 2>&1 && echo WARM"
 Enter
-Sleep 30s
+Wait+Screen /WARM/
+Sleep 500ms
 
 Type "clear"
 Enter
@@ -140,22 +146,23 @@ Type "3"
 Enter
 
 # --- Slicer Overrides (now after CAD files) ---
-Wait+Screen /Slicer Overrides/
+Wait+Screen /slicer overrides/
 Sleep 300ms
 
 # Yes, add overrides
 Type "y"
 Enter
+Sleep 2s
 
 # Pick infill density (option 1)
-Wait+Screen /Pick override/
 Type "1"
 Enter
+Sleep 1s
 
-# Enter infill value (percent type — "15" auto-becomes "15%")
-Wait+Screen /Value for/
+# Enter infill value (percent type — "30" auto-becomes "30%")
 Type "30"
 Enter
+Sleep 1s
 
 # Don't add another override
 Wait+Screen /Add another override/
@@ -171,41 +178,31 @@ Enter
 
 # Accept detected plate depth
 Wait+Screen /Plate depth/
+Sleep 500ms
 Enter
+Sleep 3s
 
 # --- Slicer Version ---
-Wait+Screen /Slicer Version/
-Sleep 500ms
-
-# Pick first version from DockerHub list (or accept default)
-Wait+Screen /Pick version|version to pin/
+# Pick first version (list loaded from bundled JSON, no network call)
 Type "1"
 Enter
+Sleep 2s
 
 # --- Printer Connection (simple-term-menu, single-select) ---
-Wait+Screen /Printer Connection/
-Sleep 500ms
-
-# Select "workshop" (first option) — Enter picks highlighted
+# Select "workshop" (first option)
 Enter
-Sleep 500ms
+Sleep 2s
 
 # --- Project Name ---
-Wait+Screen /Project name/
-Sleep 300ms
-
 # Accept default "decoy-case"
 Enter
+Sleep 2s
 
 # --- Preview and write ---
-Wait+Screen /Write.*Go back.*Quit/
-
-# "w" to write
 Type "w"
 Enter
 
-Wait+Screen /Wrote fabprint.toml/
-Sleep 2s
+Sleep 5s
 
 Type "clear"
 Enter
