@@ -69,7 +69,6 @@ def _mock_ui_inputs(monkeypatch, inputs):
     monkeypatch.setattr("fabprint.ui.info", lambda text: None)
     monkeypatch.setattr("fabprint.ui.choice_table", lambda items, columns: None)
     monkeypatch.setattr("fabprint.ui.preview_toml", lambda text: None)
-    monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
 
 
 class TestSetupPrinter:

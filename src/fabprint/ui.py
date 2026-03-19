@@ -103,7 +103,7 @@ def color_swatch(hex_color: str) -> str:
 # Interactive picker
 # ---------------------------------------------------------------------------
 
-_FILTER_THRESHOLD = 10  # switch to search mode above this many items
+_MAX_VISIBLE = 15  # max rows shown in the live picker
 
 
 def _highlight_match(text: str, query: str) -> str:
@@ -119,18 +119,73 @@ def _highlight_match(text: str, query: str) -> str:
     return f"{before}[bold yellow]{escape(match)}[/bold yellow]{after}"
 
 
-def _show_options(
-    names: list[str],
-    query: str | None = None,
-) -> None:
-    """Display a numbered list of options, highlighting matches if query is set."""
+def _build_picker_display(
+    filtered: list[str],
+    query: str,
+    prompt: str,
+    allow_multi: bool,
+    total: int,
+) -> Table:
+    """Build the Rich renderable for the live picker."""
+    outer = Table.grid(padding=(0, 0))
+
+    # Options table
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_column("#", style="dim", width=4, justify="right")
     table.add_column("Name")
-    for i, name in enumerate(names, 1):
+    visible = filtered[:_MAX_VISIBLE]
+    for i, name in enumerate(visible, 1):
         label = _highlight_match(name, query) if query else escape(name)
         table.add_row(str(i), label)
-    console.print(table)
+    outer.add_row(table)
+
+    if len(filtered) > _MAX_VISIBLE:
+        remaining = len(filtered) - _MAX_VISIBLE
+        outer.add_row(f"  [dim]... and {remaining} more (keep typing to narrow)[/dim]")
+    elif not filtered:
+        outer.add_row("  [dim]No matches — keep typing or backspace[/dim]")
+
+    # Status / input line
+    multi_hint = " [dim](comma-sep, 'all')[/dim]" if allow_multi else ""
+    cursor = f"  [bold]{prompt}>[/bold] {escape(query)}[blink]▌[/blink]{multi_hint}"
+    outer.add_row(cursor)
+
+    return outer
+
+
+def _readkey() -> str:
+    """Read a single keypress, cross-platform."""
+    import sys
+
+    if sys.platform == "win32":
+        import msvcrt
+
+        ch = msvcrt.getwch()
+        if ch in ("\x00", "\xe0"):
+            msvcrt.getwch()  # consume second byte of special key
+            return ""
+        return ch
+    else:
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+            # Handle escape sequences (arrow keys etc)
+            if ch == "\x1b":
+                import select
+
+                if select.select([sys.stdin], [], [], 0.05)[0]:
+                    sys.stdin.read(1)  # [
+                    if select.select([sys.stdin], [], [], 0.05)[0]:
+                        sys.stdin.read(1)  # A/B/C/D
+                return ""
+            return ch
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 def pick(
@@ -138,88 +193,148 @@ def pick(
     prompt: str = "Pick",
     allow_multi: bool = False,
 ) -> list[int]:
-    """Interactive picker: type to search, enter a number to select.
+    """Interactive picker with live search filtering.
 
-    For short lists (<=10 items), shows all options immediately.
-    For long lists, prompts for a search term first, then shows matches.
-
-    Typing text at any prompt filters the list. Typing a number selects.
+    Type letters to filter the list in real-time. Type a number to select.
+    Backspace to edit. Enter to confirm when one match remains or a number
+    is entered.
     Returns a list of indices into the original ``options`` list.
     """
-    filtered = options
+    from rich.live import Live
+
+    search = ""  # text filter
+    sel_buf = ""  # numeric selection buffer
+    search_locked = False  # True after user presses Enter to lock search
+    filtered = list(options)
     filter_indices = list(range(len(options)))
-    query: str | None = None
 
-    # Long list: search first
-    if len(options) > _FILTER_THRESHOLD:
-        info(f"{len(options)} options available — type to search")
-        # Show preview of naming style
-        for ex in options[:5]:
-            console.print(f"    [dim]{escape(ex)}[/dim]")
-        if len(options) > 5:
-            console.print(f"    [dim]... and {len(options) - 5} more[/dim]")
+    info(f"{len(options)} options — type to search, enter number to select")
 
+    def _display_query() -> str:
+        return search + ((" → " + sel_buf) if sel_buf else "")
+
+    with Live(
+        _build_picker_display(filtered, _display_query(), prompt, allow_multi, len(options)),
+        console=console,
+        refresh_per_second=15,
+        transient=True,
+    ) as live:
         while True:
-            query = prompt_str("Search")
-            if not query:
+            ch = _readkey()
+
+            if not ch:
                 continue
-            q = query.lower()
-            matches = [(i, o) for i, o in enumerate(options) if q in o.lower()]
-            if matches:
+
+            # Ctrl-C / Ctrl-D → abort
+            if ch in ("\x03", "\x04"):
+                raise KeyboardInterrupt
+
+            # Backspace
+            if ch in ("\x7f", "\x08"):
+                if sel_buf:
+                    sel_buf = sel_buf[:-1]
+                elif search:
+                    search = search[:-1]
+            # Enter
+            elif ch in ("\r", "\n"):
+                # If exactly one match, auto-select it
+                if len(filtered) == 1:
+                    break
+                # "all" for multi-select → select everything
+                if allow_multi and search.strip().lower() == "all":
+                    sel = list(range(len(options)))
+                    filtered = options
+                    filter_indices = list(range(len(options)))
+                    break
+                # Try selection buffer as number
+                if sel_buf.strip():
+                    maybe = _try_select(sel_buf, filtered, filter_indices, allow_multi)
+                    if maybe is not None:
+                        sel = maybe
+                        break
+                # Enter with search results: lock search, switch to selection
+                if search and not search_locked and len(filtered) > 0:
+                    search_locked = True
+                    live.update(
+                        _build_picker_display(
+                            filtered,
+                            _display_query(),
+                            prompt,
+                            allow_multi,
+                            len(options),
+                        )
+                    )
+                    continue
+                live.update(
+                    _build_picker_display(
+                        filtered,
+                        _display_query(),
+                        prompt,
+                        allow_multi,
+                        len(options),
+                    )
+                )
+                continue
+            # Regular character
+            elif ch.isprintable():
+                if search_locked:
+                    # After search is locked, everything goes to selection
+                    sel_buf += ch
+                elif search or not ch.isdigit():
+                    search += ch
+                    sel_buf = ""
+                else:
+                    sel_buf += ch
+            else:
+                continue
+
+            # Re-filter by search text
+            if search:
+                q = search.lower()
+                matches = [(i, o) for i, o in enumerate(options) if q in o.lower()]
                 filter_indices = [i for i, _ in matches]
                 filtered = [o for _, o in matches]
-                info(f"{len(matches)} match(es)")
-                break
-            warn(f"No matches for '{query}'. Try again.")
-    else:
-        # Short list: show everything
-        pass
+            else:
+                filtered = list(options)
+                filter_indices = list(range(len(options)))
 
-    _show_options(filtered, query)
+            live.update(
+                _build_picker_display(
+                    filtered,
+                    _display_query(),
+                    prompt,
+                    allow_multi,
+                    len(options),
+                )
+            )
 
-    # Selection loop
-    multi_hint = " (comma-separated, 'all', or type to search)" if allow_multi else ""
-    while True:
-        raw = prompt_str(prompt)
-        if not raw:
-            continue
+    # Show what was selected
+    if len(filtered) == 1:
+        success(filtered[0])
+        return [filter_indices[0]]
 
-        # "all" for multi-select
-        if allow_multi and raw.lower() == "all":
-            return list(filter_indices)
+    # sel was set by _try_select before break
+    for p in sel:  # type: ignore[union-attr]
+        success(filtered[p])
+    return [filter_indices[p] for p in sel]  # type: ignore[union-attr]
 
-        # If input starts with a digit, try to parse as selection
-        if raw[0].isdigit():
-            try:
-                if allow_multi:
-                    picks = [int(x.strip()) - 1 for x in raw.split(",")]
-                else:
-                    picks = [int(raw) - 1]
-                if all(0 <= p < len(filtered) for p in picks):
-                    selected = [filter_indices[p] for p in picks]
-                    # Show what was selected
-                    for p in picks:
-                        success(filtered[p])
-                    return selected
-            except ValueError:
-                pass
-            console.print(f"  Enter 1-{len(filtered)}{multi_hint}")
-            continue
 
-        # Otherwise treat as a new search
-        query = raw
-        q = query.lower()
-        matches = [(i, o) for i, o in enumerate(options) if q in o.lower()]
-        if matches:
-            filter_indices = [i for i, _ in matches]
-            filtered = [o for _, o in matches]
-            info(f"{len(matches)} match(es) for '{query}':")
-            _show_options(filtered, query)
+def _try_select(
+    query: str,
+    filtered: list[str],
+    filter_indices: list[int],
+    allow_multi: bool,
+) -> list[int] | None:
+    """Try to parse query as a numeric selection. Returns pick indices or None."""
+    try:
+        if allow_multi and "," in query:
+            picks = [int(x.strip()) - 1 for x in query.split(",")]
+        elif allow_multi and query.strip().lower() == "all":
+            return list(range(len(filtered)))
         else:
-            warn(f"No matches for '{query}'. Try again.")
-            # Reset to full list
-            filtered = options
-            filter_indices = list(range(len(options)))
-            query = None
-            if len(options) <= _FILTER_THRESHOLD:
-                _show_options(filtered)
+            picks = [int(query.strip()) - 1]
+        if all(0 <= p < len(filtered) for p in picks):
+            return picks
+    except ValueError:
+        pass
+    return None

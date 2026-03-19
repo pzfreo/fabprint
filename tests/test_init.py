@@ -72,7 +72,20 @@ def _mock_ui_inputs(monkeypatch, inputs):
     monkeypatch.setattr("fabprint.ui.info", lambda text: None)
     monkeypatch.setattr("fabprint.ui.choice_table", lambda items, columns: None)
     monkeypatch.setattr("fabprint.ui.preview_toml", lambda text: None)
-    monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+
+    def mock_pick(options, prompt="Pick", allow_multi=False):
+        try:
+            val = next(it)
+        except StopIteration:
+            return [0]
+        if val == "all":
+            return list(range(len(options)))
+        try:
+            return [int(val) - 1]
+        except (ValueError, TypeError):
+            return [0]
+
+    monkeypatch.setattr("fabprint.ui.pick", mock_pick)
 
 
 # ---------------------------------------------------------------------------
@@ -206,49 +219,79 @@ class TestClosestMatch:
 # ---------------------------------------------------------------------------
 
 
+def _simulate_keys(monkeypatch, keystrokes: list[str]):
+    """Mock _readkey to return a sequence of keystrokes."""
+    import fabprint.ui as ui_mod
+
+    it = iter(keystrokes)
+    monkeypatch.setattr(ui_mod, "_readkey", lambda: next(it))
+    # Use a no-op Live context to avoid terminal manipulation in tests
+    from unittest.mock import MagicMock
+
+    mock_live_cls = MagicMock()
+    mock_live_instance = MagicMock()
+    mock_live_instance.__enter__ = lambda self: self
+    mock_live_instance.__exit__ = lambda self, *a: None
+    mock_live_cls.return_value = mock_live_instance
+    monkeypatch.setattr("rich.live.Live", mock_live_cls)
+
+
 class TestPick:
-    def test_short_list_direct_select(self, monkeypatch):
-        """Short lists show all options; entering a number selects."""
+    def test_direct_select_by_number(self, monkeypatch):
+        """Typing a number + enter selects that item."""
         from fabprint import ui
 
-        _mock_ui_inputs(monkeypatch, ["2"])
-        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+        # Type "2" then enter
+        _simulate_keys(monkeypatch, ["2", "\r"])
         result = ui.pick(["A", "B", "C"], prompt="Pick")
         assert result == [1]  # index 1 = "B"
 
-    def test_long_list_search_then_select(self, monkeypatch):
-        """Long lists require a search first, then selection."""
+    def test_search_narrows_to_one(self, monkeypatch):
+        """Typing enough to narrow to one result, then enter auto-selects."""
         from fabprint import ui
 
-        options = [f"Profile {i}" for i in range(20)]
-        # First input: search "Profile 5", then select "1" from filtered
-        _mock_ui_inputs(monkeypatch, ["Profile 5", "1"])
-        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
-        result = ui.pick(options, prompt="Pick")
-        # "Profile 5" and "Profile 15" match; selecting 1 picks "Profile 5"
-        assert result == [5]
-
-    def test_multi_select_all(self, monkeypatch):
-        """'all' selects every item."""
-        from fabprint import ui
-
-        _mock_ui_inputs(monkeypatch, ["all"])
-        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
-        result = ui.pick(["A", "B", "C"], prompt="Pick", allow_multi=True)
-        assert result == [0, 1, 2]
-
-    def test_re_search_from_selection(self, monkeypatch):
-        """Typing text at selection prompt re-filters."""
-        from fabprint import ui
-
-        # Short list: "PLA" filters, then "1" selects
-        _mock_ui_inputs(monkeypatch, ["PLA", "1"])
-        monkeypatch.setattr("fabprint.ui._show_options", lambda *a, **kw: None)
+        # Type "PETG" then enter — only one match
+        _simulate_keys(monkeypatch, list("PETG") + ["\r"])
         result = ui.pick(
             ["Generic PLA @base", "Generic PETG @base", "Bambu PLA Basic"],
             prompt="Pick",
         )
-        assert result == [0]  # "Generic PLA @base"
+        assert result == [1]  # "Generic PETG @base"
+
+    def test_search_then_select(self, monkeypatch):
+        """Type to filter, then enter a number to select from filtered list."""
+        from fabprint import ui
+
+        options = [f"Profile {i}" for i in range(20)]
+        # Type "Profile " to filter, Enter to lock search, "5" + Enter to select 5th
+        # "Profile " matches all 20; lock search; select #5 = "Profile 4"
+        # Or: type enough to narrow, then Enter auto-selects if 1 match
+        _simulate_keys(monkeypatch, list("Profile 15") + ["\r"])
+        result = ui.pick(options, prompt="Pick")
+        assert result == [15]  # "Profile 15" is only exact match
+
+    def test_multi_select_all(self, monkeypatch):
+        """'all' + enter selects every item."""
+        from fabprint import ui
+
+        _simulate_keys(monkeypatch, list("all") + ["\r"])
+        result = ui.pick(["A", "B", "C"], prompt="Pick", allow_multi=True)
+        assert result == [0, 1, 2]
+
+    def test_backspace_editing(self, monkeypatch):
+        """Backspace removes last character from query."""
+        from fabprint import ui
+
+        # Type "PETX", backspace to "PET", then "G" → "PETG", enter to auto-select
+        _simulate_keys(
+            monkeypatch,
+            list("PETX") + ["\x7f"] + list("G") + ["\r"],
+        )
+        result = ui.pick(
+            ["Generic PLA @base", "Generic PETG @base", "Bambu PLA Basic"],
+            prompt="Pick",
+        )
+        assert result == [1]  # "Generic PETG @base"
 
 
 class TestHighlightMatch:
