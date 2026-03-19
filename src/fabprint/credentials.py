@@ -12,6 +12,14 @@ from pathlib import Path
 
 from fabprint import FabprintError
 
+
+def mask_serial(serial: str) -> str:
+    """Mask a printer serial, keeping only the last 4 characters visible."""
+    if len(serial) <= 4:
+        return serial
+    return "*" * (len(serial) - 4) + serial[-4:]
+
+
 # Valid printer types and their required/optional fields
 PRINTER_TYPES = {
     "bambu-lan": {
@@ -300,7 +308,7 @@ def _pick_cloud_printer(cloud: dict | None) -> str | None:
         model = d.get("dev_product_name", d.get("dev_model_name", "?"))
         serial = d.get("dev_id", "?")
         online = "online" if d.get("online") else "offline"
-        print(f"    [{i}] {dname} ({model}) — {serial} [{online}]")
+        print(f"    [{i}] {dname} ({model}) — {mask_serial(serial)} [{online}]")
 
     while True:
         raw = input("  Pick a printer [1]: ").strip()
@@ -318,7 +326,7 @@ def _pick_cloud_printer(cloud: dict | None) -> str | None:
     chosen = devices[idx]
     serial = chosen.get("dev_id", "")
     dname = chosen.get("name", "")
-    print(f"  Selected: {dname} (serial: {serial})")
+    print(f"  Selected: {dname} (serial: {mask_serial(serial)})")
     return serial
 
 

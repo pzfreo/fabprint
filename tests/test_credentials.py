@@ -10,9 +10,24 @@ from fabprint.credentials import (
     cloud_token_json,
     list_printers,
     load_cloud_credentials,
+    mask_serial,
     save_cloud_credentials,
     setup_printer,
 )
+
+
+class TestMaskSerial:
+    def test_long_serial(self):
+        assert mask_serial("01P00A451601106") == "***********1106"
+
+    def test_short_serial(self):
+        assert mask_serial("AB") == "AB"
+
+    def test_exactly_four(self):
+        assert mask_serial("ABCD") == "ABCD"
+
+    def test_five_chars(self):
+        assert mask_serial("ABCDE") == "*BCDE"
 
 
 class TestSetupPrinter:

@@ -2,6 +2,10 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.92 — 2026-03-19
+
+- Mask printer serial numbers in setup and status output for security (shows last 4 chars only)
+
 ## 0.1.89 — 2026-03-18
 
 - Add bundled OrcaSlicer profile name lists for Docker-only environments

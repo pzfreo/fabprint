@@ -121,6 +121,8 @@ def _show_devices(token: str) -> None:
             dev_id = d.get("dev_id", "?")
             online = "online" if d.get("online") else "offline"
             model = d.get("dev_product_name", d.get("dev_model_name", "?"))
-            print(f"    {name} ({model}) — {dev_id} [{online}]")
+            from fabprint.credentials import mask_serial
+
+            print(f"    {name} ({model}) — {mask_serial(dev_id)} [{online}]")
     else:
         print("    No printers found")
