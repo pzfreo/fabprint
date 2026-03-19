@@ -2,6 +2,12 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.111 — 2026-03-19
+
+- Add tests for PersistentBridge (container lifecycle, status, timeout, token mount)
+- Add tests for _run_bridge Docker pull behaviour (pull, fallback, macOS, Linux, mounts)
+- Add Docker optimization plan document
+
 ## 0.1.106 — 2026-03-19
 
 - Init wizard preview now offers Write / Go back / Quit instead of simple y/n
