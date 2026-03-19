@@ -148,6 +148,7 @@ static bool g_verbose = false;
 static std::mutex g_msg_mutex;
 static std::string g_last_full_message;
 static std::atomic<bool> g_got_full_status{false};
+static std::atomic<bool> g_printer_subscribed{false};
 
 // Loaded function pointers (populated by load_library)
 static fn_create_agent      fp_create_agent = nullptr;
@@ -226,6 +227,14 @@ static void vlog(const char* fmt, ...) {
     vfprintf(stderr, fmt, args);
     va_end(args);
     fflush(stderr);
+}
+
+// Poll an atomic flag with short intervals, returning as soon as it becomes
+// true or timeout_ms elapses. Returns the final flag value.
+static bool wait_for(std::atomic<bool>& flag, int timeout_ms, int poll_ms = 100) {
+    for (int elapsed = 0; elapsed < timeout_ms && !flag.load(); elapsed += poll_ms)
+        std::this_thread::sleep_for(std::chrono::milliseconds(poll_ms));
+    return flag.load();
 }
 
 // ---------------------------------------------------------------------------
@@ -348,6 +357,7 @@ static bool init_agent(const std::string& token_json_raw, bool quiet = false) {
     if (fp_set_printer_cb) {
         fp_set_printer_cb(g_agent, [](std::string topic) {
             vlog("  printer_connected: %s\n", topic.c_str());
+            g_printer_subscribed = true;
         });
     }
     if (fp_set_sub_fail_cb) {
@@ -381,7 +391,7 @@ static bool init_agent(const std::string& token_json_raw, bool quiet = false) {
         fprintf(stderr, "error: login failed (change_user returned %d)\n", ret);
         return false;
     }
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    wait_for(g_user_logged_in, 2000, 50);
 
     if (fp_is_user_login && !fp_is_user_login(g_agent)) {
         fprintf(stderr, "error: login did not succeed\n");
@@ -395,8 +405,8 @@ static bool init_agent(const std::string& token_json_raw, bool quiet = false) {
         vlog("connect_server returned: %d\n", ret);
     }
 
-    for (int i = 0; i < 30 && !g_server_connected; i++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    for (int i = 0; i < 150 && !g_server_connected; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (fp_is_connected && fp_is_connected(g_agent))
             g_server_connected = true;
     }
@@ -410,30 +420,46 @@ static bool init_agent(const std::string& token_json_raw, bool quiet = false) {
 }
 
 // Subscribe to a device and send pushall. Returns true on success.
-static bool subscribe_and_pushall(const std::string& device_id, int wait_secs = 20) {
+// If early_exit is provided, the post-pushall wait returns early (with a short
+// grace period) once the flag becomes true.
+static bool subscribe_and_pushall(const std::string& device_id, int wait_secs = 20,
+                                   std::atomic<bool>* early_exit = nullptr) {
     if (fp_set_machine) fp_set_machine(g_agent, device_id);
 
+    g_printer_subscribed = false;
     if (fp_start_sub) {
         int ret = fp_start_sub(g_agent, std::string("device"));
         vlog("start_subscribe: %d\n", ret);
     }
 
-    // Wait for subscription to establish before sending pushall
-    std::this_thread::sleep_for(std::chrono::seconds(3));
+    // Wait for subscription callback (up to 3s fallback)
+    if (wait_for(g_printer_subscribed, 3000, 100))
+        vlog("Subscription ready\n");
+    else
+        vlog("Subscription timeout — sending pushall anyway\n");
 
     std::string pushall = R"({"pushing":{"sequence_id":"0","command":"pushall","version":1,"push_target":1}})";
 
     // Retry pushall a few times — sometimes the first attempt fails
     int ret = -1;
     for (int i = 0; i < 3 && ret != 0; i++) {
-        if (i > 0) std::this_thread::sleep_for(std::chrono::seconds(2));
+        if (i > 0) std::this_thread::sleep_for(std::chrono::seconds(1));
         if (fp_send_msg_legacy) ret = fp_send_msg_legacy(g_agent, device_id, pushall, 0);
         if (ret != 0 && fp_send_msg) ret = fp_send_msg(g_agent, device_id, pushall, 0, 0);
         vlog("pushall attempt %d: %d\n", i + 1, ret);
     }
 
-    vlog("Waiting %ds for printer status...\n", wait_secs);
-    std::this_thread::sleep_for(std::chrono::seconds(wait_secs));
+    // Wait for messages, but return early if the caller signals completion
+    int wait_ms = wait_secs * 1000;
+    vlog("Waiting up to %ds for printer status...\n", wait_secs);
+    for (int elapsed = 0; elapsed < wait_ms; elapsed += 100) {
+        if (early_exit && early_exit->load()) {
+            vlog("Got data — collecting remaining messages\n");
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     return true;
 }
 
@@ -522,16 +548,20 @@ static int cmd_status(const std::string& token_json_raw, const std::string& devi
     std::vector<std::string> messages;
     std::mutex msg_list_mutex;
 
+    g_got_full_status = false;
     if (fp_set_message_cb) {
         fp_set_message_cb(g_agent, [&messages, &msg_list_mutex](std::string dev_id, std::string msg) {
             if (msg.empty() || msg == "{}") return;
             vlog("  status_msg: %s\n", msg.substr(0, 200).c_str());
             std::lock_guard<std::mutex> lock(msg_list_mutex);
             messages.push_back(msg);
+            // Full status dump contains gcode_state and is typically >500 bytes
+            if (msg.size() > 500 && msg.find("gcode_state") != std::string::npos)
+                g_got_full_status = true;
         });
     }
 
-    subscribe_and_pushall(device_id, 10);
+    subscribe_and_pushall(device_id, 10, &g_got_full_status);
 
     // Find the largest/most complete message (best approximation of full status)
     std::lock_guard<std::mutex> lock(msg_list_mutex);
