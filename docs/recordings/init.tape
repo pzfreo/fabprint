@@ -169,8 +169,7 @@ Enter
 Sleep 1s
 
 # --- Step 8: Slicer Overrides ---
-Wait+Screen /Slicer Overrides/
-Sleep 300ms
+Sleep 2s
 
 # Yes, add overrides
 Type "y"
@@ -185,10 +184,9 @@ Sleep 1s
 # Enter infill value (percent type — "30" auto-becomes "30%")
 Type "30"
 Enter
-Sleep 1s
+Sleep 2s
 
-# Don't add another override
-Wait+Screen /Add another override/
+# Don't add another override (accept default n)
 Enter
 Sleep 2s
 
@@ -231,7 +229,7 @@ Type "# Run the full pipeline"
 Enter
 Sleep 1s
 
-Type "fabprint run"
+Type "fabprint run --dry-run"
 Enter
 
 Wait+Screen /Loaded.*part/
@@ -250,7 +248,7 @@ Sleep 1s
 Wait+Screen /Print time|filament/
 Sleep 1s
 
-Wait+Screen /Sent to printer/
+Wait+Screen /Dry run|Sent to printer/
 Sleep 3s
 
 # Hold final frame
