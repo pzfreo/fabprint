@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import requests
 
 from fabprint import FabprintError
+
+log = logging.getLogger(__name__)
 
 API_BASE = "https://api.bambulab.com"
 
@@ -82,7 +85,8 @@ def _login(email: str, password: str) -> tuple[str, str]:
         refresh_token = data.get("refreshToken", "")
 
     if not token:
-        raise FabprintError(f"Login failed. Response: {json.dumps(data, indent=2)}")
+        log.debug("Login response: %s", json.dumps(data, indent=2))
+        raise FabprintError("Login failed — no access token in response")
 
     return token, refresh_token
 
