@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
 
 from fabprint.config import DEFAULT_STAGES, VALID_ORIENTS
 
@@ -84,12 +83,6 @@ class ValidationResult:
     def __iter__(self):  # type: ignore[override]
         """Iterate over warnings for backward compatibility."""
         return iter(self.warnings)
-
-    def __len__(self) -> int:
-        return len(self.warnings)
-
-    def __bool__(self) -> bool:
-        return len(self.warnings) > 0
 
 
 def validate_config(path: Path) -> ValidationResult:
@@ -491,7 +484,7 @@ def _prompt_yn(prompt: str, default: bool = True) -> bool:
 
 # Each entry: (display_name, slicer_key, value_spec)
 # value_spec is either ("text", "hint string") or ("choice", [...options])
-OverrideSpec = tuple[str, str, Union[tuple[str, str], tuple[str, list[str]]]]
+OverrideSpec = tuple[str, str, tuple[str, str] | tuple[str, list[str]]]
 
 COMMON_OVERRIDES: list[OverrideSpec] = [
     ("Infill density", "sparse_infill_density", ("text", "e.g. 15%, 25%, 50%")),
@@ -572,9 +565,8 @@ def _prompt_overrides() -> dict[str, str]:
             name, key, spec = COMMON_OVERRIDES[idx]
             ui.success(name)
 
-            if spec[0] == "choice":
+            if spec[0] == "choice" and isinstance(spec[1], list):
                 choices = spec[1]
-                assert isinstance(choices, list)
                 ui.choice_table([(c,) for c in choices], ["Option"])
                 cpick = _prompt_int("Pick value", 1)
                 cidx = cpick - 1

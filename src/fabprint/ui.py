@@ -80,14 +80,21 @@ def preview_toml(text: str) -> None:
 def choice_table(
     items: Sequence[Sequence[str]],
     columns: list[str],
+    *,
+    markup: bool = False,
 ) -> None:
-    """Print a numbered selection table."""
+    """Print a numbered selection table.
+
+    Set ``markup=True`` to allow Rich markup in cell values (e.g. colors).
+    By default all values are escaped to prevent accidental markup injection.
+    """
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
     table.add_column("#", style="dim", width=4)
     for col in columns:
         table.add_column(col)
     for i, row in enumerate(items, 1):
-        table.add_row(str(i), *row)
+        cells = row if markup else tuple(escape(c) for c in row)
+        table.add_row(str(i), *cells)
     console.print(table)
 
 
@@ -154,7 +161,11 @@ def _build_picker_display(
 
 
 def _readkey() -> str:
-    """Read a single keypress, cross-platform."""
+    """Read a single keypress, cross-platform.
+
+    Note: reads 1 byte, so multi-byte UTF-8 chars (accented names etc.)
+    are not supported. All current option lists are ASCII.
+    """
     import sys
 
     if sys.platform == "win32":
@@ -204,6 +215,7 @@ def pick(
 
     search = ""  # text filter
     sel_buf = ""  # numeric selection buffer
+    sel: list[int] = []  # resolved selection indices (set before break)
     search_locked = False  # True after user presses Enter to lock search
     filtered = list(options)
     filter_indices = list(range(len(options)))
@@ -313,10 +325,9 @@ def pick(
         success(filtered[0])
         return [filter_indices[0]]
 
-    # sel was set by _try_select before break
-    for p in sel:  # type: ignore[union-attr]
+    for p in sel:
         success(filtered[p])
-    return [filter_indices[p] for p in sel]  # type: ignore[union-attr]
+    return [filter_indices[p] for p in sel]
 
 
 def _try_select(

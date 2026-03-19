@@ -127,6 +127,6 @@ def _show_devices(token: str) -> None:
             model = d.get("dev_product_name", d.get("dev_model_name", "?"))
             online_str = "[green]online[/green]" if d.get("online") else "[dim]offline[/dim]"
             items.append((name, model, mask_serial(dev_id), online_str))
-        ui.choice_table(items, ["Name", "Model", "Serial", "Status"])
+        ui.choice_table(items, ["Name", "Model", "Serial", "Status"], markup=True)
     else:
         ui.info("No printers found")

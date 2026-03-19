@@ -313,7 +313,7 @@ def _pick_cloud_printer(cloud: dict | None) -> str | None:
         serial = d.get("dev_id", "?")
         online_str = "[green]online[/green]" if d.get("online") else "[dim]offline[/dim]"
         items.append((dname, model, mask_serial(serial), online_str))
-    ui.choice_table(items, ["Name", "Model", "Serial", "Status"])
+    ui.choice_table(items, ["Name", "Model", "Serial", "Status"], markup=True)
 
     while True:
         pick = ui.prompt_int("Pick a printer", 1)
