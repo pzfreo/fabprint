@@ -460,7 +460,7 @@ class TestWizard:
                 "256",  # plate width
                 "256",  # plate depth
                 "",  # slicer version (skip)
-                "n",  # Include print stage?
+                "n",  # Configure printer connection? -> no
                 "y",  # Write to fabprint.toml?
             ],
         )
@@ -498,8 +498,8 @@ class TestWizard:
                 "my-part.stl",  # Part file path
                 "256",  # plate width
                 "256",  # plate depth
-                "",  # slicer version
-                "n",  # Include print stage?
+                "",  # slicer version (skip)
+                "n",  # Configure printer connection? -> no
                 "n",  # Write?
             ],
         )

@@ -686,12 +686,8 @@ def run_wizard(output: Path | None = None) -> str:
     slicer_version = _prompt_slicer_version()
     ui.console.print()
 
-    # --- Step 9: Pipeline stages ---
-    ui.heading("Pipeline")
+    # --- Step 9: Pipeline stages (always include print) ---
     stages = list(DEFAULT_STAGES)
-    if not _prompt_yn("Include print stage in pipeline?"):
-        stages = [s for s in stages if s != "print"]
-    ui.console.print()
 
     # --- Step 10: Printer connection ---
     printer_name = None
