@@ -11,6 +11,9 @@ All notable changes to fabprint are documented here.
 - Use `TYPE_CHECKING` guard for Rich `Status` import in adapters.py
 - Replace bare `print()` with `log.info()` in printer.py
 - Add `require_file()` helper to reduce duplicated file-existence checks across cloud.py, slicer.py, gcode.py
+- Extract `_resolve_filaments()` helper from `load_config()` for readability
+- Split `run_wizard()` into 6 focused step functions
+- Add `PrinterCredentials` TypedDict for structured credential returns
 
 ## 0.1.95 — 2026-03-19
 

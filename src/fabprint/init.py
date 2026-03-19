@@ -599,18 +599,13 @@ def _prompt_overrides() -> dict[str, str]:
     return overrides
 
 
-def run_wizard(output: Path | None = None) -> str:
-    """Run the interactive init wizard and return generated TOML."""
+def _wizard_setup_printers(configured: dict[str, dict]) -> dict[str, dict]:
+    """Step 0: Check for configured printers, optionally run setup.
+
+    Returns the (possibly refreshed) configured printers dict.
+    """
     from fabprint import ui
-    from fabprint.profiles import discover_profile_names
 
-    ui.heading("fabprint init")
-    ui.console.print()
-
-    engine = "orca"
-
-    # --- Step 0: Check for configured printers ---
-    configured = _list_configured_printers()
     if not configured:
         ui.warn("No printers configured yet.")
         if _prompt_yn("Run 'fabprint setup' to add a printer first?"):
@@ -624,23 +619,18 @@ def run_wizard(output: Path | None = None) -> str:
         else:
             ui.info("Continuing without printer setup.")
             ui.console.print()
+    return configured
 
-    # --- Query AMS trays in background while we ask other questions ---
-    ams_future = None
-    if configured:
-        from concurrent.futures import ThreadPoolExecutor
 
-        _ams_pool = ThreadPoolExecutor(max_workers=1)
-        ams_future = _ams_pool.submit(_query_ams_trays, configured)
+def _wizard_pick_profiles(
+    engine: str,
+    profiles: dict[str, list[str]],
+) -> tuple[str | None, str | None, dict[str, str], _MachineInfo]:
+    """Steps 1/3/4/4b: Pick printer profile, process profile, and overrides.
 
-    # --- Step 1: Discover profiles (system → pinned → bundled) ---
-    profiles, profile_source = discover_profile_names(engine)
-    if profile_source == "bundled":
-        ui.info("Using bundled profile list — install OrcaSlicer locally for full access")
-        ui.console.print()
-    elif profile_source == "none":
-        ui.warn("No profiles found — profile names will need to be entered manually")
-        ui.console.print()
+    Returns ``(printer_profile, process_profile, overrides, machine_info)``.
+    """
+    from fabprint import ui
 
     # --- Step 3: Pick printer profile ---
     printer_profile = None
@@ -673,17 +663,20 @@ def run_wizard(output: Path | None = None) -> str:
     overrides = _prompt_overrides()
     ui.console.print()
 
-    # --- Collect AMS results (should be done by now) ---
-    ams_trays: list[dict] = []
-    if ams_future is not None:
-        try:
-            ams_trays = ams_future.result(timeout=10)
-        except Exception:
-            log.debug("AMS tray query failed", exc_info=True)
-        if ams_trays:
-            ui.info(f"AMS detected ({len(ams_trays)} slot(s))")
+    return printer_profile, process_profile, overrides, machine_info
 
-    # --- Step 5: Pick filament(s) ---
+
+def _wizard_pick_filaments(
+    profiles: dict[str, list[str]],
+    machine_info: _MachineInfo,
+    ams_trays: list[dict],
+) -> list[str]:
+    """Step 5: Collect AMS results and pick filament profiles.
+
+    Returns a list of filament profile names.
+    """
+    from fabprint import ui
+
     filament_names: list[str] = []
     filament_options = sorted(profiles.get("filament", []))
 
@@ -728,7 +721,16 @@ def run_wizard(output: Path | None = None) -> str:
         filament_names = [fil]
         ui.console.print()
 
-    # --- Step 6: Discover CAD files ---
+    return filament_names
+
+
+def _wizard_pick_parts(filament_names: list[str]) -> list[dict]:
+    """Step 6: Discover CAD files and configure copies/orient/filament.
+
+    Returns a list of part config dicts.
+    """
+    from fabprint import ui
+
     ui.heading("CAD Files")
     cwd = Path.cwd()
     candidates = sorted(
@@ -770,6 +772,18 @@ def run_wizard(output: Path | None = None) -> str:
         parts_config.append({"file": file_name, "copies": 1, "orient": "flat", "filament": 1})
         ui.console.print()
 
+    return parts_config
+
+
+def _wizard_pick_plate_and_version(
+    machine_info: _MachineInfo,
+) -> tuple[int, int, str | None]:
+    """Steps 7-8: Pick plate size and slicer version.
+
+    Returns ``(plate_x, plate_y, slicer_version)``.
+    """
+    from fabprint import ui
+
     # --- Step 7: Plate size (default from printer profile if available) ---
     ui.heading("Build Plate")
     default_plate = (256, 256)
@@ -786,10 +800,16 @@ def run_wizard(output: Path | None = None) -> str:
     slicer_version = _prompt_slicer_version()
     ui.console.print()
 
-    # --- Step 9: Pipeline stages (always include print) ---
-    stages = list(DEFAULT_STAGES)
+    return plate_x, plate_y, slicer_version
 
-    # --- Step 10: Printer connection ---
+
+def _wizard_pick_printer(stages: list[str]) -> str | None:
+    """Step 10: Pick printer connection.
+
+    Returns the printer name, or ``None`` if skipped.
+    """
+    from fabprint import ui
+
     printer_name = None
     if "print" in stages:
         ui.heading("Printer Connection")
@@ -804,6 +824,68 @@ def run_wizard(output: Path | None = None) -> str:
             if not printer_name:
                 printer_name = None
         ui.console.print()
+    return printer_name
+
+
+def run_wizard(output: Path | None = None) -> str:
+    """Run the interactive init wizard and return generated TOML."""
+    from fabprint import ui
+    from fabprint.profiles import discover_profile_names
+
+    ui.heading("fabprint init")
+    ui.console.print()
+
+    engine = "orca"
+
+    # --- Step 0: Check for configured printers ---
+    configured = _wizard_setup_printers(_list_configured_printers())
+
+    # --- Query AMS trays in background while we ask other questions ---
+    ams_future = None
+    if configured:
+        from concurrent.futures import ThreadPoolExecutor
+
+        _ams_pool = ThreadPoolExecutor(max_workers=1)
+        ams_future = _ams_pool.submit(_query_ams_trays, configured)
+
+    # --- Step 1: Discover profiles (system → pinned → bundled) ---
+    profiles, profile_source = discover_profile_names(engine)
+    if profile_source == "bundled":
+        ui.info("Using bundled profile list — install OrcaSlicer locally for full access")
+        ui.console.print()
+    elif profile_source == "none":
+        ui.warn("No profiles found — profile names will need to be entered manually")
+        ui.console.print()
+
+    # --- Steps 3, 4, 4b: Pick profiles and overrides ---
+    printer_profile, process_profile, overrides, machine_info = _wizard_pick_profiles(
+        engine, profiles
+    )
+
+    # --- Collect AMS results (should be done by now) ---
+    ams_trays: list[dict] = []
+    if ams_future is not None:
+        try:
+            ams_trays = ams_future.result(timeout=10)
+        except Exception:
+            log.debug("AMS tray query failed", exc_info=True)
+        if ams_trays:
+            ui.info(f"AMS detected ({len(ams_trays)} slot(s))")
+
+    # --- Step 5: Pick filaments ---
+    filament_names = _wizard_pick_filaments(profiles, machine_info, ams_trays)
+
+    # --- Step 6: Discover CAD files ---
+    parts_config = _wizard_pick_parts(filament_names)
+
+    # --- Steps 7-8: Plate size and slicer version ---
+    plate_x, plate_y, slicer_version = _wizard_pick_plate_and_version(machine_info)
+
+    # --- Step 9: Pipeline stages (always include print) ---
+    stages = list(DEFAULT_STAGES)
+
+    # --- Step 10: Printer connection ---
+    printer_name = _wizard_pick_printer(stages)
 
     # --- Build TOML ---
     toml = _build_toml(
