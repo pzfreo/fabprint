@@ -339,6 +339,9 @@ def _run_pipeline(
         no_ams_mapping=no_ams_mapping,
     )
 
+    from fabprint import ui
+
+    ui.info(f"Output → [bold]{out_dir}[/bold]")
     dr.execute(outputs, inputs=inputs, overrides=overrides)
 
 

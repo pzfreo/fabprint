@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
-"""Record fabprint init → validate → run demo using pexpect + asciinema.
+"""Record full fabprint demo: setup → init → validate → run → status.
 
 Usage:
-    # Pre-requisites: credentials configured, printer online, Docker running
     cd ~/repos/fabprint
     python scripts/record_demo.py
 
     # Convert to GIF:
-    agg docs/recordings/demo.cast docs/recordings/demo.gif
+    agg --font-size 20 docs/recordings/demo.cast docs/recordings/demo.gif
+
+Interactive steps:
+    - Password: prompted before recording starts (via getpass)
+    - Verification code: pause to check email + copy code to clipboard
+
+The script post-processes the .cast file to compress idle gaps,
+hiding the verification code wait in the final recording.
 
 Requires: pexpect, asciinema, agg (brew install agg)
 """
 
 from __future__ import annotations
 
+import getpass
+import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -24,10 +33,13 @@ import pexpect
 CAST_FILE = Path(__file__).parent.parent / "docs" / "recordings" / "demo.cast"
 DEMO_DIR = Path.home() / "repos" / "decoy-case"
 TYPING_DELAY = 0.08
+EMAIL = "paul@fremantle.org"
+
+# Max idle gap in the final recording (seconds)
+MAX_IDLE = 2.0
 
 # Escape sequences
 DOWN = "\x1b[B"
-UP = "\x1b[A"
 
 
 def type_slowly(child: pexpect.spawn, text: str, delay: float = TYPING_DELAY) -> None:
@@ -35,6 +47,21 @@ def type_slowly(child: pexpect.spawn, text: str, delay: float = TYPING_DELAY) ->
     for ch in text:
         child.send(ch)
         time.sleep(delay)
+
+
+def type_comment(child: pexpect.spawn, text: str) -> None:
+    """Type a bash comment, pause to let viewer read it."""
+    type_slowly(child, text)
+    time.sleep(0.5)
+    child.send("\r")
+    time.sleep(1)
+
+
+def type_command(child: pexpect.spawn, text: str) -> None:
+    """Type a command and press Enter."""
+    type_slowly(child, text)
+    time.sleep(0.5)
+    child.send("\r")
 
 
 def expect(child: pexpect.spawn, pattern: str, timeout: int = 60) -> None:
@@ -51,15 +78,67 @@ def expect(child: pexpect.spawn, pattern: str, timeout: int = 60) -> None:
         raise
 
 
+def read_clipboard() -> str:
+    """Read text from the system clipboard (macOS)."""
+    return subprocess.check_output(["pbpaste"], text=True).strip()
+
+
+def compress_idle(cast_path: Path, max_idle: float = MAX_IDLE) -> None:
+    """Compress idle gaps in a v3 asciicast file.
+
+    Rewrites timestamps so no gap between events exceeds max_idle seconds.
+    """
+    lines = cast_path.read_text().splitlines()
+    if not lines:
+        return
+
+    header = lines[0]
+    events = []
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        events.append(json.loads(line))
+
+    if not events:
+        return
+
+    offset = 0.0
+    prev_ts = events[0][0]
+    adjusted = []
+    for event in events:
+        ts = event[0]
+        gap = ts - prev_ts
+        if gap > max_idle:
+            offset += gap - max_idle
+        adjusted.append([ts - offset, *event[1:]])
+        prev_ts = ts
+
+    out_lines = [header]
+    for event in adjusted:
+        out_lines.append(json.dumps(event))
+    cast_path.write_text("\n".join(out_lines) + "\n")
+
+
 def main() -> None:
+    # --- Collect credentials before recording ---
+    print("=== fabprint demo recorder ===")
+    print(f"Email: {EMAIL}")
+    password = getpass.getpass("Bambu Cloud password (won't appear in recording): ")
+    if not password:
+        print("Password required.", file=sys.stderr)
+        sys.exit(1)
+
     # --- Prep ---
     fabprint_toml = DEMO_DIR / "fabprint.toml"
     if fabprint_toml.exists():
         fabprint_toml.unlink()
 
-    print("Pre-warming Docker bridge...")
-    os.system(f"cd {DEMO_DIR} && fabprint status > /dev/null 2>&1")
-    print("Docker warm.")
+    # Back up and clear credentials for a fresh setup demo
+    cred_path = Path.home() / ".config" / "fabprint" / "credentials.toml"
+    cred_backup = None
+    if cred_path.exists():
+        cred_backup = cred_path.read_text()
+        cred_path.unlink()
 
     CAST_FILE.parent.mkdir(parents=True, exist_ok=True)
     CAST_FILE.unlink(missing_ok=True)
@@ -70,8 +149,6 @@ def main() -> None:
         "PROMPT_TOOLKIT_NO_CPR": "1",
     }
 
-    # Start a bash shell inside asciinema
-    # dimensions=(rows, cols) in pexpect
     child = pexpect.spawn(
         f"asciinema rec --cols 80 --rows 25 --overwrite {CAST_FILE}",
         cwd=str(DEMO_DIR),
@@ -85,178 +162,261 @@ def main() -> None:
     # Wait for shell prompt
     time.sleep(2)
 
-    # ================================================================
-    # PART 1: fabprint init
-    # ================================================================
-    type_slowly(child, "fabprint init")
-    time.sleep(0.5)
-    child.send("\r")
+    try:
+        # ============================================================
+        # STEP 1: fabprint setup — configure a cloud printer
+        # ============================================================
+        type_comment(child, "# Step 1: fabprint setup — run once per printer")
+        type_command(child, "fabprint setup")
 
-    # Step 1: Project name — accept default
-    expect(child, "Project name")
-    time.sleep(1)
-    child.send("\r")
+        # Printer name — accept default "workshop"
+        expect(child, "Printer name")
+        time.sleep(0.5)
+        child.send("\r")
 
-    # Step 2: CAD Files — multi-select both files
-    expect(child, "Select files")
-    time.sleep(1)
-    # Space toggles first, Down moves, Space toggles second, Enter confirms
-    child.send(" ")
-    time.sleep(0.3)
-    child.send(DOWN)
-    time.sleep(0.3)
-    child.send(" ")
-    time.sleep(0.3)
-    child.send("\r")
-    time.sleep(1)
+        # Choose type — 2 = bambu-cloud
+        expect(child, "Choose type")
+        time.sleep(0.5)
+        child.sendline("2")
 
-    # First file — copies (accept default 1)
-    expect(child, "copies")
-    time.sleep(0.5)
-    child.send("\r")
+        # Confirm cloud login
+        expect(child, "Log in now")
+        time.sleep(0.5)
+        child.sendline("y")
 
-    # First file — orient (accept default "flat")
-    expect(child, "orient")
-    time.sleep(0.5)
-    child.send("\r")
+        # Email
+        expect(child, "Email")
+        time.sleep(0.5)
+        type_slowly(child, EMAIL)
+        time.sleep(0.3)
+        child.send("\r")
 
-    # Second file — copies
-    expect(child, "copies")
-    time.sleep(0.5)
-    child.send("\r")
+        # Password — send pre-collected (masked on screen)
+        expect(child, "Password")
+        time.sleep(0.5)
+        child.sendline(password)
 
-    # Second file — orient
-    expect(child, "orient")
-    time.sleep(0.5)
-    child.send("\r")
+        # Wait for verification code to be sent
+        expect(child, "Verification code sent")
+        time.sleep(1)
 
-    # Step 3: Printer Connection — select first (workshop)
-    expect(child, "Printer Connection")
-    time.sleep(1)
-    child.send("\r")
-    time.sleep(1)
+        # === INTERACTIVE: wait for user to get code ===
+        print("\n" + "=" * 50, file=sys.stderr)
+        print("CHECK YOUR EMAIL for the verification code.", file=sys.stderr)
+        print("Copy the code to your clipboard, then press Enter.", file=sys.stderr)
+        print("=" * 50, file=sys.stderr)
+        input()
 
-    # Step 4: Printer Profile — search for P1S
-    expect(child, "Printer Profile")
-    time.sleep(1)
-    type_slowly(child, "P1S 0.4")
-    time.sleep(1)
-    child.send("\r")
-    time.sleep(1)
+        code = read_clipboard()
+        print(f"Got code from clipboard: {code[:2]}****", file=sys.stderr)
 
-    # Process Profile — search
-    expect(child, "Process Profile")
-    time.sleep(1)
-    type_slowly(child, "0.20mm Standard @BBL X1C")
-    time.sleep(1)
-    child.send("\r")
-    time.sleep(1)
+        expect(child, "Enter verification code")
+        time.sleep(0.5)
+        child.sendline(code)
 
-    # Plate size — accept defaults
-    expect(child, "Plate width")
-    time.sleep(0.5)
-    child.send("\r")
+        expect(child, "Login successful")
+        time.sleep(1)
 
-    expect(child, "Plate depth")
-    time.sleep(0.5)
-    child.send("\r")
+        # Pick printer #1
+        expect(child, "Pick a printer")
+        time.sleep(0.5)
+        child.sendline("1")
 
-    # Slicer Version — pick first
-    expect(child, "Pick version")
-    time.sleep(0.5)
-    child.sendline("1")
-    time.sleep(1)
+        expect(child, "Selected:")
+        time.sleep(1)
 
-    # Filaments — accept AMS suggestions
-    expect(child, "Use these filaments")
-    time.sleep(1)
-    child.sendline("y")
-    time.sleep(1)
+        expect(child, "Wrote.*credentials")
+        time.sleep(2)
 
-    # Filament Assignment — slot 3 for both
-    expect(child, r"slot \(1-")
-    time.sleep(0.5)
-    child.sendline("3")
+        child.sendline("clear")
+        time.sleep(1)
 
-    expect(child, r"slot \(1-")
-    time.sleep(0.5)
-    child.sendline("3")
-    time.sleep(1)
+        # ============================================================
+        # STEP 2: fabprint init — project configuration wizard
+        # ============================================================
+        type_comment(child, "# Step 2: fabprint init — configure a print project")
+        type_command(child, "fabprint init")
 
-    # Slicer Overrides — add infill density
-    expect(child, "Add slicer overrides")
-    time.sleep(0.5)
-    child.sendline("y")
+        # Project name — accept default
+        expect(child, "Project name")
+        time.sleep(1)
+        child.send("\r")
 
-    expect(child, "Pick override")
-    time.sleep(0.5)
-    child.sendline("1")
+        # CAD Files — multi-select both
+        expect(child, "Select files")
+        time.sleep(1)
+        child.send(" ")
+        time.sleep(0.3)
+        child.send(DOWN)
+        time.sleep(0.3)
+        child.send(" ")
+        time.sleep(0.3)
+        child.send("\r")
+        time.sleep(1)
 
-    expect(child, "Value for")
-    time.sleep(0.5)
-    type_slowly(child, "30")
-    time.sleep(0.5)
-    child.send("\r")
+        # First file — copies + orient (accept defaults)
+        expect(child, "copies")
+        time.sleep(0.5)
+        child.send("\r")
+        expect(child, "orient")
+        time.sleep(0.5)
+        child.send("\r")
 
-    expect(child, "Add another override")
-    time.sleep(0.5)
-    child.send("\r")
+        # Second file — copies + orient
+        expect(child, "copies")
+        time.sleep(0.5)
+        child.send("\r")
+        expect(child, "orient")
+        time.sleep(0.5)
+        child.send("\r")
 
-    # Preview — write
-    expect(child, "Write.*Go back.*Quit")
-    time.sleep(2)
-    child.sendline("w")
+        # Printer Connection — select workshop
+        expect(child, "Printer Connection")
+        time.sleep(1)
+        child.send("\r")
+        time.sleep(1)
 
-    expect(child, "Wrote fabprint.toml")
-    time.sleep(2)
+        # Printer Profile — search P1S
+        expect(child, "Printer Profile")
+        time.sleep(1)
+        type_slowly(child, "P1S 0.4")
+        time.sleep(1)
+        child.send("\r")
+        time.sleep(1)
 
-    # Wait for prompt
-    time.sleep(1)
+        # Process Profile
+        expect(child, "Process Profile")
+        time.sleep(1)
+        type_slowly(child, "0.20mm Standard @BBL X1C")
+        time.sleep(1)
+        child.send("\r")
+        time.sleep(1)
 
-    # ================================================================
-    # PART 2: fabprint validate
-    # ================================================================
-    type_slowly(child, "fabprint validate")
-    time.sleep(0.5)
-    child.send("\r")
+        # Plate size — auto-detected, no prompt expected
 
-    expect(child, "checks passed|warning")
-    time.sleep(3)
+        # Slicer Version — pick first
+        expect(child, "Pick version")
+        time.sleep(0.5)
+        child.sendline("1")
+        time.sleep(1)
 
-    # ================================================================
-    # PART 3: fabprint run --dry-run
-    # ================================================================
-    type_slowly(child, "fabprint run --dry-run")
-    time.sleep(0.5)
-    child.send("\r")
+        # Filaments — accept AMS suggestions
+        expect(child, "Use these filaments")
+        time.sleep(1)
+        child.sendline("y")
+        time.sleep(1)
 
-    expect(child, "Loaded.*part")
-    time.sleep(0.5)
+        # Filament Assignment — slot 3 for both
+        expect(child, r"slot \(1-")
+        time.sleep(0.5)
+        child.sendline("3")
 
-    expect(child, "Arranged.*part")
-    time.sleep(0.5)
+        expect(child, r"slot \(1-")
+        time.sleep(0.5)
+        child.sendline("3")
+        time.sleep(1)
 
-    expect(child, "Plate exported")
-    time.sleep(0.5)
+        # Slicer Overrides — pick infill density, then finish
+        expect(child, "Pick override")
+        time.sleep(0.5)
+        child.sendline("1")
 
-    # Slicing can take a while
-    expect(child, "Sliced", timeout=120)
-    time.sleep(1)
+        expect(child, "Value for")
+        time.sleep(0.5)
+        type_slowly(child, "30")
+        time.sleep(0.5)
+        child.send("\r")
 
-    expect(child, "Print time|filament")
-    time.sleep(1)
+        # Finish overrides
+        expect(child, "Pick override")
+        time.sleep(0.5)
+        child.send("\r")
 
-    expect(child, "Dry run|Sent to printer")
-    time.sleep(3)
+        # Preview — write
+        expect(child, "Write.*Go back.*Quit")
+        time.sleep(2)
+        child.sendline("w")
 
-    # Exit the shell to end asciinema recording
-    child.sendline("exit")
-    child.expect(pexpect.EOF, timeout=10)
-    child.close()
+        expect(child, "Wrote fabprint.toml")
+        time.sleep(2)
 
-    print(f"\nRecording saved to {CAST_FILE}")
+        child.sendline("clear")
+        time.sleep(1)
+
+        # ============================================================
+        # STEP 3: fabprint validate — check config for issues
+        # ============================================================
+        type_comment(child, "# Step 3: fabprint validate — check config")
+        type_command(child, "fabprint validate")
+
+        expect(child, "checks passed|warning")
+        time.sleep(3)
+
+        child.sendline("clear")
+        time.sleep(1)
+
+        # ============================================================
+        # STEP 4: fabprint run — execute the pipeline
+        # ============================================================
+        type_comment(child, "# Step 4: fabprint run — build and send to printer")
+        type_command(child, "fabprint run --dry-run")
+
+        expect(child, "Loaded.*part")
+        time.sleep(0.5)
+
+        expect(child, "Arranged.*part")
+        time.sleep(0.5)
+
+        expect(child, "Plate exported")
+        time.sleep(0.5)
+
+        expect(child, "Sliced", timeout=180)
+        time.sleep(1)
+
+        expect(child, "Print time|filament")
+        time.sleep(1)
+
+        expect(child, "Dry run|Sent to printer")
+        time.sleep(3)
+
+        child.sendline("clear")
+        time.sleep(1)
+
+        # ============================================================
+        # STEP 5: fabprint status — live printer dashboard
+        # ============================================================
+        type_comment(child, "# Step 5: fabprint status -w — live printer dashboard")
+        type_command(child, "fabprint status -w -i 1")
+
+        # Let the dashboard refresh a few times
+        time.sleep(10)
+
+        # Ctrl-C to stop
+        child.send("\x03")
+        time.sleep(2)
+
+    finally:
+        # Exit asciinema
+        child.sendline("exit")
+        try:
+            child.expect(pexpect.EOF, timeout=10)
+        except Exception:
+            pass
+        child.close()
+
+        # Restore credentials backup
+        if cred_backup:
+            cred_path.parent.mkdir(parents=True, exist_ok=True)
+            cred_path.write_text(cred_backup)
+            cred_path.chmod(0o600)
+
+    # Post-process: compress idle gaps
+    print(f"\nCompressing idle gaps (max {MAX_IDLE}s)...")
+    compress_idle(CAST_FILE)
+
+    print(f"Recording saved to {CAST_FILE}")
     print(f"Play:    asciinema play {CAST_FILE}")
-    print(f"To GIF:  agg {CAST_FILE} docs/recordings/demo.gif")
+    print(f"To GIF:  agg --font-size 20 {CAST_FILE} docs/recordings/demo.gif")
 
 
 if __name__ == "__main__":
