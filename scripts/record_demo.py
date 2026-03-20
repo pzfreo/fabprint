@@ -212,7 +212,12 @@ def do_setup(child: pexpect.spawn, password: str) -> None:
     time.sleep(2)
     status("setup complete")
 
+    # Quick status check to show printer is connected
     time.sleep(1)
+    type_comment(child, "# Check printer status")
+    type_command(child, "fabprint status")
+    expect(child, r"IDLE|RUNNING|FINISH|FAILED|State:", timeout=30)
+    time.sleep(3)
 
 
 def do_init(child: pexpect.spawn) -> None:
