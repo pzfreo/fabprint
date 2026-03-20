@@ -96,15 +96,15 @@ def read_clipboard() -> str:
     return subprocess.check_output(["pbpaste"], text=True).strip()
 
 
-def compress_idle(cast_path: Path, max_idle: float = MAX_IDLE) -> None:
+def compress_idle(cast_path: Path, max_idle: float = MAX_IDLE) -> Path:
     """Compress idle gaps in a v3 asciicast file.
 
-    Rewrites timestamps so no gap between output events exceeds max_idle.
-    Handles v3 format where events are [timestamp, type, data].
+    Writes compressed version to a new file (original preserved).
+    Returns the path to the compressed file.
     """
     lines = cast_path.read_text().splitlines()
     if not lines:
-        return
+        return cast_path
 
     header = lines[0]
     events = []
@@ -118,7 +118,7 @@ def compress_idle(cast_path: Path, max_idle: float = MAX_IDLE) -> None:
             continue
 
     if not events:
-        return
+        return cast_path
 
     # Build adjusted timeline
     adjusted = []
@@ -128,7 +128,6 @@ def compress_idle(cast_path: Path, max_idle: float = MAX_IDLE) -> None:
     for event in events:
         orig_ts = event[0]
         gap = orig_ts - prev_orig_ts
-        # Cap the gap
         capped_gap = min(gap, max_idle) if gap > 0 else gap
         new_ts += max(capped_gap, 0)
         adjusted.append([round(new_ts, 3), *event[1:]])
@@ -137,7 +136,10 @@ def compress_idle(cast_path: Path, max_idle: float = MAX_IDLE) -> None:
     out_lines = [header]
     for event in adjusted:
         out_lines.append(json.dumps(event))
-    cast_path.write_text("\n".join(out_lines) + "\n")
+
+    compressed = cast_path.with_suffix(".compressed.cast")
+    compressed.write_text("\n".join(out_lines) + "\n")
+    return compressed
 
 
 def do_setup(child: pexpect.spawn, password: str) -> None:
@@ -356,11 +358,13 @@ def do_validate(child: pexpect.spawn) -> None:
     time.sleep(1)
 
 
-def do_run(child: pexpect.spawn) -> None:
-    """Step 4: fabprint run --dry-run."""
-    status("STEP 4: fabprint run --dry-run")
+def do_run(child: pexpect.spawn, dry_run: bool = True) -> None:
+    """Step 4: fabprint run."""
+    mode = "--dry-run" if dry_run else ""
+    status(f"STEP 4: fabprint run {mode}".strip())
     type_comment(child, "# Step 4: fabprint run — build and send to printer")
-    type_command(child, "fabprint run --dry-run")
+    cmd = "fabprint run --dry-run" if dry_run else "fabprint run"
+    type_command(child, cmd)
 
     expect(child, "Loaded.*part")
     time.sleep(0.5)
@@ -393,7 +397,7 @@ def do_status(child: pexpect.spawn) -> None:
     """Step 5: fabprint status -w (live dashboard)."""
     status("STEP 5: fabprint status -w")
     type_comment(child, "# Step 5: fabprint status -w — live printer dashboard")
-    type_command(child, "fabprint status -w --interval 5")
+    type_command(child, "fabprint status -w --interval 1")
 
     # Let the dashboard refresh a few times
     time.sleep(10)
@@ -405,6 +409,17 @@ def do_status(child: pexpect.spawn) -> None:
 
 
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Record fabprint demo")
+    parser.add_argument(
+        "--no-dry-run",
+        action="store_true",
+        help="Actually send to printer (default: dry run)",
+    )
+    args = parser.parse_args()
+    dry_run = not args.no_dry_run
+
     # --- Collect credentials before recording ---
     print("=== fabprint demo recorder ===", file=sys.stderr)
     print(f"Email: {EMAIL}", file=sys.stderr)
@@ -456,7 +471,7 @@ def main() -> None:
         do_setup(child, password)
         do_init(child)
         do_validate(child)
-        do_run(child)
+        do_run(child, dry_run=dry_run)
         do_status(child)
     finally:
         # Exit asciinema
@@ -475,13 +490,14 @@ def main() -> None:
             cred_path.chmod(0o600)
             status("restored credentials backup")
 
-    # Post-process: compress idle gaps
+    # Post-process: compress idle gaps into a separate file
     status(f"compressing idle gaps (max {MAX_IDLE}s)")
-    compress_idle(CAST_FILE)
+    compressed = compress_idle(CAST_FILE)
 
-    print(f"\nRecording saved to {CAST_FILE}", file=sys.stderr)
-    print(f"Play:    asciinema play {CAST_FILE}", file=sys.stderr)
-    print(f"To GIF:  agg --font-size 20 {CAST_FILE} docs/recordings/demo.gif", file=sys.stderr)
+    print(f"\nOriginal:   {CAST_FILE}", file=sys.stderr)
+    print(f"Compressed: {compressed}", file=sys.stderr)
+    print(f"Play:       asciinema play {compressed}", file=sys.stderr)
+    print(f"To GIF:     agg --font-size 20 {compressed} docs/recordings/demo.gif", file=sys.stderr)
 
 
 if __name__ == "__main__":
