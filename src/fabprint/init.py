@@ -699,25 +699,10 @@ def _prompt_overrides() -> dict[str, str]:
 
 
 def _wizard_setup_printers(configured: dict[str, dict]) -> dict[str, dict]:
-    """Step 0: Check for configured printers, optionally run setup.
+    """Check for configured printers (no prompts — printer is optional).
 
-    Returns the (possibly refreshed) configured printers dict.
+    Returns the configured printers dict (may be empty).
     """
-    from fabprint import ui
-
-    if not configured:
-        ui.warn("No printers configured yet.")
-        if _prompt_yn("Run 'fabprint setup' to add a printer first?"):
-            from fabprint.credentials import setup_printer
-
-            ui.console.print()
-            setup_printer()
-            ui.console.print()
-            # Refresh after setup
-            configured = _list_configured_printers()
-        else:
-            ui.info("Continuing without printer setup.")
-            ui.console.print()
     return configured
 
 
@@ -918,28 +903,30 @@ def _wizard_pick_slicer_version() -> str | None:
     return slicer_version
 
 
-def _wizard_pick_printer(stages: list[str]) -> str | None:
-    """Step 10: Pick printer connection.
+def _wizard_pick_printer() -> str | None:
+    """Pick printer connection (optional).
 
     Returns the printer name, or ``None`` if skipped.
     """
     from fabprint import ui
 
-    printer_name = None
-    if "print" in stages:
-        ui.heading("Printer Connection")
-        configured = _list_configured_printers()
-        if configured:
-            names = list(configured.keys())
-            chosen = _prompt_choice("Pick a printer", [*names, "Skip (configure later)"])
-            pick = names[chosen[0]] if chosen[0] < len(names) else None
-            printer_name = pick
-        elif _prompt_yn("Configure printer connection?", default=False):
-            printer_name = _prompt_str("Printer name (from 'fabprint setup')", "")
-            if not printer_name:
-                printer_name = None
+    ui.heading("Printer (optional)")
+    configured = _list_configured_printers()
+    if configured:
+        names = list(configured.keys())
+        chosen = _prompt_choice("Pick a printer", [*names, "Skip — slice only"])
+        pick = names[chosen[0]] if chosen[0] < len(names) else None
         ui.console.print()
-    return printer_name
+        return pick
+
+    if _prompt_yn("Connect a printer? (run 'fabprint setup' first)", default=False):
+        printer_name = _prompt_str("Printer name (from 'fabprint setup')", "")
+        ui.console.print()
+        return printer_name or None
+
+    ui.info("No printer — config will slice only. Add [printer] later to enable printing.")
+    ui.console.print()
+    return None
 
 
 def run_wizard(output: Path | None = None) -> str:
@@ -957,9 +944,6 @@ def run_wizard(output: Path | None = None) -> str:
 
     engine = "orca"
 
-    # --- Step 0: Check for configured printers ---
-    configured = _wizard_setup_printers(_list_configured_printers())
-
     # --- Step 1: Project name ---
     default_name = Path.cwd().name
     project_name = ui.prompt_str("Project name", default=default_name) or default_name
@@ -968,9 +952,14 @@ def run_wizard(output: Path | None = None) -> str:
     # --- Step 2: CAD files (copies, orient — filament slots assigned later) ---
     parts_config = _wizard_pick_parts()
 
-    # --- Step 3: Printer connection ---
+    # --- Step 3: Printer connection (optional) ---
+    printer_name = _wizard_pick_printer()
+    configured = _list_configured_printers() if printer_name else {}
+
+    # Build pipeline stages — include "print" only if printer selected
     stages = list(DEFAULT_STAGES)
-    printer_name = _wizard_pick_printer(stages)
+    if printer_name:
+        stages.append("print")
 
     # --- Query AMS trays in background while we continue ---
     ams_future = None

@@ -531,12 +531,11 @@ class TestWizard:
         _mock_ui_inputs(
             monkeypatch,
             [
-                "n",  # Run setup first? -> no
                 "my-project",  # Project name
                 "1",  # Select files
                 "1",  # copies
                 "flat",  # orient
-                "n",  # Configure printer connection? -> no
+                "n",  # Connect a printer? -> no
                 "Bambu Lab P1S 0.4 nozzle",  # Printer profile name
                 "0.20mm Standard @BBL X1C",  # Process profile name
                 "256",  # plate width
@@ -574,10 +573,9 @@ class TestWizard:
         _mock_ui_inputs(
             monkeypatch,
             [
-                "n",  # Run setup first? -> no
                 "",  # Project name (use default)
                 "my-part.stl",  # Part file path
-                "n",  # Configure printer connection? -> no
+                "n",  # Connect a printer? -> no
                 "My Printer",  # Printer profile name
                 "My Process",  # Process profile name
                 "256",  # plate width
