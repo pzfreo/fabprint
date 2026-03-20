@@ -1,4 +1,4 @@
-"""Cloud printing for Bambu Lab printers (bridge and HTTP modes)."""
+"""Cloud printing for Bambu Lab printers via Docker bridge."""
 
 from fabprint.cloud.ams import (
     _build_ams_mapping,
@@ -18,10 +18,6 @@ from fabprint.cloud.bridge import (
     cloud_status,
     cloud_tasks,
 )
-from fabprint.cloud.http import (
-    cloud_list_devices,
-    cloud_print_http,
-)
 
 __all__ = [
     "PersistentBridge",
@@ -34,9 +30,7 @@ __all__ = [
     "_patch_config_3mf_ams_colors",
     "_strip_gcode_from_3mf",
     "cloud_cancel",
-    "cloud_list_devices",
     "cloud_print",
-    "cloud_print_http",
     "cloud_status",
     "cloud_tasks",
     "parse_ams_trays",
