@@ -19,8 +19,6 @@ you the same discipline for slicing and print preparation:
 - Generate G-code in Docker or CI
 - Optionally hand the result off to a printer
 
-The most mature printer integration today is Bambu Cloud.
-
 Built for engineers, makers, and teams who treat their prints like software. Works with STL, STEP,
 and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d),
 [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
@@ -117,25 +115,24 @@ If you mostly want interactive print setup in a GUI, use OrcaSlicer directly.
 - Declarative print config in `fabprint.toml`
 - Multi-part arrangement
 - Docker-based slicing with pinned OrcaSlicer versions
+- Slicing for any printer supported by OrcaSlicer
 - Profile pinning into your repository
 - CI slicing and artifact generation
-- Bambu Cloud printing
+- Network print initiation via Bambu Cloud
 
-### Supported with caveats
 
-- Bambu LAN printing
 
 ### Experimental
 
-- Moonraker / Klipper support
+- Bambu LAN printing
+- Moonraker printing
 
 ## Quick start
 
 **Prerequisites:** Python 3.11+ and [Docker](https://docs.docker.com/get-docker/). Docker is
 central to fabprint — it runs OrcaSlicer in a container with a pinned version so every machine
 produces identical G-code, and it powers cloud printing via the Bambu Connect bridge. A local
-[OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) install can be used as an alternative for
-slicing only.
+[OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) install can be used as an alternative but is not recommended.
 
 ```bash
 pip install fabprint
