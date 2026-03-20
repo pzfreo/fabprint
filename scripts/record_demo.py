@@ -212,7 +212,6 @@ def do_setup(child: pexpect.spawn, password: str) -> None:
     time.sleep(2)
     status("setup complete")
 
-    child.sendline("clear")
     time.sleep(1)
 
 
@@ -337,7 +336,6 @@ def do_init(child: pexpect.spawn) -> None:
     time.sleep(2)
     status("init complete — wrote fabprint.toml")
 
-    child.sendline("clear")
     time.sleep(1)
 
 
@@ -351,7 +349,6 @@ def do_validate(child: pexpect.spawn) -> None:
     time.sleep(3)
     status("validate complete")
 
-    child.sendline("clear")
     time.sleep(1)
 
 
@@ -386,7 +383,6 @@ def do_run(child: pexpect.spawn, dry_run: bool = True) -> None:
     time.sleep(3)
     status("run complete")
 
-    child.sendline("clear")
     time.sleep(1)
 
 
