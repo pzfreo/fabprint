@@ -12,7 +12,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from fabprint import require_file
+from fabprint import FabprintError, require_file
 from fabprint.gcode import parse_gcode_metadata
 from fabprint.profiles import resolve_profile_data
 from fabprint.thumbnails import generate_plate_thumbnail
@@ -259,6 +259,13 @@ def _resolve_profiles(
     settings = []
     if printer:
         data = resolve_profile_data(printer, engine, "machine", project_dir)
+        # Validate: machine_model profiles define the printer but can't be sliced
+        if data.get("type") == "machine_model":
+            raise FabprintError(
+                f"slicer.printer '{printer}' is a printer model definition, "
+                f"not a slicer profile. Use the nozzle-specific variant instead, "
+                f"e.g. '{printer} 0.4 nozzle'"
+            )
         path = _write_tmp_profile(data, tmp_dir, "machine")
         settings.append(str(path))
     if process:

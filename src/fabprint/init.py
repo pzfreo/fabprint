@@ -88,6 +88,28 @@ class ValidationResult:
         return iter(self.warnings)
 
 
+def _check_profile_type(name: str, engine: str, category: str) -> str | None:
+    """Check the JSON 'type' field of a profile file, if it exists.
+
+    Returns the type string (e.g. 'machine', 'machine_model'), or None if not found.
+    """
+    import json
+
+    from fabprint.profiles import SYSTEM_DIRS
+
+    base = SYSTEM_DIRS.get(engine)
+    if not base:
+        return None
+    path = base / category / f"{name}.json"
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f).get("type")
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def validate_config(path: Path) -> ValidationResult:
     """Validate a fabprint.toml and return passes and warnings.
 
@@ -124,10 +146,19 @@ def validate_config(path: Path) -> ValidationResult:
             if machines and cfg.slicer.printer not in machines:
                 close = _closest_match(cfg.slicer.printer, machines)
                 hint = f" Did you mean '{close}'?" if close else ""
-                warnings.append(
-                    f"slicer.printer '{cfg.slicer.printer}' not found in "
-                    f"{cfg.slicer.engine} profiles ({source}).{hint}"
-                )
+                # Check if it's a machine_model (wrong type)
+                _is_model = _check_profile_type(cfg.slicer.printer, cfg.slicer.engine, "machine")
+                if _is_model == "machine_model":
+                    warnings.append(
+                        f"slicer.printer '{cfg.slicer.printer}' is a printer model "
+                        f"definition, not a slicer profile. Use the nozzle-specific "
+                        f"variant, e.g. '{cfg.slicer.printer} 0.4 nozzle'"
+                    )
+                else:
+                    warnings.append(
+                        f"slicer.printer '{cfg.slicer.printer}' not found in "
+                        f"{cfg.slicer.engine} profiles ({source}).{hint}"
+                    )
                 profile_ok = False
 
         if cfg.slicer.process:
@@ -595,11 +626,12 @@ def _validate_override(value: str, spec_type: str) -> str | None:
 
 
 def _prompt_overrides() -> dict[str, str]:
-    """Prompt user to add slicer overrides, returning key→value dict."""
-    from fabprint import ui
+    """Prompt user to add slicer overrides, returning key→value dict.
 
-    if not _prompt_yn("Add slicer overrides?", default=False):
-        return {}
+    Shows a numbered table of common overrides. User picks a number to
+    configure that override, or enters N to finish.
+    """
+    from fabprint import ui
 
     overrides: dict[str, str] = {}
     while True:
@@ -608,7 +640,16 @@ def _prompt_overrides() -> dict[str, str]:
         items.append(("Custom key...", ""))
         ui.choice_table(items, ["Name", "Slicer key"])
 
-        pick = _prompt_int("Pick override", 1)
+        raw_pick = _prompt_str("Pick override (or N to finish)", "n")
+        if raw_pick.strip().lower() in ("n", "no", ""):
+            break
+
+        try:
+            pick = int(raw_pick)
+        except ValueError:
+            ui.warn("Enter a number or N")
+            continue
+
         idx = pick - 1
         if idx < 0 or idx > len(COMMON_OVERRIDES):
             ui.warn(f"Enter 1-{len(COMMON_OVERRIDES) + 1}")
@@ -653,8 +694,6 @@ def _prompt_overrides() -> dict[str, str]:
                     continue  # validation failed, loop back
 
         ui.console.print()
-        if not _prompt_yn("Add another override?", default=False):
-            break
 
     return overrides
 
@@ -846,22 +885,22 @@ def _wizard_assign_filament_slots(parts_config: list[dict], filament_names: list
 
 
 def _wizard_pick_plate(machine_info: _MachineInfo) -> tuple[int, int]:
-    """Pick plate size, auto-detecting from printer profile.
+    """Get plate size from printer profile.
 
     Returns ``(plate_x, plate_y)``.
     """
     from fabprint import ui
 
-    ui.heading("Build Plate")
-    default_plate = (256, 256)
     if machine_info.plate_size:
-        default_plate = machine_info.plate_size
-        w, d = default_plate
-        ui.success(f"Detected plate size from printer profile: {w}x{d}mm")
-    plate_x = _prompt_int("Plate width (mm)?", default_plate[0])
-    plate_y = _prompt_int("Plate depth (mm)?", default_plate[1])
-    ui.console.print()
+        w, d = machine_info.plate_size
+        ui.success(f"Build plate: {w}x{d}mm (from printer profile)")
+        return w, d
 
+    # Fallback if no printer profile was selected
+    ui.heading("Build Plate")
+    plate_x = _prompt_int("Plate width (mm)?", 256)
+    plate_y = _prompt_int("Plate depth (mm)?", 256)
+    ui.console.print()
     return plate_x, plate_y
 
 
