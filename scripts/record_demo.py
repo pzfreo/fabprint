@@ -218,7 +218,9 @@ def do_setup(child: pexpect.spawn, password: str) -> None:
 def do_init(child: pexpect.spawn) -> None:
     """Step 2: fabprint init — project configuration wizard."""
     status("STEP 2: fabprint init")
-    type_comment(child, "# Step 2: fabprint init — configure a print project")
+    type_comment(child, "# Step 2: cd to project directory and run fabprint init")
+    type_command(child, "cd repos/decoy-case")
+    time.sleep(0.5)
     type_command(child, "fabprint init")
 
     # Project name — accept default
@@ -448,7 +450,7 @@ def main() -> None:
     status("starting asciinema recording")
     child = pexpect.spawn(
         f"asciinema rec --cols 80 --rows 25 --overwrite {CAST_FILE}",
-        cwd=str(DEMO_DIR),
+        cwd=str(Path.home()),
         encoding="utf-8",
         timeout=120,
         dimensions=(25, 80),
