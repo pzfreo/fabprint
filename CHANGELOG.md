@@ -2,6 +2,12 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.128 — 2026-03-20
+
+- Refresh README: adopt tighter structure from proposed rewrite while keeping OrcaSlicer CLI comparison, rich TOML examples, visuals, and env var docs
+- Add "Best fit" and "Status" (maturity tiers) sections
+- Lead with tagline and motivation before diving into examples
+
 ## 0.1.119 — 2026-03-19
 
 - Speed up `fabprint status` for cloud printers: replace fixed sleeps with event-driven waits in the C++ bridge (~16s → ~3-5s typical)

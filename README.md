@@ -1,5 +1,3 @@
-![fabprint pipeline](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/pipeline.png)
-
 # fabprint
 
 [![PyPI version](https://img.shields.io/pypi/v/fabprint)](https://pypi.org/project/fabprint/)
@@ -7,22 +5,25 @@
 [![Python 3.11+](https://img.shields.io/pypi/pyversions/fabprint)](https://pypi.org/project/fabprint/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/pzfreo/fabprint/branch/main/graph/badge.svg)](https://codecov.io/gh/pzfreo/fabprint)
-[![Downloads](https://img.shields.io/pypi/dm/fabprint)](https://pypi.org/project/fabprint/)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 
-3D printing has a reproducibility problem:
+**Reproducible 3D print builds from code.**
 
-- Slicer settings get lost between sessions or through human error
-- Printer configs drift across machines and slicer versions
-- There's no way to version, diff, or audit a print job
+fabprint turns a print job into a version-controlled build: parts, arrangement, slicer settings,
+printer target, and output artifacts are defined in a single `fabprint.toml`.
 
-**fabprint addresses this with declarative, version-controlled builds.** Define your print like code — parts, slicer settings, and printer config in a single TOML file — and fabprint handles the rest: arrangement, slicing, and dispatch to the printer.
+If your team already treats CAD, firmware, and manufacturing data like software, fabprint gives
+you the same discipline for slicing and print preparation:
 
-Same repo → same G-code → consistent, repeatable prints across machines. 
-fabprint produces identical G-code for a given config; physical results may still vary with hardware and materials.
+- Pin the slicer version for repeatable output
+- Pin slicer profiles into the repo
+- Generate G-code in Docker or CI
+- Optionally hand the result off to a printer
 
-Built for engineers, makers, and teams who treat their prints like software. Works with STL, STEP, and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d), [OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
+The most mature printer integration today is Bambu Cloud.
+
+Built for engineers, makers, and teams who treat their prints like software. Works with STL, STEP,
+and 3MF files, and pairs naturally with code-CAD tools like [build123d](https://github.com/gumyr/build123d),
+[OpenSCAD](https://openscad.org), and [cadquery](https://github.com/cadquery/cadquery).
 
 ```toml
 # fabprint.toml — a multi-part print with slicer overrides
@@ -73,16 +74,20 @@ fabprint run        # arrange → slice → print, one command
 ✔ Sent to printer "workshop"
 ```
 
-## How it works
+## What fabprint does
 
 ![fabprint demo](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/recordings/demo.gif)
 
 1. **Define** parts + settings in `fabprint.toml`
-2. **Arrange** — fabprint bin-packs models onto the build plate
+2. **Arrange** — bin-packs models onto the build plate
 3. **Slice** — using a pinned OrcaSlicer version (via Docker) for identical G-code across machines
-4. **Print** — sends identical G-code to your printer
+4. **Print** — sends the result to your printer
 
-Everything is declared in a single TOML file — git-friendly, diffable, and committable alongside your CAD files. Lock the slicer version, pin the profiles, and the output is reproducible on any machine or in CI.
+Everything is declared in a single TOML file — git-friendly, diffable, and committable alongside
+your CAD files. Lock the slicer version, pin the profiles, and the output is reproducible on any
+machine or in CI.
+
+![fabprint pipeline](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/pipeline.png)
 
 ### Why not just use OrcaSlicer CLI?
 
@@ -92,12 +97,45 @@ OrcaSlicer CLI is great for slicing a prepared plate. fabprint builds a reproduc
 - **Multi-part filament mapping** — per-part filament slot assignment and paint color preservation, injected into the 3MF metadata
 - **Reproducible builds** — pin slicer profiles into your repo + lock OrcaSlicer version in Docker = identical gcode on any machine
 - **Partial execution** — `--until plate` to inspect layout, `--only slice` to re-slice, `--dry-run` to test everything
-- **Send to printer** — Bambu LAN, Bambu Cloud, and Moonraker/Klipper (experimental), with live status monitoring. PrusaLink and OctoPrint support is on the roadmap
+- **Send to printer** — Bambu LAN, Bambu Cloud, and Moonraker/Klipper (experimental), with live status monitoring
 - **Headless Docker slicing** — no GUI, no display server, works in CI, uses a specific OrcaSlicer version
+
+## Best fit
+
+fabprint is best suited to:
+
+- Hardware teams keeping CAD and manufacturing inputs in Git
+- Engineers who want deterministic slicing in CI
+- Makers who want a declarative print workflow instead of slicer click-ops
+
+If you mostly want interactive print setup in a GUI, use OrcaSlicer directly.
+
+## Status
+
+### Stable
+
+- Declarative print config in `fabprint.toml`
+- Multi-part arrangement
+- Docker-based slicing with pinned OrcaSlicer versions
+- Profile pinning into your repository
+- CI slicing and artifact generation
+- Bambu Cloud printing
+
+### Supported with caveats
+
+- Bambu LAN printing
+
+### Experimental
+
+- Moonraker / Klipper support
 
 ## Quick start
 
-**Prerequisites:** Python 3.11+ and [Docker](https://docs.docker.com/get-docker/). Docker is central to fabprint — it runs OrcaSlicer in a container with a pinned version so every machine produces identical G-code, and it powers cloud printing via the Bambu Connect bridge. A local [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) install can be used as an alternative for slicing only.
+**Prerequisites:** Python 3.11+ and [Docker](https://docs.docker.com/get-docker/). Docker is
+central to fabprint — it runs OrcaSlicer in a container with a pinned version so every machine
+produces identical G-code, and it powers cloud printing via the Bambu Connect bridge. A local
+[OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) install can be used as an alternative for
+slicing only.
 
 ```bash
 pip install fabprint
@@ -158,6 +196,7 @@ fabprint run                   # arrange, slice and send to printer
 fabprint run --until slice     # stop after slicing
 fabprint run --dry-run         # full pipeline without sending to printer
 ```
+
 The arrangement (`plate`) stage generates a `plate_preview.3mf` — open it in any 3MF viewer to check placement:
 
 ![plate preview](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/images/plate_preview.png)
