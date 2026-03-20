@@ -46,7 +46,7 @@ class PrinterConfig:
     name: str  # references a printer in ~/.config/fabprint/credentials.toml
 
 
-DEFAULT_STAGES = ["load", "arrange", "plate", "slice", "print"]
+DEFAULT_STAGES = ["load", "arrange", "plate", "slice"]
 
 
 @dataclass
