@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-__version__ = "0.1.127"
+__version__ = "0.1.128"
 
 
 class FabprintError(Exception):
