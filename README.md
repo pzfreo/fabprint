@@ -63,15 +63,19 @@ fabprint run        # arrange → slice → print, one command
 ```
 
 ```
+  Output → fabprint_output/enclosure
 ✔ Loaded 3 parts
 ✔ Arranged 3 parts onto plate  (256×256mm)
-✔ Plate exported
-✔ Sliced with OrcaSlicer 2.3.1  48s
-✔ 3h 42m, 24.6g filament
+✔ Plate exported → plate.3mf
+✔ Preview exported → plate_preview.3mf
+✔ Sliced with OrcaSlicer 2.3.1 in 48s
+✔ Print time: 3h 42m, 24.6g filament
 ✔ Sent to printer "workshop"
 ```
 
 ## How it works
+
+![fabprint demo](https://raw.githubusercontent.com/pzfreo/fabprint/main/docs/recordings/demo.gif)
 
 1. **Define** parts + settings in `fabprint.toml`
 2. **Arrange** — fabprint bin-packs models onto the build plate
@@ -105,8 +109,8 @@ Generate a config with the interactive wizard, or dump a commented template:
 
 ```bash
 fabprint setup                      # configures printer targets
-fabprint init                       # interactive wizard — discovers profiles and CAD files creates TOML
-fabprint init --template            # dump a commented template (works on all platforms incl. Windows)
+fabprint init                       # interactive wizard — discovers profiles and CAD files, creates TOML
+fabprint init --template            # dump a commented template
 ```
 
 Or create `fabprint.toml` by hand (see [full config reference](https://github.com/pzfreo/fabprint/blob/main/docs/config.md)):
