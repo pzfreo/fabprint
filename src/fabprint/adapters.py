@@ -90,6 +90,7 @@ class ProgressAdapter(NodeExecutionHook):
         "loaded_parts": "Loading parts",
         "placements": "Arranging onto plate",
         "plate_3mf_path": "Exporting plate",
+        "preview_path": "Exporting preview",
         "sliced_output_dir": "Slicing",
         "gcode_stats": "Reading gcode",
         "print_result": "Sending to printer",
@@ -210,6 +211,10 @@ class ProgressAdapter(NodeExecutionHook):
         elif node_name == "plate_3mf_path":
             name = result.name if isinstance(result, Path) else "plate.3mf"
             self._ok(f"Plate exported → [dim]{name}[/dim]", elapsed)
+
+        elif node_name == "preview_path":
+            name = result.name if isinstance(result, Path) else "plate_preview.3mf"
+            self._ok(f"Preview exported → [dim]{name}[/dim]", elapsed)
 
         elif node_name == "sliced_output_dir":
             ver = self._slice_version
