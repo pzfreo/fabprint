@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import sys
 from io import StringIO
 from unittest.mock import patch
-
-import pytest
 
 from fabprint.ui import (
     choice_table,
@@ -201,48 +198,63 @@ class TestColorSwatch:
 
 
 # ---------------------------------------------------------------------------
-# pick (simple-term-menu)
+# pick (questionary)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="simple-term-menu requires Unix")
 class TestPick:
     @patch("fabprint.ui.success")
     def test_single_select(self, mock_success):
-        with patch("simple_term_menu.TerminalMenu") as MockMenu:
-            MockMenu.return_value.show.return_value = 2
+        with patch("questionary.select") as mock_select:
+            mock_select.return_value.ask.return_value = "c"
             result = pick(["a", "b", "c"], prompt="Choose")
         assert result == [2]
         mock_success.assert_called_once_with("c")
 
     @patch("fabprint.ui.success")
     def test_multi_select(self, mock_success):
-        with patch("simple_term_menu.TerminalMenu") as MockMenu:
-            MockMenu.return_value.show.return_value = (0, 2)
+        with patch("questionary.checkbox") as mock_cb:
+            mock_cb.return_value.ask.return_value = ["a", "c"]
             result = pick(["a", "b", "c"], allow_multi=True)
         assert result == [0, 2]
         assert mock_success.call_count == 2
 
     def test_none_raises_keyboard_interrupt(self):
-        with patch("simple_term_menu.TerminalMenu") as MockMenu:
-            MockMenu.return_value.show.return_value = None
+        with patch("questionary.select") as mock_select:
+            mock_select.return_value.ask.return_value = None
             try:
                 pick(["a", "b"])
                 raise AssertionError("Expected KeyboardInterrupt")
             except KeyboardInterrupt:
                 pass
 
+    def test_multi_none_raises_keyboard_interrupt(self):
+        with patch("questionary.checkbox") as mock_cb:
+            mock_cb.return_value.ask.return_value = None
+            try:
+                pick(["a", "b"], allow_multi=True)
+                raise AssertionError("Expected KeyboardInterrupt")
+            except KeyboardInterrupt:
+                pass
+
     @patch("fabprint.ui.success")
-    def test_passes_options_and_config(self, mock_success):
-        with patch("simple_term_menu.TerminalMenu") as MockMenu:
-            MockMenu.return_value.show.return_value = 0
+    def test_single_uses_search_filter(self, mock_success):
+        with patch("questionary.select") as mock_select:
+            mock_select.return_value.ask.return_value = "x"
+            pick(["x", "y"], prompt="Select")
+            mock_select.assert_called_once_with(
+                "  Select",
+                choices=["x", "y"],
+                use_search_filter=True,
+                use_jk_keys=False,
+            )
+
+    @patch("fabprint.ui.success")
+    def test_multi_uses_checkbox(self, mock_success):
+        with patch("questionary.checkbox") as mock_cb:
+            mock_cb.return_value.ask.return_value = ["x"]
             pick(["x", "y"], prompt="Select", allow_multi=True)
-            MockMenu.assert_called_once_with(
-                ["x", "y"],
-                title="  Select",
-                search_key="/",
-                multi_select=True,
-                show_multi_select_hint=True,
-                show_search_hint=True,
-                show_search_hint_text="(/ to filter, Space to toggle)",
+            mock_cb.assert_called_once_with(
+                "  Select",
+                choices=["x", "y"],
             )

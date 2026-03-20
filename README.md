@@ -109,7 +109,6 @@ fabprint init                       # interactive wizard — discovers profiles 
 fabprint init --template            # dump a commented template (works on all platforms incl. Windows)
 ```
 
-> **Note:** `fabprint init` (interactive wizard) requires a Unix terminal (Linux, macOS, or WSL). On Windows, use `fabprint init --template` and edit the generated file manually.
 Or create `fabprint.toml` by hand (see [full config reference](https://github.com/pzfreo/fabprint/blob/main/docs/config.md)):
 
 ```toml

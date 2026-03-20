@@ -107,7 +107,7 @@ def color_swatch(hex_color: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Interactive picker  (requires Unix terminal — Linux / macOS / WSL)
+# Interactive picker
 # ---------------------------------------------------------------------------
 
 
@@ -118,38 +118,32 @@ def pick(
 ) -> list[int]:
     """Interactive picker with type-to-search filtering.
 
-    Uses ``simple-term-menu`` for robust terminal UI.
+    Uses ``questionary`` (prompt_toolkit) for terminal UI.
     Returns a list of indices into the original *options* list.
-
-    Requires a Unix terminal (Linux, macOS, or WSL).
     """
-    from simple_term_menu import TerminalMenu
+    import questionary
 
-    # For single-select: search_key=None enables type-to-filter (any key searches).
-    # For multi-select: keep search_key="/" so Space/Tab work for toggling items.
-    search_key: str | None = "/" if allow_multi else None
-    search_hint = "(/ to filter, Space to toggle)" if allow_multi else "(type to filter)"
+    if allow_multi:
+        selected = questionary.checkbox(
+            f"  {prompt}",
+            choices=options,
+        ).ask()
+    else:
+        selected_value = questionary.select(
+            f"  {prompt}",
+            choices=options,
+            use_search_filter=True,
+            use_jk_keys=False,
+        ).ask()
+        selected = [selected_value] if selected_value is not None else None
 
-    menu = TerminalMenu(
-        options,
-        title=f"  {prompt}",
-        search_key=search_key,
-        multi_select=allow_multi,
-        show_multi_select_hint=allow_multi,
-        show_search_hint=True,
-        show_search_hint_text=search_hint,
-    )
-    result = menu.show()
-
-    if result is None:
+    if selected is None:
         raise KeyboardInterrupt
 
-    if isinstance(result, tuple):
-        selected = list(result)
-    else:
-        selected = [result]
+    indices = []
+    for val in selected:
+        idx = options.index(val)
+        indices.append(idx)
+        success(val)
 
-    for idx in selected:
-        success(options[idx])
-
-    return selected
+    return indices

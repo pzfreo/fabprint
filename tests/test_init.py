@@ -1,6 +1,5 @@
 """Tests for fabprint init, validate, and template commands."""
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -355,11 +354,10 @@ class TestValidateOverride:
 
 
 # ---------------------------------------------------------------------------
-# Interactive picker (ui.pick) — uses simple-term-menu
+# Interactive picker (ui.pick) — uses questionary
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="simple-term-menu requires Unix")
 class TestPick:
     def test_single_select(self, monkeypatch):
         """Single selection returns a one-element list."""
@@ -367,8 +365,8 @@ class TestPick:
 
         from fabprint import ui
 
-        with patch("simple_term_menu.TerminalMenu") as MockMenu:
-            MockMenu.return_value.show.return_value = 1
+        with patch("questionary.select") as mock_select:
+            mock_select.return_value.ask.return_value = "B"
             result = ui.pick(["A", "B", "C"], prompt="Pick")
         assert result == [1]
 
@@ -378,8 +376,8 @@ class TestPick:
 
         from fabprint import ui
 
-        with patch("simple_term_menu.TerminalMenu") as MockMenu:
-            MockMenu.return_value.show.return_value = (0, 2)
+        with patch("questionary.checkbox") as mock_cb:
+            mock_cb.return_value.ask.return_value = ["A", "C"]
             result = ui.pick(["A", "B", "C"], prompt="Pick", allow_multi=True)
         assert result == [0, 2]
 
@@ -389,8 +387,8 @@ class TestPick:
 
         from fabprint import ui
 
-        with patch("simple_term_menu.TerminalMenu") as MockMenu:
-            MockMenu.return_value.show.return_value = None
+        with patch("questionary.select") as mock_select:
+            mock_select.return_value.ask.return_value = None
             try:
                 ui.pick(["A", "B"])
                 raise AssertionError("Expected KeyboardInterrupt")
