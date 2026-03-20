@@ -33,7 +33,7 @@ import pexpect
 
 CAST_FILE = Path(__file__).parent.parent / "docs" / "recordings" / "demo.cast"
 DEMO_DIR = Path.home() / "repos" / "decoy-case"
-TYPING_DELAY = 0.08
+TYPING_DELAY = 0.04
 EMAIL = "paul@fremantle.org"
 
 # Max idle gap in the final recording (seconds)
@@ -99,6 +99,9 @@ def read_clipboard() -> str:
 def compress_idle(cast_path: Path, max_idle: float = MAX_IDLE) -> Path:
     """Compress idle gaps in a v3 asciicast file.
 
+    v3 format uses relative timestamps (deltas from previous event).
+    Caps any delta that exceeds max_idle.
+
     Writes compressed version to a new file (original preserved).
     Returns the path to the compressed file.
     """
@@ -120,18 +123,12 @@ def compress_idle(cast_path: Path, max_idle: float = MAX_IDLE) -> Path:
     if not events:
         return cast_path
 
-    # Build adjusted timeline
+    # v3: timestamps are deltas — just cap any delta > max_idle
     adjusted = []
-    new_ts = 0.0
-    prev_orig_ts = events[0][0]
-
     for event in events:
-        orig_ts = event[0]
-        gap = orig_ts - prev_orig_ts
-        capped_gap = min(gap, max_idle) if gap > 0 else gap
-        new_ts += max(capped_gap, 0)
-        adjusted.append([round(new_ts, 3), *event[1:]])
-        prev_orig_ts = orig_ts
+        delta = event[0]
+        capped = min(delta, max_idle)
+        adjusted.append([round(capped, 3), *event[1:]])
 
     out_lines = [header]
     for event in adjusted:
