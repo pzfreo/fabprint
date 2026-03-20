@@ -1,13 +1,10 @@
-# fabprint full workflow demo
-# Usage: cd ~/repos/fabprint && vhs docs/recordings/demo.tape
+# fabprint init + validate + run demo
+# Usage: cd ~/repos/fabprint && vhs docs/recordings/init.tape
 #
 # BEFORE RECORDING:
-#   1. Have your Bambu Cloud password ready to type live (masked prompt)
-#   2. Have email open to grab the verification code (also typed live)
-#   3. Ensure OrcaSlicer is installed locally (or Docker available)
-#
-# Everything is scripted EXCEPT password and verification code entry.
-# Adjust profile search terms below if your printer isn't a P1S.
+#   1. Ensure credentials are configured (fabprint setup already done)
+#   2. Ensure OrcaSlicer is installed locally (or Docker available)
+#   3. Printer must be online for AMS detection
 #
 # The interactive picker uses simple-term-menu:
 #   Single-select: type to filter, Enter to select highlighted item
@@ -34,7 +31,6 @@ Set WaitTimeout 120s
 # =====================================================================
 Hide
 
-
 Type "rm -f ~/repos/decoy-case/fabprint.toml"
 Enter
 Sleep 500ms
@@ -49,9 +45,7 @@ Type "export FABPRINT_SKIP_SLICER_DETECT=1"
 Enter
 Sleep 500ms
 
-
 # Pre-warm Docker bridge so AMS query completes during init
-# Pre-warm Docker bridge — must complete before init starts
 Type "fabprint status > /tmp/vhs-status-debug.txt 2>&1 && echo WARM"
 Enter
 Wait+Screen /WARM/
@@ -63,12 +57,11 @@ Sleep 500ms
 
 Show
 
-
 # =====================================================================
-# PART 2: fabprint init — interactive config wizard
+# fabprint init — interactive config wizard
 # =====================================================================
 
-Type "# Step 2: Create a fabprint.toml config"
+Type "# Create a fabprint.toml config"
 Enter
 Sleep 1s
 
@@ -79,40 +72,16 @@ Enter
 Wait+Screen /fabprint init/
 Sleep 500ms
 
-# --- Printer Profile (simple-term-menu, single-select) ---
-# Printer already configured, skips to profile picker
-Wait+Screen /Printer Profile/
-Sleep 500ms
-
-# Type to filter, Enter selects highlighted match
-Type@100ms "P1S 0.4"
-Sleep 500ms
-Enter
-Sleep 1s
-
-# --- Process Profile (simple-term-menu, single-select) ---
-Wait+Screen /Process Profile/
-Sleep 500ms
-
-# Type to filter, Enter selects highlighted match
-Type "0.20mm Standard @BBL X1C"
-Sleep 200ms
-Enter
-Sleep 5s
-
-# --- Filament (AMS connected — accept matched suggestions) ---
-# Accept AMS-matched filaments
-Wait+Screen /Use these filaments/
-Sleep 1s
-Type "y"
+# --- Step 1: Project Name ---
+Wait+Screen /Project name/
+Sleep 300ms
 Enter
 
-# --- CAD Files (simple-term-menu, multi-select) ---
+# --- Step 2: CAD Files (simple-term-menu, multi-select) ---
 Wait+Screen /CAD Files/
 Sleep 500ms
 
 # Multi-select: Space toggles items, Enter confirms
-# Toggle first item, move down, toggle second, confirm
 Space
 Down
 Space
@@ -127,11 +96,6 @@ Enter
 Wait+Screen /orient/
 Enter
 
-# First file — filament slot (pick slot 3)
-Wait+Screen /filament slot/
-Type "3"
-Enter
-
 # Second file — copies (accept default 1)
 Wait+Screen /copies/
 Enter
@@ -140,14 +104,72 @@ Enter
 Wait+Screen /orient/
 Enter
 
-# Second file — filament slot (pick slot 3)
+# --- Step 3: Printer Connection (simple-term-menu, single-select) ---
+Wait+Screen /Printer Connection/
+Sleep 500ms
+
+# Select "workshop" (first option)
+Enter
+Sleep 500ms
+
+# --- Step 4: Printer Profile (simple-term-menu, single-select) ---
+Wait+Screen /Printer Profile/
+Sleep 500ms
+
+Type@100ms "P1S 0.4"
+Sleep 500ms
+Enter
+Sleep 1s
+
+# --- Process Profile (simple-term-menu, single-select) ---
+Wait+Screen /Process Profile/
+Sleep 500ms
+
+Type "0.20mm Standard @BBL X1C"
+Sleep 200ms
+Enter
+Sleep 1s
+
+# --- Plate size (auto-detected from printer profile) ---
+Wait+Screen /Build Plate/
+Sleep 300ms
+
+Wait+Screen /Plate width/
+Enter
+
+Wait+Screen /Plate depth/
+Sleep 500ms
+Enter
+Sleep 3s
+
+# --- Step 5: Slicer Version ---
+# Pick first version (loaded from bundled JSON, no network call)
+Type "1"
+Enter
+Sleep 2s
+
+# --- Step 6: Filaments (AMS connected — accept matched suggestions) ---
+Wait+Screen /Use these filaments/
+Sleep 1s
+Type "y"
+Enter
+Sleep 1s
+
+# --- Step 7: Filament Assignment (pick slot 3 for both parts) ---
+Wait+Screen /Filament Assignment/
+Sleep 500ms
+
 Wait+Screen /filament slot/
 Type "3"
 Enter
 
-# --- Slicer Overrides (now after CAD files) ---
-Wait+Screen /slicer overrides/
-Sleep 300ms
+Wait+Screen /filament slot/
+Type "3"
+Enter
+Sleep 1s
+
+# --- Step 8: Slicer Overrides ---
+Sleep 2s
 
 # Yes, add overrides
 Type "y"
@@ -162,39 +184,9 @@ Sleep 1s
 # Enter infill value (percent type — "30" auto-becomes "30%")
 Type "30"
 Enter
-Sleep 1s
-
-# Don't add another override
-Wait+Screen /Add another override/
-Enter
-
-# --- Build Plate ---
-Wait+Screen /Build Plate/
-Sleep 300ms
-
-# Accept detected plate width
-Wait+Screen /Plate width/
-Enter
-
-# Accept detected plate depth
-Wait+Screen /Plate depth/
-Sleep 500ms
-Enter
-Sleep 3s
-
-# --- Slicer Version ---
-# Pick first version (list loaded from bundled JSON, no network call)
-Type "1"
-Enter
 Sleep 2s
 
-# --- Printer Connection (simple-term-menu, single-select) ---
-# Select "workshop" (first option)
-Enter
-Sleep 2s
-
-# --- Project Name ---
-# Accept default "decoy-case"
+# Don't add another override (accept default n)
 Enter
 Sleep 2s
 
@@ -209,10 +201,10 @@ Enter
 Sleep 500ms
 
 # =====================================================================
-# PART 3: fabprint validate
+# fabprint validate
 # =====================================================================
 
-Type "# Step 3: Validate the config"
+Type "# Validate the config"
 Enter
 Sleep 1s
 
@@ -230,14 +222,14 @@ Enter
 Sleep 500ms
 
 # =====================================================================
-# PART 4: fabprint run — full pipeline including print
+# fabprint run — full pipeline including print
 # =====================================================================
 
-Type "# Step 4: Run the full pipeline"
+Type "# Run the full pipeline"
 Enter
 Sleep 1s
 
-Type "fabprint run"
+Type "fabprint run --dry-run"
 Enter
 
 Wait+Screen /Loaded.*part/
@@ -256,7 +248,7 @@ Sleep 1s
 Wait+Screen /Print time|filament/
 Sleep 1s
 
-Wait+Screen /Sent to printer/
+Wait+Screen /Dry run|Sent to printer/
 Sleep 3s
 
 # Hold final frame
