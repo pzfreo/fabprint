@@ -88,6 +88,28 @@ class ValidationResult:
         return iter(self.warnings)
 
 
+def _check_profile_type(name: str, engine: str, category: str) -> str | None:
+    """Check the JSON 'type' field of a profile file, if it exists.
+
+    Returns the type string (e.g. 'machine', 'machine_model'), or None if not found.
+    """
+    import json
+
+    from fabprint.profiles import SYSTEM_DIRS
+
+    base = SYSTEM_DIRS.get(engine)
+    if not base:
+        return None
+    path = base / category / f"{name}.json"
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f).get("type")
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def validate_config(path: Path) -> ValidationResult:
     """Validate a fabprint.toml and return passes and warnings.
 
@@ -124,10 +146,19 @@ def validate_config(path: Path) -> ValidationResult:
             if machines and cfg.slicer.printer not in machines:
                 close = _closest_match(cfg.slicer.printer, machines)
                 hint = f" Did you mean '{close}'?" if close else ""
-                warnings.append(
-                    f"slicer.printer '{cfg.slicer.printer}' not found in "
-                    f"{cfg.slicer.engine} profiles ({source}).{hint}"
-                )
+                # Check if it's a machine_model (wrong type)
+                _is_model = _check_profile_type(cfg.slicer.printer, cfg.slicer.engine, "machine")
+                if _is_model == "machine_model":
+                    warnings.append(
+                        f"slicer.printer '{cfg.slicer.printer}' is a printer model "
+                        f"definition, not a slicer profile. Use the nozzle-specific "
+                        f"variant, e.g. '{cfg.slicer.printer} 0.4 nozzle'"
+                    )
+                else:
+                    warnings.append(
+                        f"slicer.printer '{cfg.slicer.printer}' not found in "
+                        f"{cfg.slicer.engine} profiles ({source}).{hint}"
+                    )
                 profile_ok = False
 
         if cfg.slicer.process:

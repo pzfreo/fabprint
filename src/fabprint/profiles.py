@@ -53,15 +53,34 @@ def discover_profiles(engine: str) -> dict[str, dict[str, Path]]:
     if base is None:
         raise ValueError(f"Unknown engine: '{engine}'. Supported: {list(SYSTEM_DIRS)}")
 
+    # Expected JSON "type" field for each category.
+    # machine_model profiles (e.g. "Bambu Lab P1S") define the printer
+    # but cannot be passed to the slicer — only "machine" profiles
+    # (e.g. "Bambu Lab P1S 0.4 nozzle") are valid for slicing.
+    _VALID_TYPES = {
+        "machine": "machine",
+        "process": "process",
+        "filament": "filament",
+    }
+
     result: dict[str, dict[str, Path]] = {}
     for category in CATEGORIES:
         cat_dir = base / category
         profiles: dict[str, Path] = {}
+        expected_type = _VALID_TYPES[category]
         if cat_dir.is_dir():
             for f in sorted(cat_dir.glob("*.json")):
                 name = f.stem
                 # Skip internal/template files
                 if "template" in name or name.startswith("fdm_"):
+                    continue
+                # Only include profiles with the correct type
+                try:
+                    with open(f) as fh:
+                        data = json.load(fh)
+                    if data.get("type") != expected_type:
+                        continue
+                except (json.JSONDecodeError, OSError):
                     continue
                 profiles[name] = f
         result[category] = profiles
