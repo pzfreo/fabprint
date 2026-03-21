@@ -2,36 +2,41 @@ name: Publish packages and Docker images
 
 on:
   push:
-    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
-  push:
+  publish:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write  # required for PyPI trusted publishing
       packages: write  # required for GHCR push
+      pull-requests: write  # required for profile update PR
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
-          token: ${{ secrets.GH_PAT }}
 
-      - name: Bump patch version
+      - name: Extract version from tag
         id: version
         run: |
-          OLD=$(python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['version'])")
-          IFS='.' read -r maj min patch <<< "$OLD"
-          NEW="$maj.$min.$((patch + 1))"
-          sed -i "s/version = \"$OLD\"/version = \"$NEW\"/" pyproject.toml
-          sed -i "s/__version__ = \"$OLD\"/__version__ = \"$NEW\"/" src/fabprint/__init__.py
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml src/fabprint/__init__.py
-          git commit -m "Bump version to $NEW [skip ci]"
-          git push
-          echo "version=$NEW" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches pyproject.toml version
+        if: github.ref_type == 'tag'
+        run: |
+          TOML_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$TOML_VERSION" != "$TAG_VERSION" ]]; then
+            echo "::error::Tag $TAG_VERSION does not match pyproject.toml version $TOML_VERSION"
+            exit 1
+          fi
 
       - name: Check if cloud-bridge Docker rebuild needed
         id: bridge_changed
@@ -98,9 +103,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            fabprint/cloud-bridge:latest
             fabprint/cloud-bridge:${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository }}/cloud-bridge:latest
             ghcr.io/${{ github.repository }}/cloud-bridge:${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -115,9 +118,7 @@ jobs:
           push: true
           tags: |
             fabprint/orca-base:2.3.1
-            fabprint/orca-base:latest
             ghcr.io/${{ github.repository }}/orca-base:2.3.1
-            ghcr.io/${{ github.repository }}/orca-base:latest
           build-args: ORCA_VERSION=2.3.1
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -131,9 +132,9 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            fabprint/fabprint:latest
+            fabprint/fabprint:${{ steps.version.outputs.version }}
             fabprint/fabprint:orca-2.3.1
-            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
             ghcr.io/${{ github.repository }}:orca-2.3.1
           build-args: ORCA_VERSION=2.3.1
           cache-from: type=gha
@@ -144,10 +145,21 @@ jobs:
         run: |
           python scripts/extract_profiles.py 2.3.1 --image fabprint/fabprint:orca-2.3.1
 
-      - name: Commit bundled profiles
+      - name: Open PR for bundled profile updates
         if: steps.base_changed.outputs.changed == 'true' || steps.orca_changed.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           git diff --quiet src/fabprint/data/ && echo "No profile changes" && exit 0
+          BRANCH="update-orca-profiles-${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
           git add src/fabprint/data/
-          git commit -m "Update bundled OrcaSlicer 2.3.1 profiles [skip ci]"
-          git push
+          git commit -m "Update bundled OrcaSlicer 2.3.1 profiles"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "Update bundled OrcaSlicer 2.3.1 profiles" \
+            --body "Auto-generated profile update from release ${{ steps.version.outputs.version }}." \
+            --base main \
+            --head "$BRANCH"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
