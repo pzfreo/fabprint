@@ -2,6 +2,16 @@
 
 All notable changes to fabprint are documented here.
 
+## 0.1.131 — 2026-03-21
+
+- Harden release pipeline: publish only on git tags (`v*`), not on every push to main
+- Remove self-mutating version bump — version is set in `pyproject.toml` before tagging
+- Drop `GH_PAT` usage; checkout now uses default `GITHUB_TOKEN`
+- Profile updates now open a PR instead of pushing directly to main
+- Remove mutable `:latest` Docker tags; all images tagged with version only
+- Add TestPyPI workflow: publishes `.dev` packages on every PR for pre-release testing
+- New release process: bump version in `pyproject.toml`, tag with `git tag v<version>`, push tag
+
 ## 0.1.128 — 2026-03-20
 
 - Refresh README: adopt tighter structure from proposed rewrite while keeping OrcaSlicer CLI comparison, rich TOML examples, visuals, and env var docs
